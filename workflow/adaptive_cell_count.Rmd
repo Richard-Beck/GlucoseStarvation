@@ -1,0 +1,359 @@
+---
+title: "Cell count modelling"
+author: "RJB"
+date: "2025-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
+```
+
+There are a bunch of MCF10A images which don't seem to have produced valid object results. There appears to be nothing wrong with the images, so we'll need to investigate this issue further... for now filter them out for the analysis.
+```{r}
+source("scripts/define_plate_maps.R")
+library(ggplot2)
+x <- data.table::fread("data/train/labelling_output_tuned-cpsam/batch_classification_results.csv")
+x <- x[, time := substr(image_key, nchar(image_key) - 8, nchar(image_key) )]
+x <- x[, base_key := substr(image_key, 1, nchar(image_key) - 10)]
+x <- split(x,f=x$base_key)
+
+meta <- do.call(rbind,lapply(paste0(names(x),"_00d00h00m"),get_meta))
+
+meta <- data.table(meta)
+
+# add a base_key column so meta and x line up
+meta[, base_key := names(x)]
+
+# build a grouping key
+meta[, grp := paste(cellLine, experiment, plateID, ploidy, glucose, sep="|")]
+
+# split the base_keys by grp
+groups <- split(meta$base_key, meta$grp)
+
+# for each group, rbindlist the corresponding x’s
+x_merged <- lapply(groups, function(bk) 
+  rbindlist(x[bk], use.names=TRUE, fill=TRUE)
+)
+
+names(x_merged) <- names(groups)
+
+
+```
+
+
+```{r}
+smm <- do.call(rbind,lapply(names(x_merged), function(grp) {
+  dtg <- x_merged[[grp]]
+  # count per well & time string
+  cnt <- dtg[, .(
+    alive = sum(predicted_label_name=="alive", na.rm=TRUE),
+    dead  = sum(predicted_label_name=="dead",  na.rm=TRUE)
+  ), by=.(time)]
+  m <- str_match(cnt$time, "(\\d{2})d(\\d{2})h")
+  cnt[, hours := as.integer(m[,2])*24 + as.integer(m[,3])]
+  flds <- str_split(grp, "\\|")[[1]]
+  cnt[, c("cellLine","experiment","plateID","ploidy","glucose") := 
+        list(flds[1],flds[2],flds[3],flds[4],flds[5])]
+  cnt}))
+
+saveRDS(smm,"data/counts/uncorrected.Rds")
+
+```
+
+Optimisation (~5 mins on 60 cores)
+```{r}
+library(parallel)
+library(data.table)
+library(stringr)
+library(ggplot2)
+library(Rcpp)
+
+# 1) load your C++ and R functions
+sourceCpp("src/count_smoothing.cpp")
+source("src/optimize_counts.R")  # defines optimize_counts(dt, ...)
+
+# 2) prune x_merged to only the columns needed and package each chunk with its name
+slim_list <- lapply(names(x_merged), function(grp) {
+  dt <- x_merged[[grp]][, .(
+    image_key,
+    predicted_label_name,
+    prob_alive,
+    prob_dead,
+    prob_junk
+  )]
+  list(grp = grp, dt = dt)
+})
+
+# 3) start cluster and load dependencies on each worker
+cl <- makeCluster(60)
+clusterEvalQ(cl, {
+  library(data.table)
+  library(stringr)
+  library(Rcpp)
+sourceCpp("src/count_smoothing.cpp")
+source("src/optimize_counts.R")
+  NULL
+})
+
+# 4) run optimize_counts on each slim chunk, adding back the metadata fields
+res_list <- parLapply(cl, slim_list, function(el) {
+  dt  <- el$dt
+  grp <- el$grp
+  opt <- optimize_counts(
+    dt,
+    method         = "coordinate_descent",
+    max_iter       = 100,
+    tol            = 0.01,
+    lambda_N_mono  = 1,
+    lambda_D_mono  = 1,
+    lambda_create  = 1
+  )
+  final <- opt$final
+  # parse the five fields from the group name
+  flds <- str_split(grp, "\\|")[[1]]
+  final[, c("cellLine","experiment","plateID","ploidy","glucose") := 
+          as.list(flds)]
+  final
+})
+stopCluster(cl)
+
+# 5) combine all results and compute hours
+combined <- rbindlist(res_list, fill = TRUE)
+combined[, hours := time_numeric * 24]
+
+# 6) one faceted plot per cellLine
+plots <- lapply(unique(combined$cellLine), function(cl) {
+  d <- combined[cellLine == cl]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = N-D, color = "alive")) +
+    geom_point(aes(y = D, color = "dead")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+names(plots) <- unique(combined$cellLine)
+
+# Example: display the first plot
+print(plots[[1]])
+
+saveRDS(combined,"data/counts/corrected.Rds")
+
+```
+
+```{r}
+smm <- readRDS("data/counts/uncorrected.Rds")
+plots_uncorrected <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[cellLine==cl]
+  ggplot(d, aes(x=hours)) +
+    geom_point(aes(y=alive, color="alive")) +
+    geom_point(aes(y=dead,  color="dead"))  +
+    facet_grid(rows=vars(as.numeric(glucose)),
+               cols=vars(ploidy),
+               scales="free") +
+    ggtitle(cl, subtitle=unique(d$experiment))
+})
+names(plots_uncorrected) <- unique(smm$cellLine)
+
+combined <- readRDS("data/counts/corrected.Rds")
+plots_corrected <- lapply(unique(combined$cellLine), function(cl) {
+  d <- combined[cellLine == cl]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = N-D, color = "alive")) +
+    geom_point(aes(y = D, color = "dead")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+names(plots_corrected) <- unique(combined$cellLine)
+```
+
+
+```{r}
+# Load necessary libraries
+library(rxode2)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Assume 'd' and 'model_B' are your data frame and rxode2 model, 
+# and are already in the environment.
+
+# 1. Define the parameter vector
+params <- c(
+  theta = 1.586453e+04, kp    = 1.622025e-02, kd    = 7.569006e-02,
+  kd2   = 4.858519e-02, g50a  = 4.570815e-02, na    = 5.912126e+00,
+  g50d  = 3.475508e-03, nd    = 4.167656e+00, v1    = 6.851104e-05,
+  v2    = 1.319974e-06
+)
+
+# 2. Set up and run simulations for each glucose level
+inits <- c(NL = 1000, ND = 50) # Set initial NL and ND
+sim_times <- seq(0, max(d$hours, na.rm = TRUE), by = 1)
+unique_glucose <- as.numeric(unique(d$glucose))
+
+# Loop through each glucose value, simulate, and collect results
+sim_data_list <- lapply(unique_glucose, function(g) {
+  # Create an event table for the current glucose level
+  ev <- eventTable() %>%
+    add.sampling(sim_times) %>%
+    add.dosing(
+      dose = g,
+      nbr.doses = 1,
+      dosing.to = 3, # Corresponds to G (the 3rd state variable)
+      start.time = 0
+    )
+  
+  # Solve the system for this specific condition
+  model_B$solve(params, ev, inits) %>%
+    as.data.frame() %>%
+    mutate(glucose = g) # Add the initial glucose value for faceting
+})
+
+# Combine the list of simulation results into one data frame
+sim_data <- bind_rows(sim_data_list) %>%
+  rename(alive = NL, dead = ND) %>% # Match column names
+  pivot_longer(cols = c(alive, dead), names_to = "type", values_to = "value")
+
+# 3. Create the plot with points and add simulation lines
+p <- ggplot(d, aes(x = hours)) +
+  geom_point(aes(y = N-D, color = "alive")) +
+  geom_point(aes(y = D, color = "dead")) +
+  geom_line(data = sim_data, aes(x = time, y = value, color = type)) +
+  facet_grid(rows = vars(as.numeric(glucose)), cols = vars(ploidy), scales = "free") +
+  labs(
+    title = d$cellLine[1],
+    subtitle = d$experiment[1],
+    y = "Cell Count",
+    x = "Hours",
+    color = "Cell Type"
+  ) +
+  theme_bw()
+
+p
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(rxode2)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Load and subset data as specified
+# Make sure the path to your data is correct
+combined <- readRDS("data/counts/corrected.Rds")
+d <- combined[combined$cellLine=="SNU668" & combined$ploidy=="low",]
+
+# Assume model_B is already defined in the global environment
+# source("scripts/parameter_estimation.R") # This line should define model_B
+
+# 1. Define the fixed model parameter vector
+params <- c(
+  theta = 1.586453e+04, kp    = 1.622025e-02, kd    = 7.569006e-02,
+  kd2   = 4.858519e-02, g50a  = 4.570815e-02, na    = 5.912126e+00,
+  g50d  = 3.475508e-03, nd    = 4.167656e+00, v1    = 6.851104e-05,
+  v2    = 1.319974e-06
+)
+
+# 2. Define the objective function for optimization, taking a list of arguments
+# This function calculates the Sum of Squared Errors (SSE) between the simulation
+# and the actual data for a given set of initial conditions (inits_to_opt).
+objective_sse <- function(inits_to_opt, other_args) {
+  # Unpack the list of other arguments
+  params <- other_args$params
+  model <- other_args$model
+  g <- other_args$g
+  data_subset <- other_args$data_subset
+  
+  # Define simulation events, sampling only at the time points present in the data
+  ev <- eventTable() %>%
+    add.sampling(data_subset$hours) %>%
+    add.dosing(dose = g, nbr.doses = 1, dosing.to = 3, start.time = 0)
+  
+  # Set the initial conditions for this optimization iteration
+  inits <- c(NL = as.numeric(inits_to_opt[1]), ND = as.numeric(inits_to_opt[2]))
+  
+  # Run the simulation
+  sim_results <- model$solve(params, ev, inits) %>% as.data.frame()
+  # Calculate SSE against the data (Alive = N-D, Dead = D)
+  sse_alive <- sum((sim_results$NL - (data_subset$N - data_subset$D))^2, na.rm = TRUE)
+  sse_dead <- sum((sim_results$ND - data_subset$D)^2, na.rm = TRUE)
+  
+  # Return the total SSE
+  return(sse_alive + sse_dead)
+}
+
+# 3. Loop through each glucose value, optimize inits, simulate, and collect results
+unique_glucose <- as.numeric(unique(d$glucose))
+
+sim_data_list <- lapply(unique_glucose, function(g) {
+  
+  # Subset the data for the current glucose condition
+  d_sub <- d[d$glucose == g, ]
+  
+  # Provide a starting guess for the optimization
+  start_inits <- c(NL = 1000, ND = 50) 
+  
+  # Bundle all other arguments into a single list to pass to optim
+  other_args_list <- list(
+    params = params,
+    model = model_B,
+    g = g,
+    data_subset = d_sub
+  )
+  
+  # Use optim to find the initial conditions that minimize the SSE
+  opt_result <- optim(
+    par = start_inits,
+    fn = objective_sse,
+    other_args = other_args_list, # Pass the bundled list here
+    method = "L-BFGS-B",         # A method that allows box constraints
+    lower = c(0, 0)              # Constrain initial counts to be non-negative
+  )
+  
+  # These are the optimized initial conditions for this glucose level
+  optimized_inits <- c(NL = opt_result$par[1], ND = opt_result$par[2])
+  names(optimized_inits) <- names(start_inits)
+  # Run a final, smooth simulation using the optimized initial conditions
+  sim_times <- seq(0, max(d$hours, na.rm = TRUE), by = 1)
+  ev_final <- eventTable() %>%
+    add.sampling(sim_times) %>%
+    add.dosing(dose = g, nbr.doses = 1, dosing.to = 3, start.time = 0)
+    
+  model_B$solve(params, ev_final, optimized_inits) %>%
+    as.data.frame() %>%
+    mutate(glucose = g) # Add the glucose level for faceting
+})
+
+# 4. Combine and format simulation results for plotting
+sim_data <- bind_rows(sim_data_list) %>%
+  rename(alive = NL, dead = ND) %>%
+  pivot_longer(cols = c(alive, dead), names_to = "type", values_to = "value")
+
+# 5. Create the plot with points and add the optimized simulation lines
+p <- ggplot(d, aes(x = hours)) +
+  geom_point(aes(y = N - D, color = "alive")) +
+  geom_point(aes(y = D, color = "dead")) +
+  geom_line(data = sim_data, aes(x = time, y = value, color = type)) +
+  facet_grid(rows = vars(as.numeric(glucose)), cols = vars(ploidy), scales = "free") +
+  labs(
+    title = d$cellLine[1],
+    subtitle = "Simulations with Optimized Initial Conditions",
+    y = "Cell Count",
+    x = "Hours",
+    color = "Cell Type"
+  ) +
+  theme_bw()
+
+p
+
+
+
+
+```
+

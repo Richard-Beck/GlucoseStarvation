@@ -1,0 +1,501 @@
+---
+title: "Preliminaries"
+author: "RJB"
+date: "2025-07-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir="/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
+```
+
+The workflow uses image sets from various experiments which are currently saved in different locations in our shared drive. Running this script establishes symbolic links to all the images in a single shared folder. 
+
+```{r}
+## output saved to all_raw
+source("scripts/mapFolders.R")
+```
+
+All metadata is contained within the filenames:
+```{r}
+ff <-  list.files("all_raw/")
+sample(ff,10)
+```
+
+
+```{r}
+source("scripts/define_plate_maps.R")
+ff_strip <- gsub(".tif","",ff)
+ff_strip <- sapply(ff_strip,function(fi){
+  fi <- strsplit(fi,split="_") |> unlist()
+  fi <- fi[-(length(fi)-3)]
+  paste(fi,collapse="_")
+}) |> unique()
+
+meta <- do.call(rbind,pbapply::pblapply(ff_strip,get_meta))
+meta$fname <- ff_strip
+
+```
+
+We need to define a representative set of images for evaluating our image processing pipeline. Factors to balance are 1) Cell-line 2) sub-lineage (e.g. 2N vs 4N etc), 3) experiment id (different experiments can use different reporters or other settings) 4) Time. 5) Glucose concentration. Note that we also hope our training set has many examples of both alive and dead cells, but ensuring a good sampling across 1-5 should ensure this anyway.
+
+```{r}
+set.seed(42)
+Neval <- 100
+## ensure equal representation per cellLine
+msplit <- split(meta,f=meta$cellLine)
+
+train_data <- do.call(rbind,lapply(msplit,function(mi){
+  mi[sample(1:nrow(mi),Neval/4,replace = F),]
+}))
+rownames(train_data) <- NULL
+
+table(train_data$cellLine)
+hist(train_data$hours)
+table(train_data$glucose)
+write.csv(train_data,"data/train/train_image_ids.csv",row.names = F)
+```
+Also make a random set of images for validation
+
+```{r}
+set.seed(1)
+Neval <- 100
+## ensure equal representation per cellLine
+msplit <- split(meta,f=meta$cellLine)
+
+train_data <- do.call(rbind,lapply(msplit,function(mi){
+  mi[sample(1:nrow(mi),Neval/4,replace = F),]
+}))
+rownames(train_data) <- NULL
+
+table(train_data$cellLine)
+hist(train_data$hours)
+table(train_data$glucose)
+write.csv(train_data,"data/eval/eval_image_ids.csv",row.names = F)
+```
+
+Clone the imutils package https://github.com/Richard-Beck/imutils.
+Modify the scripts below (at the top) to point to the imutils dir. Execute e.g:
+
+```{bash,eval=FALSE}
+python scripts/image_processing/create_image_set.py --raw_data_dir all_raw --csv_path data/train/train_image_ids.csv --composites_dir data/train/composites --cpose_inputs_dir data/train/cellpose_inputs
+
+```
+
+```{bash,eval=FALSE}
+python scripts/image_processing/create_image_set.py --raw_data_dir all_raw --csv_path data/eval/eval_image_ids.csv --composites_dir data/eval/composites --cpose_inputs_dir data/eval/cellpose_inputs
+
+```
+
+Now need to finetune cellpose. Run e.g.:
+
+```{bash,eval=FALSE}
+python scripts/image_processing/curate_masks.py --raw_data_dir data/train/cellpose_inputs --output_dir data/train/curation_outputs --display_data_dir data/train/composites
+```
+
+MISSING - NEED TO PROVIDE SCRIPT FOR RUNNING FINETUNED CELLPOSE ON THE cellpose_inputs in order to train classifier on cellpose output
+
+TRAIN CLASSIFIER:
+```{bash,eval=FALSE}
+python scripts/image_processing/train_classifier_interactive.py --images_dir data/train/composites --output_dir data/train/curation_outputs --masks_dir data/train/tuned-cpsam-masks
+```
+
+RUN FULL PIPELINE ON TRAIN/EVAL SETS:
+```{bash,eval=FALSE}
+python scripts/image_processing/quick_segment_and_classify.py --composite_dir data/train/composites --cpose_input_dir data/train/cellpose_inputs --output_csv_path data/train/curation_outputs/training_predictions.csv --classifier_path data/train/curation_outputs/object_classifier.pkl --finetuned_cellpose_model data/train/models/cpsam-tuned
+```
+
+```{bash,eval=FALSE}
+python scripts/image_processing/quick_segment_and_classify.py --composite_dir data/eval/composites --cpose_input_dir data/eval/cellpose_inputs --output_csv_path data/eval/object_predictions.csv --classifier_path data/train/curation_outputs/object_classifier.pkl --finetuned_cellpose_model data/train/models/cpsam-tuned
+```
+
+DEMO RUN TRAINED PIPELINE ON ALL DATA (BATCH)
+
+```{bash,eval=FALSE}
+python scripts/image_processing/batch_segment_and_classify.py  --raw_data_dir all_raw --classifier_path data/train/curation_outputs/object_classifier.pkl --finetuned_cellpose_model data/train/models/cpsam-tuned --output_csv_path data/counts/batch_results.csv
+```
+
+
+DEMO SCRIPT GENERATING POINT LABELS (TRAIN AND EVAL!)
+MOVE FILES ABOUT TO MATCH SCRIPTS, DELETE OLDIES!
+DELETE OLD PYTHON SCRIPTS
+GIT!!
+
+    
+```{r}
+library(dplyr)
+library(tidyr)
+library(jsonlite)
+
+# Load and process manual point labels
+manual_df <- fromJSON("data/eval/labelling_output_points/session_point_labels.json") %>%
+  filter(label %in% c("alive", "dead")) %>%
+  count(image, label) %>%
+  pivot_wider(
+    names_from = label,
+    values_from = n,
+    names_glue = "{label}_manual",
+    values_fill = 0
+  )
+
+# Load and process batch classifier predictions
+tmp <- data.table::fread("data/eval/object_predictions.csv")
+pred_df <- do.call(rbind,lapply(unique(tmp$image_key),function(ti){
+  alive_pred=sum(tmp$predicted_label_name[tmp$image_key==ti]=="alive")
+  dead_pred=sum(tmp$predicted_label_name[tmp$image_key==ti]=="dead")
+  data.table(image=ti,alive_pred,dead_pred)
+}))
+
+# Join the two datasets
+comparison_df <- full_join(manual_df, pred_df, by = "image") %>%
+  mutate(across(where(is.numeric), ~ replace_na(., 0))) %>%
+  select(image, ends_with("_manual"), ends_with("_pred"))
+
+meta <- do.call(rbind,pbapply::pblapply(comparison_df$image,get_meta))
+
+df <- cbind(comparison_df,meta)
+
+p <- ggplot(df)+
+  facet_wrap(~cellLine,scales="free")+
+  geom_abline()+
+  geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
+  geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))
+p
+```
+
+
+Python eval_training_set.py si run to generate manually curated masks and predictions. The results are analyzed as follows:
+```{r}
+# Object Count Summarizer & Plotter
+#
+# This script counts objects in curated and predicted masks, then creates a
+# scatter plot to compare the counts for each image, faceted by cell line.
+
+
+# --- 1. Required Libraries ---
+# Ensure you have these libraries installed.
+# install.packages(c("tiff", "dplyr", "purrr", "stringr", "tidyr", "ggplot2"))
+
+library(tiff)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+
+# --- 2. Configuration ---
+# Define the paths to your mask directories.
+PREDICTED_MASKS_DIR <- "data/train/tuned-cpsam-masks"
+GROUND_TRUTH_DIR    <- "data/train/curated-masks"
+OUTPUT_PLOT_PATH    <- "object_count_comparison.png"
+
+# --- 3. Helper Function: Count Objects and Extract Metadata ---
+get_counts_from_file <- function(file_path) {
+  
+  # Read the mask file
+  mask <- readTIFF(file_path)
+  
+  # Count unique non-zero labels to get the number of objects
+  object_count <- length(setdiff(unique(as.vector(mask)), 0))
+  
+  # Create a unique key from the filename to join on
+  file_name <- basename(file_path)
+  image_key <- str_remove(file_name, "_cpsam_mask.tif|_curated_mask.tif|_cpose_input_mask.tif")
+  
+  # Extract the cell line from the filename
+  cell_line <- str_split(file_name, "_", simplify = TRUE)[1, 1]
+  
+  # Return a single-row data frame (tibble)
+  tibble(
+    image_key = image_key,
+    cell_line = cell_line,
+    object_count = object_count
+  )
+}
+
+# --- 4. Main Execution ---
+
+# Get lists of all mask files
+predicted_files <- list.files(PREDICTED_MASKS_DIR, pattern = "\\.tif$", full.names = TRUE)
+gt_files <- list.files(GROUND_TRUTH_DIR, pattern = "\\.tif$", full.names = TRUE)
+
+if (length(predicted_files) == 0 || length(gt_files) == 0) {
+  stop("Mask files not found in one or both specified directories.")
+}
+
+# Process both sets of files
+cpose_counts <- map_dfr(predicted_files, get_counts_from_file)
+manual_counts <- map_dfr(gt_files, get_counts_from_file)
+
+# Join the dataframes to create a comparison table for plotting
+comparison_df <- inner_join(
+  cpose_counts,
+  manual_counts,
+  by = c("image_key", "cell_line"),
+  suffix = c("_cpose", "_manual")
+)
+
+# --- 5. Generate and Save Plot ---
+
+# Create the scatter plot
+count_plot <- ggplot(comparison_df, aes(x = object_count_cpose, y = object_count_manual)) +
+  geom_point(alpha = 0.6, size = 2) +
+  # Add a y=x line for reference (perfect agreement)
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  # Create a separate plot for each cell line
+  facet_wrap(~ cell_line, scales = "free") +
+  # Add labels and a title
+  labs(
+    title = "Comparison of Object Counts: Manual vs. Cellpose",
+    subtitle = "Points on the red line indicate perfect agreement",
+    x = "Object Count (Cellpose)",
+    y = "Object Count (Manual)"
+  ) +
+  # Use a clean theme
+  theme_bw()+
+  scale_x_sqrt()+
+  scale_y_sqrt()
+
+count_plot
+```
+
+
+```{r}
+# Segmentation Accuracy Metrics Calculator
+#
+# This script compares predicted segmentation masks (from a model like Cellpose)
+# against manually curated ground truth masks to calculate performance metrics.
+# VERSION 2: Includes a more robust one-to-one matching algorithm.
+
+# --- 1. Required Libraries ---
+# Ensure you have these libraries installed.
+# install.packages(c("tiff", "dplyr", "purrr", "stringr"))
+
+library(tiff)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# --- 2. Configuration ---
+# Define the paths to your mask directories.
+# Please update these paths to match your project structure.
+PREDICTED_MASKS_DIR <- "data/train/cpsam-masks"
+GROUND_TRUTH_DIR    <- "data/train/curated-masks"
+IOU_THRESHOLD       <- 0.5 # Threshold to consider a prediction a "match"
+
+# --- 3. Helper Function: Calculate IoU Matrix ---
+calculate_iou_matrix <- function(pred_mask, gt_mask) {
+  pred_labels <- setdiff(unique(as.vector(pred_mask)), 0)
+  gt_labels <- setdiff(unique(as.vector(gt_mask)), 0)
+  
+  if (length(pred_labels) == 0 || length(gt_labels) == 0) {
+    # Return a matrix with correct dimensions even if one is empty
+    return(matrix(0, 
+                  nrow = length(gt_labels), 
+                  ncol = length(pred_labels),
+                  dimnames = list(gt_labels, pred_labels)))
+  }
+  
+  iou_matrix <- matrix(0, 
+                       nrow = length(gt_labels), 
+                       ncol = length(pred_labels),
+                       dimnames = list(gt_labels, pred_labels))
+  
+  for (gt_id in gt_labels) {
+    gt_binary <- gt_mask == gt_id
+    for (pred_id in pred_labels) {
+      pred_binary <- pred_mask == pred_id
+      intersection <- sum(gt_binary & pred_binary)
+      union <- sum(gt_binary | pred_binary)
+      if (union > 0) {
+        iou_matrix[as.character(gt_id), as.character(pred_id)] <- intersection / union
+      }
+    }
+  }
+  
+  return(iou_matrix)
+}
+
+# --- 4. Main Function: Analyze a Single Image Pair (REVISED) ---
+analyze_pair <- function(pred_path, gt_path, iou_threshold) {
+  pred_mask <- readTIFF(pred_path)
+  gt_mask <- readTIFF(gt_path)
+  
+  iou_matrix <- calculate_iou_matrix(pred_mask, gt_mask)
+  
+  num_gt_objects <- nrow(iou_matrix)
+  num_pred_objects <- ncol(iou_matrix)
+  
+  if (num_gt_objects == 0 & num_pred_objects == 0) {
+    return(list(tp = 0, fp = 0, fn = 0, splits = 0, merges = 0, matched_ious = numeric(0)))
+  }
+  
+  # Convert matrix to a long-format data frame of potential matches
+  potential_matches <- as.data.frame(as.table(iou_matrix)) %>%
+    `colnames<-`(c("gt_id", "pred_id", "iou")) %>%
+    filter(iou > 0) # Keep all non-zero overlaps for analysis
+
+  # --- Independent Split/Merge Calculation (Diagnostic) ---
+  # This calculation happens on all potential connections before filtering by threshold.
+  # A split is when one GT object is plausibly covered by multiple predicted objects.
+  splits <- potential_matches %>%
+    group_by(gt_id) %>%
+    summarise(n = n(), .groups = 'drop') %>%
+    filter(n > 1) %>%
+    nrow()
+
+  # A merge is when one prediction covers multiple GT objects.
+  merges <- potential_matches %>%
+    group_by(pred_id) %>%
+    summarise(n = n(), .groups = 'drop') %>%
+    filter(n > 1) %>%
+    nrow()
+
+  # --- Robust One-to-One Matching for TP/FP/FN ---
+  # Filter matches by the IoU threshold for the main calculation
+  matches_over_thresh <- potential_matches %>% filter(iou >= iou_threshold)
+  
+  matched_pairs <- data.frame(gt_id=character(), pred_id=character(), iou=numeric())
+
+  # Iteratively find the best match and remove participants from consideration
+  while(nrow(matches_over_thresh) > 0) {
+    # Find the best remaining pair
+    best_pair <- matches_over_thresh %>%
+      slice_max(order_by = iou, n = 1, with_ties = FALSE)
+    
+    # Add it to our list of true positives
+    matched_pairs <- rbind(matched_pairs, best_pair)
+    
+    # Remove the matched GT and Pred objects from the pool
+    matches_over_thresh <- matches_over_thresh %>%
+      filter(gt_id != best_pair$gt_id, pred_id != best_pair$pred_id)
+  }
+
+  tp <- nrow(matched_pairs)
+  fp <- num_pred_objects - tp
+  fn <- num_gt_objects - tp
+  
+  return(list(
+    tp = tp,
+    fp = fp,
+    fn = fn,
+    splits = splits,
+    merges = merges,
+    matched_ious = matched_pairs$iou
+  ))
+}
+
+# --- 5. Main Execution ---
+
+pred_files <- list.files(PREDICTED_MASKS_DIR, pattern = "\\.tif$", full.names = TRUE)
+
+if (length(pred_files) == 0) {
+  stop("No predicted masks found in the specified directory.")
+}
+
+all_results <- map(pred_files, function(pred_path) {
+  file_name <- basename(pred_path)
+  gt_path <- file.path(GROUND_TRUTH_DIR, str_replace(file_name, "_cpsam_mask", "_curated_mask"))
+  
+  if (!file.exists(gt_path)) {
+    warning(paste("Missing ground truth for:", file_name))
+    return(NULL)
+  }
+  
+  cat("Processing:", file_name, "\n")
+  tryCatch({
+    analyze_pair(pred_path, gt_path, IOU_THRESHOLD)
+  }, error = function(e) {
+    warning(paste("Error processing", file_name, ":", e$message))
+    return(NULL)
+  })
+}) %>%
+  compact()
+
+# Aggregate results
+total_tp <- sum(map_dbl(all_results, "tp"))
+total_fp <- sum(map_dbl(all_results, "fp"))
+total_fn <- sum(map_dbl(all_results, "fn"))
+total_splits <- sum(map_dbl(all_results, "splits"))
+total_merges <- sum(map_dbl(all_results, "merges"))
+all_matched_ious <- unlist(map(all_results, "matched_ious"))
+
+# --- 6. Calculate and Print Final Metrics ---
+
+precision <- if (total_tp + total_fp > 0) total_tp / (total_tp + total_fp) else 0
+recall    <- if (total_tp + total_fn > 0) total_tp / (total_tp + total_fn) else 0
+f1_score  <- if (precision + recall > 0) 2 * (precision * recall) / (precision + recall) else 0
+mean_iou  <- if (length(all_matched_ious) > 0) mean(all_matched_ious) else 0
+
+cat("\n--- Segmentation Accuracy Report (v2) ---\n")
+cat(sprintf("IoU Threshold: %.2f\n", IOU_THRESHOLD))
+cat("------------------------------------\n")
+cat(sprintf("Total True Positives (TP):   %d\n", total_tp))
+cat(sprintf("Total False Positives (FP):  %d\n", total_fp))
+cat(sprintf("Total False Negatives (FN):  %d\n", total_fn))
+cat("------------------------------------\n")
+cat(sprintf("Total Split Errors (diagnostic): %d\n", total_splits))
+cat(sprintf("Total Merge Errors (diagnostic): %d\n", total_merges))
+cat("------------------------------------\n")
+cat(sprintf("Overall Precision:           %.4f\n", precision))
+cat(sprintf("Overall Recall:              %.4f\n", recall))
+cat(sprintf("Overall F1-Score:            %.4f\n", f1_score))
+cat("------------------------------------\n")
+cat(sprintf("Mean IoU of Matched Objects: %.4f\n", mean_iou))
+cat("------------------------------------\n")
+
+"/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/train/cellpose_inputs"
+"/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/train/models/cpsam-tuned"
+"/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/train/cellpose_inputs/tuned-cpsam-masks"
+```
+
+
+python -m cellpose \
+  --dir data/train/cellpose_inputs \
+  --pretrained_model data/train/models/cpsam-tuned \
+  --save_tif \
+  --output data/train/tuned-cpsam-masks \
+  --verbose \
+  --use_gpu \
+  --batch_size 64
+  
+```{r}
+library(dplyr)
+library(tidyr)
+library(jsonlite)
+
+# Load and process manual point labels
+manual_df <- fromJSON("data/eval/labelling_output_points/session_point_labels.json") %>%
+  filter(label %in% c("alive", "dead")) %>%
+  count(image, label) %>%
+  pivot_wider(
+    names_from = label,
+    values_from = n,
+    names_glue = "{label}_manual",
+    values_fill = 0
+  )
+
+# Load and process batch classifier predictions
+pred_df <- fromJSON("data/eval/labelling_output_points/batch_predictions.json") %>%
+  imap_dfr(~ tibble(
+    alive_pred = sum(unlist(.x) == 1),
+    dead_pred = sum(unlist(.x) == 2)
+  ), .id = "image")
+
+# Join the two datasets
+comparison_df <- full_join(manual_df, pred_df, by = "image") %>%
+  mutate(across(where(is.numeric), ~ replace_na(., 0))) %>%
+  select(image, ends_with("_manual"), ends_with("_pred"))
+
+meta <- do.call(rbind,pbapply::pblapply(comparison_df$image,get_meta))
+
+df <- cbind(comparison_df,meta)
+
+p <- ggplot(df)+
+  facet_wrap(~cellLine)+
+  geom_abline()+
+  geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
+  geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))
+p
+```
+

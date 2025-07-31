@@ -1,0 +1,251 @@
+---
+title: "Cell count modelling"
+author: "RJB"
+date: "2025-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
+```
+
+There are a bunch of MCF10A images which don't seem to have produced valid object results. There appears to be nothing wrong with the images, so we'll need to investigate this issue further... for now filter them out for the analysis.
+```{r}
+source("scripts/define_plate_maps.R")
+library(ggplot2)
+x <- data.table::fread("data/train/labelling_output_tuned-cpsam/classification_counts.csv")
+sum(x$alive<0)
+x[sample(which(x$alive<0),10),]
+x <- x[!x$alive<0,]
+
+platemap_id <- sapply(x$filename,function(str){
+  xi <- strsplit(str,split="_") |> unlist() 
+  paste(xi[1:2],collapse="_")
+}) 
+
+print(nrow(x))
+
+x <- x[platemap_id%in%names(m),]
+print(nrow(x))
+
+meta <- do.call(rbind,pbapply::pblapply(x$filename,get_meta))
+
+df <- cbind(meta,x)
+
+smm <- aggregate(list(alive=df$alive,dead=df$dead),by=list(
+  cellLine=df$cellLine,
+  experiment=df$experiment,
+  plateID = df$plateID,
+  ploidy=df$ploidy,
+  glucose=df$glucose,
+  hours=df$hours
+),mean)
+smm$glucose <- as.numeric(smm$glucose)
+s <- split(smm,f=smm$cellLine)
+
+plts <- lapply(s,function(d){
+    p <- ggplot(d,aes(x=hours))+
+      geom_point(aes(y=alive,color="alive"))+
+      geom_point(aes(y=dead,color="dead"))+
+      facet_grid(rows=vars(as.numeric(glucose)),cols=vars(ploidy),scales="free")+
+      ggtitle(d$cellLine[1],subtitle = d$experiment[1])
+    p
+})
+
+
+
+
+```
+
+```{r}
+library(rxode2)
+times <- seq(0, 250, by = 0.5)
+
+ev <- eventTable() %>%
+  add.dosing(dose = 200, nbr.doses = 1, dosing.to = "NL", start.time = 0)
+
+# 3. ADD THE SAMPLING TIMES TO THE EVENT TABLE
+# This is the key step that fixes the error.
+ev <- ev %>% add.sampling(times)
+
+# 4. Solve the system
+# The call now only needs the model and the event table.
+solution1 <- solve(model_B, ev)
+
+# 5. View and plot the results
+head(solution1)
+plot(solution1)
+```
+
+
+```{r}
+library(parallel)
+library(data.table)
+library(rxode2)
+
+# --- 1. Define all necessary objects in the main session ---
+
+# Use the numerically stable model from our previous discussion
+model <- model_B
+
+# Create the objective function from the factory
+ofun <- make_obj_fun(model)
+
+# Define the initial parameter vector
+pars <- c(model$.mv$ini, NL0 = 200, ND0 = 0)
+
+# Your list of data subsets
+data_subset <- split(smm, f = paste(smm$cellLine, smm$ploidy,smm$glucose))
+
+
+# --- 2. Set up and configure the parallel cluster ---
+
+# Start the cluster
+cl <- makeCluster(getOption("cl.cores", min(60,length(data_subset))))
+
+# Load required packages on each worker node
+clusterCall(cl, fun = function() {
+  library(data.table)
+  library(rxode2)
+})
+
+# Export the necessary functions and variables to each worker node
+clusterExport(cl, varlist = c("ofun", "pars", "model"))
+
+
+# --- 3. Run the parallel computation ---
+
+# Now the parLapply call will work because 'ofun' and 'pars' exist on the workers
+opt_results <- parLapply(cl, data_subset, function(dt) {
+  # It's good practice to wrap optim in try() for robustness
+  optim(par = pars, fn = ofun, data_subset = dt)
+})
+
+
+# --- 4. Stop the cluster to release resources ---
+
+stopCluster(cl)
+
+# You can now inspect your results
+# print(opt_results)
+```
+
+
+```{r}
+
+
+fit_data <- create_fit_data(opt_results,data_subset,model)
+fit_data <- split(fit_data,f=fit_data$cellLine)
+```
+
+
+```{r}
+plts <- lapply(1:length(s),function(i){
+  d <- s[[i]]
+  fd <- fit_data[[i]]
+    p <- ggplot(d,aes(x=hours))+
+      geom_point(aes(y=alive,color="alive"))+
+      geom_point(aes(y=dead,color="dead"))+
+      geom_line(data=fd,aes(y=NL,color="alive"))+
+      geom_line(data=fd,aes(y=ND,color="dead"))+
+      facet_grid(rows=vars(as.numeric(glucose)),cols=vars(ploidy),scales="free")+
+      ggtitle(d$cellLine[1],subtitle = d$experiment[1])
+    p
+})
+```
+
+
+```{r}
+# --- 1. Setup: Load libraries and source your script ---
+
+source("scripts/parameter_estimation.R")
+
+fit_res <- readRDS("data/models/hsieh.Rds")
+
+s <- split(smm,f=smm$cellLine)
+
+for(i in 1:length(s)){
+  p <- ggplot(s[[i]],aes(x=hours))+
+      geom_point(aes(y=alive,color="alive"))+
+      geom_point(aes(y=dead,color="dead"))+
+      geom_line(data=fit_res[[i]]$traj_best,aes(y=NL,color="alive"))+
+      geom_line(data=fit_res[[i]]$traj_best,aes(y=ND,color="dead"))+
+      facet_grid(rows=vars(as.numeric(glucose)),cols=vars(ploidy),scales="free")+
+      ggtitle(s[[i]]$cellLine[1],subtitle = s[[i]]$experiment[1])
+    plot(p)
+}
+
+
+```
+
+```{r}
+x <- readRDS("data/models/yang_screen.Rds")
+pars <- x$parameter_sets[x$summary$param_set_id[1]][[1]]
+
+
+```
+```{r}
+
+library(rxode2)
+
+intra_model <- rxode2({
+  ## -----------------------------------------------------------------------
+  ## Model Parameters
+  ## -----------------------------------------------------------------------
+  # Glucose Uptake
+  Vmax_uptake <- 0.0001    # mM/(#*hr)      ; max glucose uptake rate per cell
+  Km_uptake   <- 0.1       # mM              ; half-saturation for uptake
+
+  # Growth & Maintenance from Internal Store (R)
+  kp          <- 1.6e-2    # 1/hr            ; max growth rate
+  Y_xr        <- 500       # #/mM            ; yield of cells from internal resource R
+  m_r         <- 1e-5      # mM/(#*hr)       ; maintenance cost per cell
+
+  # Death Rates
+  kdStarv     <- 8e-2      # 1/hr            ; max death rate from starvation
+  kw          <- 5e-8      # 1/(mM*hr)       ; toxicity constant for waste
+
+  # Waste Dynamics
+  deltaW      <- 0         # 1/hr            ; waste removal/decay rate
+
+  # Growth & Death Switches (based on internal store R)
+  r_half_g    <- 0.001     # mM/#            ; per-cell store R for half-maximal growth
+  nr_g        <- 4         # unitless        ; hill coef for growth switch
+  r_half_d    <- 0.00002   # mM/#            ; per-cell store R for half-maximal death
+  nr_d        <- 4         # unitless        ; hill coef for death switch
+
+  ## -----------------------------------------------------------------------
+  ## Intermediate Calculations & Differential Equations
+  ## -----------------------------------------------------------------------
+  # Per-cell internal store (average)
+  r_cell <- max(0,R / (NL + 1e-9))
+
+  # Key rates
+  glucose_uptake_rate <- Vmax_uptake * (G / (Km_uptake + G)) 
+  growth_rate <- kp * (r_cell^nr_g / (r_half_g^nr_g + r_cell^nr_g)) 
+  starvation_death_rate <- kdStarv * (r_half_d^nr_d / (r_half_d^nr_d + r_cell^nr_d)) 
+  waste_death_rate <- kw * W  # SIMPLIFIED: Linear toxicity
+  
+  # State variables
+  d/dt(G) = -glucose_uptake_rate*NL
+
+  d/dt(NL) = (growth_rate - starvation_death_rate - waste_death_rate)*NL
+
+  d/dt(ND) = (starvation_death_rate + waste_death_rate)*NL
+
+  d/dt(R) = glucose_uptake_rate - NL*((1/Y_xr) * growth_rate + m_r + r_cell * (starvation_death_rate + waste_death_rate))
+  
+  d/dt(W) = (glucose_uptake_rate - deltaW * W)*NL # SIMPLIFIED: Waste integrates glucose use
+
+})
+
+times <- seq(0, 250, by = 0.5)
+ev <- eventTable() %>% 
+  add.sampling(times)
+
+inits <- c(G = 1, NL = 100, ND = 0, W = 0, R = 1)
+sol <- rxSolve(intra_model, ev, inits = inits)
+plot(sol)
+
+```
+

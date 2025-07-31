@@ -1,0 +1,313 @@
+---
+title: "Cell count modelling"
+author: "RJB"
+date: "2025-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
+```
+
+There are a bunch of MCF10A images which don't seem to have produced valid object results. There appears to be nothing wrong with the images, so we'll need to investigate this issue further... for now filter them out for the analysis.
+```{r}
+source("scripts/define_plate_maps.R")
+library(ggplot2)
+x <- data.table::fread("data/train/labelling_output_tuned-cpsam/classification_counts.csv")
+sum(x$alive<0)
+x[sample(which(x$alive<0),10),]
+x <- x[!x$alive<0,]
+
+platemap_id <- sapply(x$filename,function(str){
+  xi <- strsplit(str,split="_") |> unlist() 
+  paste(xi[1:2],collapse="_")
+}) 
+
+print(nrow(x))
+
+x <- x[platemap_id%in%names(m),]
+print(nrow(x))
+
+meta <- do.call(rbind,pbapply::pblapply(x$filename,get_meta))
+
+df <- cbind(meta,x)
+
+smm <- aggregate(list(alive=df$alive,dead=df$dead),by=list(
+  cellLine=df$cellLine,
+  experiment=df$experiment,
+  plateID = df$plateID,
+  ploidy=df$ploidy,
+  glucose=df$glucose,
+  hours=df$hours
+),mean)
+
+s <- split(smm,f=smm$cellLine)
+
+plts <- lapply(s,function(d){
+    p <- ggplot(d,aes(x=hours))+
+      geom_point(aes(y=alive,color="alive"))+
+      geom_point(aes(y=dead,color="dead"))+
+      facet_grid(rows=vars(as.numeric(glucose)),cols=vars(ploidy),scales="free")+
+      ggtitle(d$cellLine[1],subtitle = d$experiment[1])
+    p
+})
+
+
+
+
+```
+Make image display functions available:
+```{r}
+source("scripts/image_utils.R")
+lookup <- make_lookup()
+```
+
+MCF10A - 4N cells win under zero glucose SEEMS TRUE
+```{r}
+plts$MCF10A
+set.seed(42)
+make_composite(sample(df$filename[df$glucose==0&df$ploidy=="2N"&df$cellLine=="MCF10A"&df$hours==56],1),lookup)
+make_composite(sample(df$filename[df$glucose==0&df$ploidy=="4N"&df$cellLine=="MCF10A"&df$hours==56],1),lookup)
+
+```
+MCF10A - 2N cells winning under moderate glucose restriction SEEMS TRUE
+```{r}
+plts$MCF10A
+set.seed(42)
+make_composite(sample(df$filename[df$glucose==0.5&df$ploidy=="2N"&df$cellLine=="MCF10A"&df$hours==72],1),lookup)
+make_composite(sample(df$filename[df$glucose==0.5&df$ploidy=="4N"&df$cellLine=="MCF10A"&df$hours==72],1),lookup)
+
+```
+
+MCF10A - Tie under high glucose SEEMS TRUE.
+```{r}
+plts$MCF10A
+set.seed(42)
+
+matches_1 <- df$filename[df$glucose==25&df$ploidy=="2N"&df$cellLine=="MCF10A"&df$hours==120] 
+matches_2 <- df$filename[df$glucose==25&df$ploidy=="4N"&df$cellLine=="MCF10A"&df$hours==120]
+f1 <- sample(matches_1,1)
+f2 <- sample(matches_2,1)
+make_composite(f1,lookup)
+make_composite(f2,lookup)
+
+x[x$filename%in%matches_1,]
+x[x$filename%in%matches_2,]
+```
+MCF10A-ctrl very variable outcomes under low glucose for 2N? SEEMS TRUE
+
+```{r}
+plts$`MCF10A-ctrl`
+set.seed(42)
+m1 <- df$filename[df$glucose==0.1&df$ploidy=="2N"&df$cellLine=="MCF10A-ctrl"&df$hours==72]
+
+for(fi in sample(m1,10)) make_composite(sample(fi,1),lookup)
+
+```
+```{r}
+plts$`MCF10A-hras`
+set.seed(42)
+make_composite(sample(df$filename[df$glucose==1&df$ploidy=="2N"&df$cellLine=="MCF10A-hras"&df$hours==72],1),lookup)
+make_composite(sample(df$filename[df$glucose==1&df$ploidy=="4N"&df$cellLine=="MCF10A-hras"&df$hours==72],1),lookup)
+
+```
+Weird result that MCF10A-hras 2N cells apparently die off in the highest glucose conditions?? Have checked the platemap and appears no error there on the data analysis side.
+```{r}
+plts$`MCF10A-hras`
+set.seed(42)
+flist <- sample(df$filename[df$glucose==25&df$ploidy=="2N"&df$cellLine=="MCF10A-hras"&df$hours==72],3)
+make_composite(flist[1],lookup)
+make_composite(flist[2],lookup)
+make_composite(flist[3],lookup)
+make_composite(sample(df$filename[df$glucose==25&df$ploidy=="4N"&df$cellLine=="MCF10A-hras"&df$hours==72],1),lookup)
+
+```
+
+High ploidy cells are doing better in zero glucose? Looks that way, although it can be tricky to distinguish live vs dead cells for this cell line:
+```{r}
+plts$SNU668
+set.seed(42)
+make_composite(sample(df$filename[df$glucose==.0&df$ploidy=="low"&df$cellLine=="SNU668"&df$hours==24],1),lookup)
+make_composite(sample(df$filename[df$glucose==.0&df$ploidy=="high"&df$cellLine=="SNU668"&df$hours==24],1),lookup)
+
+```
+Low ploidy cells may have the edge in glucose limited environments:
+```{r}
+plts$SNU668
+set.seed(42)
+make_composite(sample(df$filename[df$glucose==.5&df$ploidy=="low"&df$cellLine=="SNU668"&df$hours==80],1),lookup)
+make_composite(sample(df$filename[df$glucose==.5&df$ploidy=="high"&df$cellLine=="SNU668"&df$hours==80],1),lookup)
+
+```
+Low ploidy cells smash when glucose is non-limiting.
+```{r}
+plts$SNU668
+set.seed(42)
+
+matches_1 <- df$filename[df$glucose==25&df$ploidy=="low"&df$cellLine=="SNU668"&df$hours==120]
+matches_2 <- df$filename[df$glucose==25&df$ploidy=="high"&df$cellLine=="SNU668"&df$hours==120]
+
+f1 <- sample(matches_1,1)
+f2 <- sample(matches_2,1)
+make_composite(f1,lookup)
+make_composite(f2,lookup)
+
+```
+```{r}
+plts$`SUM-159-chem`
+set.seed(42)
+
+m1 <- df$filename[df$glucose==1&df$ploidy=="2N"&df$cellLine=="SUM-159-chem"&df$hours==64] 
+m2 <- df$filename[df$glucose==1&df$ploidy=="4N"&df$cellLine=="SUM-159-chem"&df$hours==64]
+f1 <- sample(m1,1)
+f2 <- sample(m2,1)
+make_composite(f1,lookup)
+make_composite(f2,lookup)
+
+
+```
+Not much difference in MBA-MB-231 at any glucose conc:
+```{r}
+plts$`MDA-MB-231`
+set.seed(42)
+
+m1 <- df$filename[df$glucose==.1&df$ploidy=="3N"&df$cellLine=="MDA-MB-231"&df$hours==24] 
+m2 <- df$filename[df$glucose==.1&df$ploidy=="parental"&df$cellLine=="MDA-MB-231"&df$hours==24]
+f1 <- sample(m1,1)
+f2 <- sample(m2,1)
+make_composite(f1,lookup)
+make_composite(f2,lookup)
+
+
+```
+```{r}
+plts$`MDA-MB-231`
+set.seed(42)
+
+m1 <- df$filename[df$glucose==25&df$ploidy=="3N"&df$cellLine=="MDA-MB-231"&df$hours==96] 
+m2 <- df$filename[df$glucose==25&df$ploidy=="parental"&df$cellLine=="MDA-MB-231"&df$hours==96]
+f1 <- sample(m1,1)
+f2 <- sample(m2,1)
+make_composite(f1,lookup)
+make_composite(f2,lookup)
+
+
+```
+
+```{r}
+y <- split(df,f=paste(df$cellLine,df$ploidy,df$plateID,df$experiment))
+
+y <- do.call(rbind,lapply(y,function(yi){
+  tt <- yi$hours
+  ntot <- yi$alive+yi$dead
+  agg <- aggregate(list(ntot=ntot,alive=yi$alive),by=list(tt=tt),mean)
+  max_biomass <- max(agg$ntot)
+  alive_time <- sum(agg$alive)
+  dfi <- yi[1,colnames(yi)[1:5]]
+  dfi$alive_time <- alive_time
+  dfi$max_biomass <- max_biomass
+  dfi
+}))
+
+p <- ggplot(y,aes(x=glucose,y=alive_time,color=ploidy))+
+  facet_wrap(~cellLine)+
+  stat_summary()+
+  ggtitle("alive time")
+p
+
+p <- ggplot(y,aes(x=glucose,y=max_biomass,color=ploidy))+
+  facet_wrap(~cellLine)+
+  stat_summary()+
+  ggtitle("total biomass")
+p
+
+```
+
+
+```{r}
+dfag <- aggregate(list(alive=df$alive,dead=df$dead),by=list(
+  cellLine=df$cellLine,
+  experiment=df$experiment,
+  ploidy=df$ploidy,
+  glucose=df$glucose,
+  hours=df$hours
+),sum)
+
+dfag <- split(dfag,f=paste(dfag$cellLine,dfag$experiment,dfag$ploidy,dfag$glucose))
+
+dfag <- do.call(rbind,lapply(dfag,function(dfi){
+  dfi$Y <- (max(dfi$alive)-dfi$alive[1])/as.numeric(dfi$glucose[1])
+  dfi[1,]
+}))
+
+
+p <- ggplot(dfag,aes(x=as.numeric(glucose),y=Y))+
+  facet_wrap(~cellLine)+
+  geom_point(aes(color=ploidy))+
+  scale_x_log10()+
+  scale_y_log10()
+p
+
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+## 1 ── clean ploidy labels -------------------------------------------------
+df <- df %>% 
+  mutate(ploidy_simple = case_when(
+    ploidy %in% c("2N", "2N-Ctrl", "2N-HRas") ~ "2N",
+    ploidy %in% c("3N")                       ~ "3N",
+    ploidy %in% c("4N", "4N-Ctrl", "4N-HRas") ~ "4N",
+    TRUE                                      ~ ploidy            # keep 'high','low','parental'
+  ))
+
+## 2 ── growth‑rate r from 3 days of the highest‑glucose wells --------------
+growth_rates <- df %>% 
+  group_by(cellLine, experiment, ploidy_simple) %>% 
+  mutate(max_glc = max(glucose, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(glucose == max_glc, hours <= 72, alive > 0) %>%  # first 72 h, avoid log(0)
+  group_by(cellLine, experiment, ploidy_simple) %>% 
+  summarise(
+    r = if (n_distinct(hours) >= 3) coef(lm(log(alive) ~ hours))[2] else NA_real_,
+    .groups = "drop"
+  )
+
+## 3 ── per‑well N0, Npeak, Y, q -------------------------------------------
+well_summ <- df %>% 
+  group_by(cellLine, experiment, plateID, ploidy_simple, glucose) %>% 
+  summarise(
+    N0     = first(alive[order(hours)]),   # t = 0 (already 0 h in your data)
+    Npeak  = max(alive),
+    .groups = "drop"
+  ) %>% 
+  left_join(growth_rates, by = c("cellLine", "experiment", "ploidy_simple")) %>% 
+  filter(glucose > 0, Npeak > N0, !is.na(r)) %>%           # sane wells only
+  mutate(
+    Y = (Npeak - N0) / as.numeric(glucose),                            # cells per mM
+    q = (as.numeric(glucose) * r) / (Npeak - N0)                       # mM · cell⁻¹ · h⁻¹
+  )
+
+## 4 ── quick log‑log plots --------------------------------------------------
+p_y <- ggplot(well_summ, aes(as.numeric(glucose), Y, colour = ploidy_simple)) +
+  geom_point() + facet_wrap(~interaction(cellLine,experiment)) +
+  scale_x_log10() + scale_y_log10() +
+  labs(x = "Plated glucose (mM, log scale)",
+       y = "Yield (cells · mM⁻¹, log scale)",
+       colour = "Ploidy")
+
+p_q <- ggplot(well_summ, aes(as.numeric(glucose), q, colour = ploidy_simple)) +
+  geom_point() + facet_wrap(~interaction(cellLine,experiment)) +
+  scale_x_log10() + scale_y_log10() +
+  labs(x = "Plated glucose (mM, log scale)",
+       y = "Per‑division glucose cost q (log scale)",
+       colour = "Ploidy")
+
+print(p_y)
+print(p_q)
+
+
+```
+

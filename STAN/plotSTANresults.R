@@ -1,183 +1,297 @@
-# ============================================================
-# Pair-plot + chain-overlap diagnostics for model_B fit (FIXED CALIB VERSION)
-# - Works whether calib_a/calib_b are parameters (old) or fixed as data (new)
-# ============================================================
-
 library(cmdstanr)
-library(bayesplot)
 library(posterior)
+library(dplyr)
+library(tidyr)
 library(ggplot2)
+library(data.table)
 
-color_scheme_set("mix-blue-pink")
+# ==============================================================================
+# 1. SETUP & LOAD
+# ==============================================================================
+cat("Loading Data and Fit...\n")
+stan_data <- readRDS("data/stan_ready_data.Rds")
+fit_file  <- "results/fit_model_B.Rds"
 
-fit <- readRDS("results/fit_model_B.Rds")
+if (!file.exists(fit_file)) stop("Fit file not found!")
+fit <- readRDS(fit_file)
 
-# ------------------------------------------------------------
-# 0) Helpers (robust variable detection)
-# ------------------------------------------------------------
-safe_draws_matrix <- function(vars){
-  tryCatch(
-    fit$draws(variables = vars, format = "matrix"),
-    error = function(e) NULL
+if (!dir.exists("results")) dir.create("results")
+
+# ==============================================================================
+# 2. POSTERIOR PARAMETER DISTRIBUTIONS (Single Page)
+# ==============================================================================
+cat("Extracting hierarchical parameters for reconstruction...\n")
+
+vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high")
+draws_df <- as_draws_df(fit$draws(variables = vars_needed, inc_warmup = FALSE))
+
+softcap <- function(x, cap) cap - log1p(exp(cap - x))
+cap_log_main <- 40.0
+cap_log_hill <- 6.0
+par10_names  <- c("theta","kp","kd","kd2","g50a","na","g50d","nd","v1","v2")
+
+groups <- tibble(
+  line_id = stan_data$line_id, 
+  high = stan_data$is_high_ploidy
+) %>%
+  distinct(line_id, high) %>%
+  arrange(line_id, high) %>%
+  mutate(group_lbl = paste0("Line ", line_id, " | ", ifelse(high==1, "High", "Low")))
+
+cat("Reconstructing effective ODE parameters...\n")
+reconstructed_list <- list()
+N_draws <- nrow(draws_df)
+
+for(g in 1:nrow(groups)) {
+  l <- groups$line_id[g]
+  h <- groups$high[g]
+  lbl <- groups$group_lbl[g]
+  
+  p_mat <- matrix(NA_real_, nrow = N_draws, ncol = 10)
+  colnames(p_mat) <- par10_names
+  
+  for(pp in 1:10) {
+    mu    <- draws_df[[paste0("mu_global[", pp, "]")]]
+    sigma <- draws_df[[paste0("sigma_line[", pp, "]")]]
+    z     <- draws_df[[paste0("z_line[", pp, ",", l, "]")]]
+    beta  <- draws_df[[paste0("beta_high[", pp, "]")]]
+    
+    raw <- mu + sigma * z + beta * h
+    
+    if(pp %in% c(6, 8)) {
+      p_mat[, pp] <- 1.0 + exp(softcap(raw, cap_log_hill))
+    } else {
+      p_mat[, pp] <- exp(softcap(raw, cap_log_main))
+    }
+  }
+  
+  df_g <- as.data.frame(p_mat)
+  df_g$chain <- as.factor(draws_df$.chain)
+  df_g$group <- lbl
+  
+  reconstructed_list[[g]] <- pivot_longer(df_g, cols = all_of(par10_names), names_to = "param", values_to = "value")
+}
+
+reconstructed_df <- bind_rows(reconstructed_list)
+reconstructed_df$group <- factor(reconstructed_df$group, levels = groups$group_lbl)
+reconstructed_df$param <- factor(reconstructed_df$param, levels = par10_names)
+
+cat("Generating Parameter Distribution Plot...\n")
+plot_height <- max(8, length(unique(reconstructed_df$group)) * 2.5)
+
+pdf("results/final_posterior_parameters.pdf", width = 20, height = plot_height)
+
+p <- ggplot(reconstructed_df, aes(x = value, fill = chain)) +
+  geom_histogram(bins = 60, position = "identity", alpha = 0.5, color = NA) +
+  facet_grid(group ~ param, scales = "free") +
+  scale_x_log10() +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  theme(
+    strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+    strip.text.x = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  ) +
+  labs(
+    title = "Posterior Parameter Distributions by Cell Line",
+    subtitle = "Reconstructed Effective Parameters (Sampling Phase) | Colored by Chain",
+    x = "Value (Log Scale)", 
+    y = "Count",
+    fill = "Chain"
   )
-}
 
-# Prefer old calibration axis if present, otherwise use calib_sigma[1] if present,
-# otherwise fall back to something always-present to keep the pipeline running.
-calib_axis <- NA_character_
-
-# Try old-style calib_a[1]
-tmp <- safe_draws_matrix("calib_a")
-if (!is.null(tmp) && any(grepl("^calib_a\\[1\\]$", colnames(tmp)))) {
-  calib_axis <- "calib_a[1]"
-}
-
-# Try calib_sigma[1] (new-style fixed calib still estimates calib_sigma)
-if (is.na(calib_axis)) {
-  tmp <- safe_draws_matrix("calib_sigma")
-  if (!is.null(tmp)) {
-    # pick first indexed element available (usually [1])
-    cs <- colnames(tmp)
-    cs1 <- cs[grepl("^calib_sigma\\[", cs)][1]
-    if (!is.na(cs1)) calib_axis <- cs1
-  }
-}
-
-# Last-resort fallback so the rest of the script runs
-if (is.na(calib_axis)) {
-  tmp <- safe_draws_matrix(c("phi_N","phi_D","mu_IC"))
-  if (!is.null(tmp)) {
-    # pick a scalar param if present
-    if ("phi_N" %in% colnames(tmp)) calib_axis <- "phi_N"
-    else if ("phi_D" %in% colnames(tmp)) calib_axis <- "phi_D"
-    else if (any(grepl("^mu_IC\\[1\\]$", colnames(tmp)))) calib_axis <- "mu_IC[1]"
-  }
-}
-
-if (is.na(calib_axis)) stop("Could not find any usable axis (calib_a[1] / calib_sigma[*] / phi_N / phi_D / mu_IC[1]). Check fit object.")
-
-cat("Using axis:", calib_axis, "\n")
-
-safe_cor <- function(x, y) {
-  ok <- is.finite(x) & is.finite(y)
-  if (sum(ok) < 3) return(NA_real_)
-  cor(x[ok], y[ok])
-}
+print(p)
+dev.off()
 
 
-# ------------------------------------------------------------
-# 1) Extract only parameters we care about (avoid huge y_sim)
-# ------------------------------------------------------------
-vars_wanted <- c("mu_global","mu_IC","beta_high")
+# ==============================================================================
+# 3. POSTERIOR PREDICTIVE CHECKS (PPC)
+# ==============================================================================
+cat("\nExtracting y_sim for PPC...\n")
+draws_sim <- fit$draws("y_sim", inc_warmup = FALSE)
 
-# include calibration pieces only if they exist
-if (!is.null(safe_draws_matrix("calib_a"))) vars_wanted <- c(vars_wanted, "calib_a","calib_b")
-if (!is.null(safe_draws_matrix("calib_sigma"))) vars_wanted <- c(vars_wanted, "calib_sigma")
+cat("Calculating Credible Intervals...\n")
+summ_sim <- summarize_draws(
+  draws_sim, 
+  median = function(x) quantile(x, 0.5, names = FALSE),
+  lo     = function(x) quantile(x, 0.025, names = FALSE),
+  hi     = function(x) quantile(x, 0.975, names = FALSE)
+)
 
-m <- fit$draws(variables = unique(vars_wanted), format = "matrix")
-pn <- colnames(m)
-cat("draw matrix dim:", paste(dim(m), collapse=" x "), "\n")
+summ_clean <- summ_sim %>%
+  mutate(clean = gsub("y_sim\\[|\\]", "", variable)) %>%
+  separate(clean, c("w", "t", "s"), sep = ",", convert = TRUE) %>%
+  mutate(
+    well_idx = w,
+    time     = stan_data$t_grid[t],
+    type     = case_when(s==1 ~ "NL", s==2 ~ "ND", s==3 ~ "G")
+  ) %>%
+  select(well_idx, time, type, median, lo, hi)
 
+meta_df <- data.frame(
+  well_idx = 1:stan_data$N_wells,
+  line_id  = stan_data$line_id,
+  is_high  = stan_data$is_high_ploidy,
+  G0       = stan_data$G0_per_well,
+  exp_id   = stan_data$exp_id
+)
+meta_df$ploidy_lbl <- ifelse(meta_df$is_high == 1, "High Ploidy", "Low Ploidy")
+meta_df$G0_lbl     <- factor(paste0(meta_df$G0, " mM"), levels = paste0(sort(unique(meta_df$G0)), " mM"))
 
-# ------------------------------------------------------------
-# 2) Identify candidate "uptake-like", "growth-like", "gsens-like" via correlations
-# ------------------------------------------------------------
-mg <- paste0("mu_global[", 1:10, "]")
+obs_counts <- data.frame(
+  well_idx = stan_data$well_idx_count,
+  time     = stan_data$t_grid[stan_data$grid_idx_count],
+  value    = stan_data$N_obs,
+  type     = "NL"
+) %>%
+  bind_rows(data.frame(
+    well_idx = stan_data$well_idx_count,
+    time     = stan_data$t_grid[stan_data$grid_idx_count],
+    value    = stan_data$D_obs,
+    type     = "ND"
+  ))
 
-# "uptake-like": the mu_global most correlated with calib axis
-cors_cal <- sapply(mg, \(v) safe_cor(m[, calib_axis], m[, v]))
-cat("\nCorrelation with ", calib_axis, ":\n", sep = "")
-print(sort(cors_cal))
+obs_gluc <- data.frame(
+  well_idx = stan_data$well_idx_gluc,
+  time     = stan_data$t_grid[stan_data$grid_idx_gluc],
+  lum      = stan_data$lum_obs,
+  dilution = stan_data$dilution
+) %>%
+  left_join(meta_df %>% select(well_idx, exp_id), by = "well_idx") %>%
+  mutate(
+    a = stan_data$calib_a_fixed[exp_id],
+    b = stan_data$calib_b_fixed[exp_id],
+    value = pmax(0, (lum - b)/(a*dilution)),
+    type  = "G"
+  ) %>%
+  select(well_idx, time, value, type)
 
-idx_upt <- which.max(abs(cors_cal))
-uptake_par <- sprintf("mu_global[%d]", idx_upt)
-cat("\nChosen uptake_par (max |cor| with ", calib_axis, "): ", uptake_par, "\n", sep = "")
+obs_all <- bind_rows(obs_counts, obs_gluc) %>% left_join(meta_df, by = "well_idx")
+sim_all <- summ_clean %>% left_join(meta_df, by = "well_idx")
 
-# "growth-like": the mu_global most correlated with N0 proxy
-cors_N0 <- sapply(mg, \(v) safe_cor(m[, "mu_IC[1]"], m[, v]))
-cat("\nCorrelation with mu_IC[1] (N0 proxy):\n")
-print(sort(cors_N0))
+cat("Generating PPC Plot...\n")
+pdf("results/final_ppc_check.pdf", width = 12, height = 10)
 
-idx_grow <- which.max(abs(cors_N0))
-grow_par <- sprintf("mu_global[%d]", idx_grow)
-cat("\nChosen grow_par (max |cor| with mu_IC[1]):", grow_par, "\n")
+scale_factor <- 1000 
+sim_scaled <- sim_all %>%
+  mutate(
+    median = ifelse(type == "G", median * scale_factor, median),
+    lo     = ifelse(type == "G", lo * scale_factor, lo),
+    hi     = ifelse(type == "G", hi * scale_factor, hi)
+  )
+obs_scaled <- obs_all %>%
+  mutate(
+    value = ifelse(type == "G", value * scale_factor, value)
+  )
 
-# "gsens-like": strong partner with uptake_par excluding itself
-cors_upt <- sapply(mg, \(v) safe_cor(m[, uptake_par], m[, v]))
-cat("\nCorrelation with uptake_par:\n")
-print(sort(cors_upt))
-
-exclude <- unique(c(uptake_par))
-cand <- setdiff(mg, exclude)
-cors_partner <- sapply(cand, \(v) abs(safe_cor(m[, uptake_par], m[, v])))
-gsens_par <- cand[which.max(cors_partner)]
-cat("\nChosen gsens_par (max |cor| with uptake_par among others):", gsens_par, "\n")
-
-# ------------------------------------------------------------
-# 3) Bayesplot pairs
-# ------------------------------------------------------------
-cat("\nRendering bayesplot mcmc_pairs...\n")
-
-p1 <- mcmc_pairs(m, pars = c(calib_axis, uptake_par))
-p2 <- mcmc_pairs(m, pars = c("mu_IC[1]",   grow_par))
-p3 <- mcmc_pairs(m, pars = c(uptake_par,   gsens_par))
-print(p1); print(p2); print(p3)
-
-# Optional: explicitly split chains 1-2 vs 3-4 (requires draws_array)
-a_vars <- unique(c("mu_global","mu_IC","calib_sigma"))
-a <- fit$draws(variables = a_vars, format = "draws_array")
-
-cond_12_34 <- pairs_condition(chains = list(c(1,2), c(3,4)))
-print(mcmc_pairs(a, pars = c("mu_IC[1]", grow_par, calib_axis, uptake_par), condition = cond_12_34))
-
-# ------------------------------------------------------------
-# 4) Better "do chains overlap?" visuals: ggplot colored by chain
-# ------------------------------------------------------------
-d_vars <- unique(c("mu_global","mu_IC","calib_sigma"))
-
-d <- as_draws_df(fit$draws(variables = d_vars))
-d$.chain <- factor(d$.chain)
-
-make_scatter <- function(x, y, title=NULL) {
-  ggplot(d, aes(x = .data[[x]], y = .data[[y]], color = .chain)) +
-    geom_point(alpha = 0.15, size = 0.6) +
+unique_lines <- sort(unique(meta_df$line_id))
+for(lid in unique_lines) {
+  p_sim <- sim_scaled %>% filter(line_id == lid)
+  p_obs <- obs_scaled %>% filter(line_id == lid)
+  if(nrow(p_sim) == 0) next
+  
+  cols <- c("NL" = "#009E73", "ND" = "#D55E00", "G" = "#E69F00")
+  fills <- c("NL" = "#009E73", "ND" = "#D55E00", "G" = "#E69F00")
+  
+  p <- ggplot() +
+    geom_ribbon(data = p_sim, aes(x = time, ymin = lo, ymax = hi, fill = type, group = interaction(well_idx, type)), alpha = 0.2) +
+    geom_line(data = p_sim, aes(x = time, y = median, color = type, group = interaction(well_idx, type)), linewidth = 0.8) +
+    geom_point(data = p_obs, aes(x = time, y = value, color = type, shape = type), size = 1.8, alpha = 0.6) +
+    facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
+    scale_y_continuous(name = "Cell Count (N/D)", sec.axis = sec_axis(~ . / scale_factor, name = "Glucose (mM)")) +
+    scale_color_manual(values = cols, labels = c("G" = "Glucose", "ND" = "Dead", "NL" = "Live")) +
+    scale_fill_manual(values = fills, labels = c("G" = "Glucose", "ND" = "Dead", "NL" = "Live")) +
+    scale_shape_manual(values = c("NL" = 16, "ND" = 17, "G" = 15), labels = c("G" = "Glucose", "ND" = "Dead", "NL" = "Live")) +
     theme_bw() +
-    labs(x = x, y = y, color = "chain", title = title)
+    theme(legend.position = "bottom", strip.background = element_rect(fill = "grey95"), strip.text = element_text(face = "bold"),
+          axis.title.y.right = element_text(color = "#E69F00"), axis.text.y.right = element_text(color = "#E69F00")) +
+    labs(title = paste("Posterior Predictive Check: Cell Line", lid), subtitle = "Ribbons = 95% CI | Lines = Median | Points = Data", x = "Time (hours)")
+  print(p)
+  cat("  Plot generated for Line", lid, "\n")
 }
+dev.off()
 
-make_contour <- function(x, y, title=NULL) {
-  ggplot(d, aes(x = .data[[x]], y = .data[[y]], color = .chain)) +
-    geom_density_2d(linewidth = 0.8) +
-    theme_bw() +
-    labs(x = x, y = y, color = "chain", title = title)
-}
 
-# Core three diagnostics, colored by chain:
-print(make_scatter(calib_axis, uptake_par, paste0("Scatter by chain: ", calib_axis, " vs uptake_par")))
-print(make_scatter("mu_IC[1]",  grow_par,   "Scatter by chain: mu_IC[1] vs grow_par"))
-print(make_scatter(uptake_par,  gsens_par,  "Scatter by chain: uptake_par vs gsens_par"))
+# ==============================================================================
+# 4. CHAIN DIAGNOSTICS (NEW)
+# ==============================================================================
+cat("\nExtracting Sampler Diagnostics...\n")
+sampler_diag <- fit$sampler_diagnostics(format = "df")
 
-# Often clearer than scatter:
-print(make_contour(calib_axis, uptake_par, paste0("Contours by chain: ", calib_axis, " vs uptake_par")))
-print(make_contour("mu_IC[1]",  grow_par,   "Contours by chain: mu_IC[1] vs grow_par"))
-print(make_contour(uptake_par,  gsens_par,  "Contours by chain: uptake_par vs gsens_par"))
+# Summarize metrics per chain
+chain_summary <- sampler_diag %>%
+  group_by(.chain) %>%
+  summarise(
+    divergences = sum(divergent__),
+    div_rate    = mean(divergent__),
+    max_tree_hit = sum(treedepth__ >= 12), # Assuming max_treedepth=12 from fitSTAN
+    max_tree_rate = mean(treedepth__ >= 12),
+    mean_stepsize = mean(stepsize__),
+    mean_energy = mean(energy__),
+    .groups = "drop"
+  )
 
-# ------------------------------------------------------------
-# 5) Extra quick sanity diagnostics (cheap, useful)
-# ------------------------------------------------------------
+print(chain_summary)
 
-# A) Rhat / ESS summary on key blocks (will be garbage if solver fails, but still informative)
-cat("\nSummary (mu_global, mu_IC, calib_sigma):\n")
-print(fit$summary(variables = c("mu_global","mu_IC","calib_sigma")))
+cat("Generating Chain Diagnostics Plot...\n")
+pdf("results/final_chain_diagnostics.pdf", width = 12, height = 8)
 
-# B) Divergence and treedepth rates (if present)
-diag <- fit$sampler_diagnostics(format = "draws_df")
-if ("divergent__" %in% names(diag)) {
-  div_rate <- diag %>% group_by(.chain) %>% summarise(div_rate = mean(divergent__ > 0), .groups = "drop")
-  cat("\nDivergence rate by chain:\n"); print(div_rate)
-}
-if ("treedepth__" %in% names(diag)) {
-  td_summ <- diag %>% group_by(.chain) %>% summarise(p_hit_max = mean(treedepth__ >= max(treedepth__)), .groups = "drop")
-  cat("\nTreedepth quick summary by chain (rough):\n"); print(td_summ)
-}
+# 1. Divergence Rate (Bar Plot)
+p_div <- ggplot(chain_summary, aes(x = factor(.chain), y = div_rate, fill = factor(.chain))) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent, limits = c(0, NA)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(title = "Divergence Rate per Chain", 
+       subtitle = "Target: 0%. High divergence indicates pathology.",
+       x = "Chain", y = "Divergence Rate", fill = "Chain")
 
+# 2. Max Treedepth Hits (Bar Plot)
+p_tree <- ggplot(chain_summary, aes(x = factor(.chain), y = max_tree_rate, fill = factor(.chain))) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent, limits = c(0, NA)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(title = "Max Treedepth Hit Rate per Chain", 
+       subtitle = "Target: 0%. Hitting limit implies inefficiency (step size too small).",
+       x = "Chain", y = "Hit Rate (Max Depth)", fill = "Chain")
+
+# 3. Step Size Distribution (Violin Plot)
+p_step <- ggplot(sampler_diag, aes(x = factor(.chain), y = stepsize__, fill = factor(.chain))) +
+  geom_violin(alpha = 0.5) +
+  geom_boxplot(width = 0.1, fill = "white") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(title = "Step Size Distribution", 
+       subtitle = "Should be consistent across chains. Tiny steps = stiff curvature.",
+       x = "Chain", y = "Step Size", fill = "Chain")
+
+# 4. Energy Distribution (Violin Plot)
+# Overlapping energy distributions indicate chains explored same physics
+p_energy <- ggplot(sampler_diag, aes(x = factor(.chain), y = energy__, fill = factor(.chain))) +
+  geom_violin(alpha = 0.5) +
+  geom_boxplot(width = 0.1, fill = "white") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(title = "Hamiltonian Energy Distribution", 
+       subtitle = "Distributions should overlap significantly.",
+       x = "Chain", y = "Energy", fill = "Chain")
+
+# 5. Acceptance Rate vs Treedepth (Scatter - Diagnostics in action)
+p_accept <- ggplot(sampler_diag, aes(x = factor(treedepth__), y = accept_stat__, fill = factor(.chain))) +
+  geom_boxplot(alpha = 0.6) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_bw() +
+  labs(title = "Acceptance Rate vs Tree Depth",
+       subtitle = "High depth usually correlates with lower acceptance if struggling.",
+       x = "Tree Depth", y = "Acceptance Stat", fill = "Chain")
+
+print(p_div)
+print(p_tree)
+print(p_step)
+print(p_energy)
+print(p_accept)
+
+dev.off()
+cat("Done. Check 'results/final_chain_diagnostics.pdf'.\n")

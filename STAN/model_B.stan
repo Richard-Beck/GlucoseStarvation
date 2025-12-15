@@ -201,6 +201,9 @@ data {
   real prior_mu_D0_mean;
   real prior_mu_D0_sd;
 
+  vector[10] prior_ode_mean;
+  vector[10] prior_ode_sd;
+
   vector<lower=0>[N_exps] calib_a_fixed;
   vector<lower=0>[N_exps] calib_b_fixed;
 
@@ -229,7 +232,7 @@ parameters {
 
 model {
   // Priors
-  mu_global ~ normal(0, 2);
+  mu_global ~ normal(prior_ode_mean, prior_ode_sd);
   sigma_line ~ exponential(1);
   to_vector(z_line) ~ std_normal();
   beta_high ~ normal(0, 1);
@@ -289,7 +292,7 @@ generated quantities {
     if (abs(t_eval[1]) < 1e-14) t_eval[1] = 1e-8;
 
     real cap_log_main = 40.0;
-    real cap_log_hill = 6.0;
+    real cap_log_hill = 2.5;
 
     for (w in 1:N_wells) {
       int l = line_id[w];

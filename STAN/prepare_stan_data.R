@@ -209,6 +209,76 @@ for (e in 1:N_exps) {
 }
 
 # ==============================================================================
+# 6b. PRINCIPLED ODE PRIORS (Scale Estimation)
+# ==============================================================================
+# 1. theta (Carrying Capacity): Should be slightly above max observed count
+max_N_obs <- max(long_counts$N_live, na.rm=TRUE)
+prior_theta <- log(max_N_obs * 1.5) 
+
+# 2. kp (Proliferation): Doubling time ~24h => ln(2)/24 ~ 0.029
+prior_kp <- log(0.03)
+
+# 3. kd (Death): Usually 10-20% of growth rate?
+prior_kd <- log(0.005)
+
+# 4. kd2 (Density dependent): Hard to guess, keep small relative to theta
+prior_kd2 <- log(0.001)
+
+# 5. g50a (Glucose sensitivity): mM range. ~0.5 mM is typical Km
+prior_g50a <- log(0.5)
+
+# 6. na (Hill Coeff): Prior is on raw parameter for 1 + exp(raw).
+# We want na ~ 2 or 3. 1 + exp(0.7) ~ 3. Center at 0.
+prior_na <- 0.0
+
+# 7. g50d (Death sensitivity): Similar to g50a
+prior_g50d <- log(0.5)
+
+# 8. nd (Hill):
+prior_nd <- 0.0
+
+# 9 & 10. v1, v2 (Consumption): 
+# Estimate: (Max Glucose) / (Avg Cells * Duration)
+# 25 mM / (5000 cells * 100 hours) = 5e-5
+prior_v <- log(5e-5)
+
+# Construct the vectors
+# Map: 1:theta, 2:kp, 3:kd, 4:kd2, 5:g50a, 6:na, 7:g50d, 8:nd, 9:v1, 10:v2
+prior_ode_mean <- c(
+  prior_theta, 
+  prior_kp, 
+  prior_kd, 
+  prior_kd2, 
+  prior_g50a, 
+  prior_na, 
+  prior_g50d, 
+  prior_nd, 
+  prior_v, 
+  prior_v
+)
+
+# Set widths (SDs). 
+# Use 1.0 for most (allows +/- 2.7x fold change at 1 sigma).
+# Use 0.5 for tight biological constraints (like max count).
+prior_ode_sd <- c(
+  0.5, # theta: fairly certain about scale (it's N_obs)
+  1.0, # kp
+  1.0, # kd
+  2.0, # kd2: very uncertain
+  1.5, # g50: uncertain
+  1.0, # na
+  1.5, # g50d
+  1.0, # nd
+  1.5, # v1: uncertain
+  1.5  # v2
+)
+
+cat("Computed Principled ODE Priors:\n")
+print(data.frame(param=c("theta","kp","kd","kd2","g50a","na","g50d","nd","v1","v2"), 
+                 log_mean=round(prior_ode_mean,2), 
+                 natural_scale=round(exp(prior_ode_mean), 6)))
+
+# ==============================================================================
 # 7. SAVE COMPLETE OBJECT
 # ==============================================================================
 stan_data <- list(
@@ -250,6 +320,9 @@ stan_data <- list(
   prior_mu_N0_sd   = 0.5,
   prior_mu_D0_mean = prior_mu_D0,
   prior_mu_D0_sd   = 1.0,
+  
+  prior_ode_mean   = prior_ode_mean,
+  prior_ode_sd     = prior_ode_sd,
   
   # Keep these if your Stan still expects them (even if not used now)
   prior_calib_a_mean = prior_calib_a_mean,

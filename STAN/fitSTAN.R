@@ -7,66 +7,9 @@ color_scheme_set("mix-blue-pink")
 
 cat("Loading Data...\n")
 stan_data <- readRDS("data/stan_ready_data.Rds")
-
-# ----------------------------------------------------------------
-# Fixed calibration per experiment (Option A) using LOG-fit:
-#   minimize sum( log(Lum) - log(a*G + b) )^2
-# ----------------------------------------------------------------
-cat("Estimating fixed calibration (log-fit) per experiment...\n")
-
-N_exps <- stan_data$N_exps
-a_fix <- rep(NA_real_, N_exps)
-b_fix <- rep(NA_real_, N_exps)
-sdlog_fix <- rep(NA_real_, N_exps)
-
-cal_df <- data.frame(
-  e   = stan_data$calib_exp_idx,
-  G   = stan_data$calib_G,
-  Lum = stan_data$calib_Lum
-)
-
-costf <- function(pars, x) {
-  a <- abs(pars[1]); b <- abs(pars[2])
-  mu <- x$G * a + b
-  if (any(!is.finite(mu)) || any(mu <= 0) || any(!is.finite(x$Lum)) || any(x$Lum <= 0)) return(1e12)
-  err <- sum((log(x$Lum) - log(mu))^2)
-  if (!is.finite(err)) 1e12 else err
+if (is.null(stan_data$prior_ode_mean)) {
+  stop("stan_data is missing 'prior_ode_mean'. Please re-run prepare_stan_data.R!")
 }
-
-for (e in 1:N_exps) {
-  sub <- cal_df[cal_df$e == e & is.finite(cal_df$G) & is.finite(cal_df$Lum) & cal_df$G >= 0 & cal_df$Lum > 0, , drop = FALSE]
-  
-  if (nrow(sub) < 2) {
-    a_fix[e] <- max(1e-6, stan_data$prior_calib_a_mean)
-    b_fix[e] <- max(1e-6, stan_data$prior_calib_b_mean)
-    sdlog_fix[e] <- 0.1
-    next
-  }
-  
-  fit0 <- try(lm(Lum ~ G, data = sub), silent = TRUE)
-  a0 <- if (!inherits(fit0, "try-error")) max(1e-6, as.numeric(coef(fit0)["G"])) else 1.0
-  b0 <- max(1e-6, min(sub$Lum, na.rm = TRUE))
-  
-  opt <- optim(c(a0, b0), costf, x = sub, method = "Nelder-Mead", control = list(maxit = 5000))
-  a_hat <- max(1e-6, abs(opt$par[1]))
-  b_hat <- max(1e-6, abs(opt$par[2]))
-  
-  mu_hat <- sub$G * a_hat + b_hat
-  sd_hat <- sd(log(sub$Lum) - log(mu_hat))
-  if (!is.finite(sd_hat) || sd_hat <= 0) sd_hat <- 0.1
-  
-  a_fix[e] <- a_hat
-  b_fix[e] <- b_hat
-  sdlog_fix[e] <- sd_hat
-}
-
-stan_data$calib_a_fixed <- a_fix
-stan_data$calib_b_fixed <- b_fix
-
-cat("Fixed calib_a_fixed:\n"); print(stan_data$calib_a_fixed)
-cat("Fixed calib_b_fixed:\n"); print(stan_data$calib_b_fixed)
-cat("Empirical sdlog per exp (for init calib_sigma):\n"); print(sdlog_fix)
-
 # ----------------------------------------------------------------
 # Compile
 # ----------------------------------------------------------------
@@ -79,22 +22,22 @@ mod <- cmdstan_model(model_path, cpp_options = list(stan_threads = TRUE), force_
 # ----------------------------------------------------------------
 init_fun <- function() {
   list(
-    mu_global = c(
-      log(10000), log(0.01), log(0.01), log(0.001),
-      log(0.05), log(1.0), log(0.05), log(1.0),
-      log(1e-5), log(1e-5)
-    ),
+    # [ACTION] Point the ODE parameters to the safe, calculated means
+    mu_global = stan_data$prior_ode_mean, 
+    
+    # [ACTION] Initialize variability to be small (start chains close together)
     sigma_line = rep(0.01, 10),
     beta_high  = rep(0, 10),
     z_line     = matrix(0, 10, stan_data$N_lines),
     
+    # [ACTION] Point ICs to their calculated means
     mu_IC    = c(stan_data$prior_mu_N0_mean, stan_data$prior_mu_D0_mean),
     sigma_IC = rep(0.01, 2),
     beta_IC  = rep(0, 2),
     z_IC     = matrix(0, 2, stan_data$N_lines),
     
-    calib_sigma = pmax(0.02, pmin(1.0, sdlog_fix)),
-    
+    # Keep the rest
+    calib_sigma = rep(0.1, stan_data$N_exps),
     phi_N = 10,
     phi_D = 10
   )
@@ -135,7 +78,7 @@ cat("\nInit phi_N, phi_D:\n"); print(c(init0$phi_N, init0$phi_D))
 # ----------------------------------------------------------------
 cat("\nRunning prior-only sampling and saving prior PDF...\n")
 stan_data_prior <- stan_data
-stan_data_prior$prior_only <- 1
+stan_data_prior$mode <- 1
 
 fit_prior <- mod$sample(
   data = stan_data_prior,
@@ -168,7 +111,7 @@ cat("Wrote results/priors_model_B.pdf\n")
 # ----------------------------------------------------------------
 # Sample (real fit)
 # ----------------------------------------------------------------
-stan_data$prior_only <- 0
+stan_data$mode <- 0
 
 N_CHAINS <- 4
 N_THREADS_PER_CHAIN <- 15
@@ -187,7 +130,7 @@ fit <- mod$sample(
   iter_warmup = 1500,
   iter_sampling = 1000,
   refresh = 1,
-  adapt_delta = 0.95,
+  adapt_delta = 0.99,
   max_treedepth = 12,
   output_dir = output_dir,
   save_warmup = TRUE

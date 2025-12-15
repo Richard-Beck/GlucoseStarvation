@@ -3,3 +3,6 @@ old_scripts
 logs
 data
 all_raw
+figures
+*.pdf
+results

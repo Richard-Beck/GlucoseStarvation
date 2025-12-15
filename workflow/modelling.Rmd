@@ -9,6 +9,426 @@ output: html_document
 knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
 ```
 
+```{r}
+
+snu668_hi <- readRDS("data/models/model_B/model_B_deoptim_SNU668_high.Rds")[[1]]$optim$bestmem
+snu668_lo <- readRDS("data/models/model_B/model_B_deoptim_SNU668_low.Rds")[[1]]$optim$bestmem
+sum159_lo <- readRDS("data/models/model_B/model_B_deoptim_SUM-159-chem_2N.Rds")[[1]]$optim$bestmem
+sum159_hi <- readRDS("data/models/model_B/model_B_deoptim_SUM-159-chem_4N.Rds")[[1]]$optim$bestmem
+
+npar <- length(snu668_hi)
+
+snu668 <- data.frame(parval=c(snu668_hi,snu668_lo),parname=rep(names(snu668_hi),2),
+                     ploidy=c(rep("hi",npar),rep("lo",npar)),id="SNU668")
+
+sum159 <- data.frame(parval=c(sum159_hi,sum159_lo),parname=rep(names(sum159_hi),2),
+                     ploidy=c(rep("hi",npar),rep("lo",npar)),id="sum159")
+
+df <- rbind(snu668,sum159)
+
+p <- ggplot(df,aes(x=parname,y=parval,color=ploidy))+
+  facet_grid(rows=vars(id))+
+  geom_point()+
+  scale_y_log10()
+p
+```
+
+
+
+```{r}
+ff <- list.files("data/models/",full.names = T)
+
+x <- lapply(ff[grepl("model_B",ff)],readRDS)
+
+df <- data.frame(do.call(rbind,lapply(x,function(xi){
+  params <- xi[[1]]$optim$bestmem
+  df <- data.frame(t(params))
+  id <- names(xi)
+  ids <- strsplit(id,split="[.]")[[1]]
+  df$cellLine <- ids[1]
+  df$ploidy <- ids[2]
+  df
+})))
+
+ploidy_lut <- c(parental="high",'3N'="low",high="high",low="low",'2N'="low",'4N'="high")
+
+df$ploidy <- ploidy_lut[df$ploidy]
+
+ci <- colnames(df)
+ci <- ci[!ci%in%c("cellLine","ploidy")]
+df <- split(df,f=df$cellLine)
+
+dfn <- do.call(rbind,lapply(df,function(di){
+  j <- which(di$ploidy=="low")
+  for(cci in ci){
+    di[,cci] <- di[,cci]/di[j,cci]
+  }
+  di
+}))
+
+
+
+df <- do.call(rbind,df)
+
+df <- reshape2::melt(df,id.vars=c("ploidy","cellLine"))
+
+p1 <- ggplot(df,aes(x=variable,y=value,color=ploidy))+
+  facet_wrap(~cellLine)+
+  geom_point()+
+  scale_y_log10()
+p1
+
+dfn <- reshape2::melt(dfn,id.vars=c("ploidy","cellLine"))
+
+p2 <- ggplot(dfn[dfn$ploidy=="high",],aes(x=variable,y=value,color=cellLine))+
+  geom_point()+
+  scale_y_log10()+
+  geom_hline(yintercept=1)
+p2
+
+```
+
+
+
+```{r}
+# -----------------------------------------------------------------------------
+# Comprehensive Analysis of an Intracellular Glucose Store Model
+#
+# This script performs a systematic analysis of a cell growth model defined
+# using the 'rxode2' package. It includes:
+# 1. Model Loading: Sourcing the model from an external script.
+# 2. Baseline Simulation: A run with a specified set of parameters.
+# 3. Parameter Scans: Exploring different dynamic regimes.
+# 4. Phase Plots: Visualizing relationships between state variables.
+# 5. NEW Advanced 2D Parameter Scans: Identifying key parameter trade-offs
+#    across multiple metrics and environmental conditions.
+# 6. NEW Phase Plot Sensitivity: Showing how trajectories change with parameters.
+#
+# Required Libraries:
+# - rxode2: For defining and solving ODE models.
+# - ggplot2: For creating high-quality plots.
+# - dplyr, tidyr: For data manipulation and reshaping.
+# - patchwork: For combining separate plots into a single figure.
+# -----------------------------------------------------------------------------
+
+# Step 0: Load Necessary Libraries and Model
+# Ensure you have these libraries installed: install.packages(c("rxode2", "ggplot2", "dplyr", "tidyr", "patchwork"))
+library(rxode2)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+
+# The 'intra_model' object is loaded from this script, as requested.
+# Make sure the path is correct for your project structure.
+# source("scripts/parameter_estimation.R") 
+
+# For standalone execution, we define the model here. 
+# If sourcing the model from the file above, this block can be ignored.
+intra_model <- rxode2({
+  d/dt(G) = -Vmax_uptake * (G / (Km_uptake + G)) * NL
+  d/dt(NL) = (kp * (max(0,R/(NL+1e-9))^nr_g / (r_half_g^nr_g + max(0,R/(NL+1e-9))^nr_g)) - kdStarv * (r_half_d^nr_d / (r_half_d^nr_d + max(0,R/(NL+1e-9))^nr_d)) - kw * W) * NL
+  d/dt(ND) = (kdStarv * (r_half_d^nr_d / (r_half_d^nr_d + max(0,R/(NL+1e-9))^nr_d)) + kw * W) * NL
+  d/dt(R) = NL * Vmax_uptake * (G / (Km_uptake + G)) - NL * ((1/Y_xr) * kp * (max(0,R/(NL+1e-9))^nr_g / (r_half_g^nr_g + max(0,R/(NL+1e-9))^nr_g)) + m_r + max(0,R/(NL+1e-9)) * (kdStarv * (r_half_d^nr_d / (r_half_d^nr_d + max(0,R/(NL+1e-9))^nr_d)) + kw * W))
+  d/dt(W) = (Vmax_uptake * (G / (Km_uptake + G)) - deltaW * W) * NL
+})
+
+
+# -----------------------------------------------------------------------------
+# Step 1: Set up Baseline Simulation
+# -----------------------------------------------------------------------------
+# Define a clear, non-log-scale set of parameters for the simulation.
+# Toxicity (kw) is set to near-zero to focus on starvation dynamics.
+pars <- c(
+  Vmax_uptake = 0.0001,   # mM/(#*hr)
+  Km_uptake   = 0.1,      # mM
+  kp          = 0.02,     # 1/hr
+  Y_xr        = 500,      # #/mM
+  m_r         = 1e-5,     # mM/(#*hr)
+  kdStarv     = 0.08,     # 1/hr
+  kw          = 1e-9,     # 1/(mM*hr) - Effectively OFF
+  deltaW      = 0,        # 1/hr
+  r_half_g    = 0.001,    # mM/#
+  nr_g        = 4,        # unitless
+  r_half_d    = 0.00002,  # mM/#
+  nr_d        = 4         # unitless
+)
+
+# Define simulation time and sampling events
+times <- seq(0, 200, by = 0.5) # Extended time for new analyses
+ev <- eventTable() %>%
+  add.sampling(times)
+
+# Define initial conditions. Start with a reasonable internal store (R).
+inits <- c(G = 1, NL = 400, ND = 0, R = 0.4, W = 0)
+
+# Solve the model using named arguments for clarity and robustness
+sol_base <- solve(intra_model, ev, params = pars, inits = inits)
+
+# --- Plot Baseline Results ---
+plot_data_base <- as.data.frame(sol_base) %>%
+  pivot_longer(cols = -time, names_to = "variable", values_to = "value")
+
+baseline_plot <- ggplot(plot_data_base, aes(x = time, y = value, color = variable)) +
+  geom_line(linewidth = 1.2) +
+  facet_wrap(~variable, scales = "free_y", ncol = 3) +
+  labs(title = "Baseline Simulation Results (Toxicity OFF)", x = "Time (hr)", y = "Value") +
+  theme_minimal() + guides(color = "none")
+print(baseline_plot)
+
+
+# -----------------------------------------------------------------------------
+# Step 2: Systematic Parameter Scan - Varying Initial Glucose
+# -----------------------------------------------------------------------------
+# This scan shows how resource availability impacts population dynamics.
+param_grid_g <- expand.grid(G0 = c(0.5, 1.0, 2.5, 5.0))
+
+run_sim_g <- function(g0_val) {
+  inits_g <- inits; inits_g["G"] <- g0_val
+  sol <- solve(intra_model, ev, params = pars, inits = inits_g)
+  as.data.frame(sol) %>% mutate(G0 = g0_val)
+}
+
+results_g <- bind_rows(lapply(param_grid_g$G0, run_sim_g))
+
+# --- Plot Glucose Scan Results ---
+plot_data_g <- results_g %>% pivot_longer(cols = -c(time, G0), names_to = "variable", values_to = "value")
+glucose_scan_plot <- ggplot(plot_data_g, aes(x = time, y = value, color = factor(G0))) +
+  geom_line(linewidth = 1.1) + facet_wrap(~variable, scales = "free_y", ncol = 3) +
+  labs(title = "Parameter Scan: Varying Initial Glucose", color = "Initial G(0)") + theme_minimal()
+print(glucose_scan_plot)
+
+
+# -----------------------------------------------------------------------------
+# Step 3: Phase Plot Analysis
+# -----------------------------------------------------------------------------
+# --- Phase Plot 1: Living Cells (NL) vs. Glucose (G) ---
+phase_plot_g <- ggplot(results_g, aes(x = G, y = NL, color = factor(G0))) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed", angle = 20)) +
+  labs(title = "Phase Plot: Living Cells vs. Glucose", x = "Glucose (G, mM)", y = "Living Cells (NL)", color = "Initial G(0)") +
+  theme_minimal()
+print(phase_plot_g)
+
+# --- Phase Plot 2: Living Cells (NL) vs. Internal Store (R) with Thresholds ---
+phase_plot_r <- ggplot(results_g, aes(x = R, y = NL, color = factor(G0))) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed", angle = 20)) +
+  geom_abline(intercept = 0, slope = 1 / pars["r_half_g"], color = "darkgreen", linetype = "dashed", linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1 / pars["r_half_d"], color = "darkred", linetype = "dashed", linewidth = 1) +
+  annotate("text", x = Inf, y = Inf, label = "Growth Threshold", hjust = 1.1, vjust = 2, color = "darkgreen", angle = 45) +
+  annotate("text", x = Inf, y = Inf, label = "Death Threshold", hjust = 1.1, vjust = 15, color = "darkred", angle = 80) +
+  labs(title = "Phase Plot: Living Cells vs. Internal Store", subtitle = "Trajectories shown relative to growth and death thresholds", x = "Internal Store (R, mM)", y = "Living Cells (NL)", color = "Initial G(0)") +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, max(results_g$NL) * 1.1))
+print(phase_plot_r)
+
+
+# -----------------------------------------------------------------------------
+# Step 4: Advanced 2D Parameter Scans with Multiple Metrics
+# -----------------------------------------------------------------------------
+# This section explores key parameter trade-offs across different environmental
+# conditions (initial glucose) and performance metrics.
+
+# Define the glucose levels to test
+glucose_conditions <- c(0.5, 2.0, 5.0)
+
+# --- Scan 1: Uptake Rate (Vmax_uptake) vs. Growth Rate (kp) ---
+param_grid_ug <- expand.grid(
+  Vmax_uptake_val = 10^seq(-5, -3, length.out = 10),
+  kp_val = seq(0.01, 0.05, length.out = 10),
+  G0 = glucose_conditions
+)
+
+run_sim_multi_metric <- function(params_row) {
+  run_pars <- pars
+  run_pars["Vmax_uptake"] <- params_row$Vmax_uptake_val
+  run_pars["kp"] <- params_row$kp_val
+  run_inits <- inits; run_inits["G"] <- params_row$G0
+  sol <- solve(intra_model, ev, params = run_pars, inits = run_inits)
+  
+  peak_NL <- max(sol$NL)
+  time_to_peak <- sol$time[which.max(sol$NL)]
+  integral_NL <- sum(sol$NL) * (sol$time[2] - sol$time[1])
+  
+  data.frame(
+    Vmax_uptake = params_row$Vmax_uptake_val,
+    kp = params_row$kp_val,
+    G0 = params_row$G0,
+    peak_NL = peak_NL,
+    time_to_peak = time_to_peak,
+    integral_NL = integral_NL
+  )
+}
+
+results_ug_multi <- bind_rows(lapply(1:nrow(param_grid_ug), function(i) run_sim_multi_metric(param_grid_ug[i, , drop = FALSE]))) %>%
+  mutate(G0_label = paste("Initial G =", G0))
+
+# --- Plot Faceted Heatmaps for Each Metric ---
+p_ug_peak <- ggplot(results_ug_multi, aes(x = Vmax_uptake, y = kp, fill = peak_NL)) +
+  geom_tile() + scale_x_log10() + scale_fill_viridis_c(option = "magma") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Peak Population", x = "Vmax_uptake", y = "kp") + theme_minimal()
+
+p_ug_time <- ggplot(results_ug_multi, aes(x = Vmax_uptake, y = kp, fill = time_to_peak)) +
+  geom_tile() + scale_x_log10() + scale_fill_viridis_c(option = "plasma") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Time to Peak", x = "Vmax_uptake", y = "kp") + theme_minimal()
+
+p_ug_integral <- ggplot(results_ug_multi, aes(x = Vmax_uptake, y = kp, fill = integral_NL)) +
+  geom_tile() + scale_x_log10() + scale_fill_viridis_c(option = "cividis") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Population Integral", x = "Vmax_uptake", y = "kp") + theme_minimal()
+
+print(p_ug_peak)
+print(p_ug_time)
+print(p_ug_integral)
+
+
+# --- Scan 2: Yield (Y_xr) vs. Maintenance Cost (m_r) ---
+param_grid_ym <- expand.grid(
+  Y_xr_val = seq(200, 1000, length.out = 10),
+  m_r_val = 10^seq(-6, -4, length.out = 10),
+  G0 = glucose_conditions
+)
+
+run_sim_multi_metric_ym <- function(params_row) {
+  run_pars <- pars
+  run_pars["Y_xr"] <- params_row$Y_xr_val
+  run_pars["m_r"] <- params_row$m_r_val
+  run_inits <- inits; run_inits["G"] <- params_row$G0
+  sol <- solve(intra_model, ev, params = run_pars, inits = run_inits)
+  
+  peak_NL <- max(sol$NL)
+  time_to_peak <- sol$time[which.max(sol$NL)]
+  # Corrected typo from sol_sol to sol
+  integral_NL <- sum(sol$NL) * (sol$time[2] - sol$time[1])
+  
+  data.frame(
+    Y_xr = params_row$Y_xr_val,
+    m_r = params_row$m_r_val,
+    G0 = params_row$G0,
+    peak_NL = peak_NL,
+    time_to_peak = time_to_peak,
+    integral_NL = integral_NL
+  )
+}
+
+results_ym_multi <- bind_rows(lapply(1:nrow(param_grid_ym), function(i) run_sim_multi_metric_ym(param_grid_ym[i, , drop = FALSE]))) %>%
+  mutate(G0_label = paste("Initial G =", G0))
+
+# --- Plot Faceted Heatmaps for Each Metric ---
+p_ym_peak <- ggplot(results_ym_multi, aes(x = Y_xr, y = m_r, fill = peak_NL)) +
+  geom_tile() + scale_y_log10() + scale_fill_viridis_c(option = "magma") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Peak Population", x = "Yield (Y_xr)", y = "Maintenance (m_r)") + theme_minimal()
+
+p_ym_time <- ggplot(results_ym_multi, aes(x = Y_xr, y = m_r, fill = time_to_peak)) +
+  geom_tile() + scale_y_log10() + scale_fill_viridis_c(option = "plasma") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Time to Peak", x = "Yield (Y_xr)", y = "Maintenance (m_r)") + theme_minimal()
+
+p_ym_integral <- ggplot(results_ym_multi, aes(x = Y_xr, y = m_r, fill = integral_NL)) +
+  geom_tile() + scale_y_log10() + scale_fill_viridis_c(option = "cividis") +
+  facet_wrap(~G0_label) + labs(title = "Metric: Population Integral", x = "Yield (Y_xr)", y = "Maintenance (m_r)") + theme_minimal()
+
+print(p_ym_peak)
+print(p_ym_time)
+print(p_ym_integral)
+
+
+# -----------------------------------------------------------------------------
+# Step 5: NEW - Phase Plot Sensitivity to Economic Parameters
+# -----------------------------------------------------------------------------
+# This analysis shows how the phase-space trajectory is altered by the trade-off
+# between yield (efficiency) and maintenance cost.
+
+param_grid_phase <- expand.grid(
+  Y_xr_val = c(300, 800), # Low vs High Yield
+  m_r_val = c(5e-6, 5e-5)  # Low vs High Maintenance
+)
+
+run_sim_phase <- function(params_row) {
+  run_pars <- pars
+  run_pars["Y_xr"] <- params_row$Y_xr_val
+  run_pars["m_r"] <- params_row$m_r_val
+  # Use a fixed, medium glucose level for this comparison
+  run_inits <- inits; run_inits["G"] <- 2.0 
+  
+  sol <- solve(intra_model, ev, params = run_pars, inits = run_inits)
+  
+  # Create a descriptive label for the scenario
+  scenario_label <- paste0(
+    "Yield: ", ifelse(params_row$Y_xr_val > 500, "High", "Low"),
+    ", Maint: ", ifelse(params_row$m_r_val > 1e-5, "High", "Low")
+  )
+  
+  as.data.frame(sol) %>% mutate(scenario = scenario_label)
+}
+
+results_phase_sens <- bind_rows(lapply(1:nrow(param_grid_phase), function(i) run_sim_phase(param_grid_phase[i, , drop = FALSE])))
+
+# --- Plot Phase Trajectories for Different Economic Strategies ---
+phase_plot_sens <- ggplot(results_phase_sens, aes(x = R, y = NL, color = scenario)) +
+  geom_path(linewidth = 1.2, arrow = arrow(length = unit(0.25, "cm"), type = "closed", angle = 20)) +
+  geom_abline(intercept = 0, slope = 1 / pars["r_half_g"], color = "darkgreen", linetype = "dashed", linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1 / pars["r_half_d"], color = "darkred", linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Phase Plot Sensitivity to Yield and Maintenance",
+    subtitle = "Different 'economic' strategies alter the trajectory",
+    x = "Internal Store (R, mM)",
+    y = "Living Cells (NL)",
+    color = "Strategy (Yield, Maint.)"
+  ) +
+  theme_minimal()
+
+print(phase_plot_sens)
+
+```
+
+
+Results of intracellular model:
+
+```{r}
+fpath <- "data/models/"
+ff <- list.files(fpath)
+ff <- ff[grepl("model_intra_deopt",ff)]
+
+x <- lapply(ff, function(fi) readRDS(file.path(fpath,fi)))
+ids <- sapply(x,names)
+
+pars <-lapply(x,function(xi) xi[[1]]$optim$bestmem)
+
+names(pars) <- ids
+
+
+
+```
+
+
+```{r}
+smm <- readRDS("data/counts/corrected.Rds")
+smm$glucose <- as.numeric(smm$glucose)
+smm$hours <- 24 * smm$time_numeric
+smm$alive <- smm$N - smm$D
+smm$dead <- smm$D
+
+setDT(smm)
+smm[, c("time_numeric", "N", "D") := NULL]
+
+
+# --- 4. Split Data and Select Subset for This Job ---
+groups_to_fit <- split(smm, by = c("cellLine", "ploidy"))
+
+ ## this returns SSE 389.6!! (Deoptim output claims 94) and warnings NaNs produced!
+gi <- groups_to_fit$`MDA-MB-231.3N`
+pari <- pars$`MDA-MB-231.3N`
+pp <- plot_model_fit(pari,gi,intra_model)
+
+ ## this returns SSE 147!!
+gi <- groups_to_fit$`MDA-MB-231.3N`
+pari <- pars$`MDA-MB-231.parental` 
+pp <- plot_model_fit(pari,gi,intra_model)
+
+ ## this returns SSE 32.83 (a bit worse than DEoptim result)
+gi <- groups_to_fit$`MDA-MB-231.parental`
+pari <- pars$`MDA-MB-231.parental` 
+pp <- plot_model_fit(pari,gi,intra_model)
+```
+
 There are a bunch of MCF10A images which don't seem to have produced valid object results. There appears to be nothing wrong with the images, so we'll need to investigate this issue further... for now filter them out for the analysis.
 ```{r}
 source("scripts/define_plate_maps.R")

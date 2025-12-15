@@ -1,0 +1,32 @@
+#! /bin/bash
+#SBATCH --job-name=STANalysis
+#SBATCH --output=logs/output_%j.out   # Ensure 'logs' dir exists or change this
+#SBATCH --error=logs/error_%j.err
+
+# --- Resource Requests ---
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=60            # Request 64 cores (1 full A-Node)
+#SBATCH --mem=64G                     # Request 64GB RAM
+#SBATCH --time=12:00:00             # Wall time: 1 day
+#SBATCH --qos=small                   # Default QOS
+
+# --- Container Configuration ---
+# The exact image from your RStudio session
+CONTAINER_URI="docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"
+
+# Bind specific paths so the container can see your files.
+# /home is usually auto-bound, but we must bind /share since you are working there.
+BINDS="-B /home/$USER,/share"
+
+# --- Environment Setup ---
+# Pass the core count to OMP so linear algebra libraries don't fight for resources
+export OMP_NUM_THREADS=$SLURM_JOB_CPUS_PER_NODE
+export TZ="US/Eastern"
+
+# --- Execution ---
+echo "Starting job on $(hostname)"
+echo "Allocated cores: $SLURM_JOB_CPUS_PER_NODE"
+echo "Using Container: $CONTAINER_URI"
+
+# Run Rscript inside the container
+apptainer exec $BINDS $CONTAINER_URI Rscript STAN/fitSTAN.R

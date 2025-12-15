@@ -9,11 +9,35 @@ output: html_document
 knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
 ```
 
+
+```{r}
+source("scripts/image_utils.R")
+lookup <- make_lookup()
+```
+
+
+```{r}
+x <- readRDS("data/counts/corrected.Rds")
+
+process_timecourse(
+   data = x,
+   sel_cellLine = "MCF10A",
+   sel_ploidy = "2N",
+   sel_glucose = 0.5,
+   img_lookup_table = lookup,
+   output_folder = "data/image_timecourse_examples",fps = 2,
+   selection_idx = c(1,5)
+ )
+
+```
+
+
 There are a bunch of MCF10A images which don't seem to have produced valid object results. There appears to be nothing wrong with the images, so we'll need to investigate this issue further... for now filter them out for the analysis.
 ```{r}
 source("scripts/define_plate_maps.R")
 library(ggplot2)
 x <- data.table::fread("data/train/labelling_output_tuned-cpsam/classification_counts.csv")
+x <- data.table::fread("data/counts/batch_results.csv",nrows=10000)
 sum(x$alive<0)
 x[sample(which(x$alive<0),10),]
 x <- x[!x$alive<0,]

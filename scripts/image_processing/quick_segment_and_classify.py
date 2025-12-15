@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="Batch classify objects in images using a trained classifier.")
     parser.add_argument("--classifier_path", required=True, help="Path to the trained object_classifier.pkl file.")
-    parser.add_argument("--finetuned_cellpose_model", required=True, help="Path to the fine-tuned Cellpose model file.")
+    parser.add_argument("--finetuned_cellpose_model", default=None, help="Path to the fine-tuned Cellpose model file. If not provided, the default model will be used.")
     parser.add_argument("--output_csv_path", required=True, help="Path for the output CSV results file.")
     parser.add_argument("--composite_dir", required=True, help="Directory with 3-channel images for the classifier.")
     parser.add_argument("--cpose_input_dir", required=True, help="Directory with 2-channel images for Cellpose segmentation.")
@@ -102,11 +102,19 @@ def main():
         print("❌ ERROR: The loaded classifier is not trained.")
         return
         
-    # Load the fine-tuned Cellpose model from the specified path
-    if not os.path.exists(args.finetuned_cellpose_model):
-        print(f"❌ ERROR: Fine-tuned Cellpose model not found at '{args.finetuned_cellpose_model}'")
-        return
-    cellpose_model = CellposeModel(gpu=True, pretrained_model=args.finetuned_cellpose_model)
+    # Load the Cellpose model
+    if args.finetuned_cellpose_model:
+        # If a path is provided, check if it exists and load the fine-tuned model
+        if not os.path.exists(args.finetuned_cellpose_model):
+            print(f"❌ ERROR: Fine-tuned Cellpose model not found at '{args.finetuned_cellpose_model}'")
+            return
+        print(f"🔬 Loading fine-tuned model from: {args.finetuned_cellpose_model}")
+        cellpose_model = CellposeModel(gpu=True, pretrained_model=args.finetuned_cellpose_model)
+    else:
+        # If no path is provided, load the default model
+        print("🔬 No path provided. Loading the default Cellpose model.")
+        cellpose_model = CellposeModel(gpu=True)
+
 
 
     # --- 2. Discover and Match Image Files ---

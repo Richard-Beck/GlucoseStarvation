@@ -13,7 +13,7 @@ There are a bunch of MCF10A images which don't seem to have produced valid objec
 ```{r}
 source("scripts/define_plate_maps.R")
 library(ggplot2)
-x <- data.table::fread("data/train/labelling_output_tuned-cpsam/batch_classification_results.csv")
+x <- data.table::fread("data/counts/batch_results.csv")
 x <- x[, time := substr(image_key, nchar(image_key) - 8, nchar(image_key) )]
 x <- x[, base_key := substr(image_key, 1, nchar(image_key) - 10)]
 x <- split(x,f=x$base_key)
@@ -58,6 +58,21 @@ smm <- do.call(rbind,lapply(names(x_merged), function(grp) {
   cnt}))
 
 saveRDS(smm,"data/counts/uncorrected.Rds")
+
+plots <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[cellLine == cl]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = alive, color = "alive")) +
+    geom_point(aes(y = dead, color = "dead")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+names(plots) <- unique(smm$cellLine)
+
+# Example: display the first plot
+plots
 
 ```
 
@@ -142,6 +157,9 @@ saveRDS(combined,"data/counts/corrected.Rds")
 
 ```
 
+
+
+
 ```{r}
 smm <- readRDS("data/counts/uncorrected.Rds")
 plots_uncorrected <- lapply(unique(smm$cellLine), function(cl) {
@@ -149,6 +167,7 @@ plots_uncorrected <- lapply(unique(smm$cellLine), function(cl) {
   ggplot(d, aes(x=hours)) +
     geom_point(aes(y=alive, color="alive")) +
     geom_point(aes(y=dead,  color="dead"))  +
+    scale_y_continuous("cell count")+
     facet_grid(rows=vars(as.numeric(glucose)),
                cols=vars(ploidy),
                scales="free") +
@@ -162,198 +181,149 @@ plots_corrected <- lapply(unique(combined$cellLine), function(cl) {
   ggplot(d, aes(x = hours)) +
     geom_point(aes(y = N-D, color = "alive")) +
     geom_point(aes(y = D, color = "dead")) +
+    scale_y_continuous("cell count")+
     facet_grid(rows = vars(as.numeric(glucose)),
                cols = vars(ploidy),
                scales = "free") +
     ggtitle(cl, subtitle = unique(d$experiment))
 })
 names(plots_corrected) <- unique(combined$cellLine)
+
+
+
+```
+```{r}
+source("scripts/plotSlider.R")
+plot_slider_export(plots_corrected, "data/counts/corrected_plots.html")
+plot_slider_export(plots_corrected, "data/counts/uncorrected_plots.html")
 ```
 
 
 ```{r}
-# Load necessary libraries
-library(rxode2)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
 
-# Assume 'd' and 'model_B' are your data frame and rxode2 model, 
-# and are already in the environment.
-
-# 1. Define the parameter vector
-params <- c(
-  theta = 1.586453e+04, kp    = 1.622025e-02, kd    = 7.569006e-02,
-  kd2   = 4.858519e-02, g50a  = 4.570815e-02, na    = 5.912126e+00,
-  g50d  = 3.475508e-03, nd    = 4.167656e+00, v1    = 6.851104e-05,
-  v2    = 1.319974e-06
-)
-
-# 2. Set up and run simulations for each glucose level
-inits <- c(NL = 1000, ND = 50) # Set initial NL and ND
-sim_times <- seq(0, max(d$hours, na.rm = TRUE), by = 1)
-unique_glucose <- as.numeric(unique(d$glucose))
-
-# Loop through each glucose value, simulate, and collect results
-sim_data_list <- lapply(unique_glucose, function(g) {
-  # Create an event table for the current glucose level
-  ev <- eventTable() %>%
-    add.sampling(sim_times) %>%
-    add.dosing(
-      dose = g,
-      nbr.doses = 1,
-      dosing.to = 3, # Corresponds to G (the 3rd state variable)
-      start.time = 0
-    )
-  
-  # Solve the system for this specific condition
-  model_B$solve(params, ev, inits) %>%
-    as.data.frame() %>%
-    mutate(glucose = g) # Add the initial glucose value for faceting
-})
-
-# Combine the list of simulation results into one data frame
-sim_data <- bind_rows(sim_data_list) %>%
-  rename(alive = NL, dead = ND) %>% # Match column names
-  pivot_longer(cols = c(alive, dead), names_to = "type", values_to = "value")
-
-# 3. Create the plot with points and add simulation lines
-p <- ggplot(d, aes(x = hours)) +
-  geom_point(aes(y = N-D, color = "alive")) +
-  geom_point(aes(y = D, color = "dead")) +
-  geom_line(data = sim_data, aes(x = time, y = value, color = type)) +
-  facet_grid(rows = vars(as.numeric(glucose)), cols = vars(ploidy), scales = "free") +
-  labs(
-    title = d$cellLine[1],
-    subtitle = d$experiment[1],
-    y = "Cell Count",
-    x = "Hours",
-    color = "Cell Type"
-  ) +
-  theme_bw()
-
-p
-
-```
-
-
-```{r}
-# Load necessary libraries
-library(rxode2)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
-# Load and subset data as specified
-# Make sure the path to your data is correct
-combined <- readRDS("data/counts/corrected.Rds")
-d <- combined[combined$cellLine=="SNU668" & combined$ploidy=="low",]
-
-# Assume model_B is already defined in the global environment
-# source("scripts/parameter_estimation.R") # This line should define model_B
-
-# 1. Define the fixed model parameter vector
-params <- c(
-  theta = 1.586453e+04, kp    = 1.622025e-02, kd    = 7.569006e-02,
-  kd2   = 4.858519e-02, g50a  = 4.570815e-02, na    = 5.912126e+00,
-  g50d  = 3.475508e-03, nd    = 4.167656e+00, v1    = 6.851104e-05,
-  v2    = 1.319974e-06
-)
-
-# 2. Define the objective function for optimization, taking a list of arguments
-# This function calculates the Sum of Squared Errors (SSE) between the simulation
-# and the actual data for a given set of initial conditions (inits_to_opt).
-objective_sse <- function(inits_to_opt, other_args) {
-  # Unpack the list of other arguments
-  params <- other_args$params
-  model <- other_args$model
-  g <- other_args$g
-  data_subset <- other_args$data_subset
-  
-  # Define simulation events, sampling only at the time points present in the data
-  ev <- eventTable() %>%
-    add.sampling(data_subset$hours) %>%
-    add.dosing(dose = g, nbr.doses = 1, dosing.to = 3, start.time = 0)
-  
-  # Set the initial conditions for this optimization iteration
-  inits <- c(NL = as.numeric(inits_to_opt[1]), ND = as.numeric(inits_to_opt[2]))
-  
-  # Run the simulation
-  sim_results <- model$solve(params, ev, inits) %>% as.data.frame()
-  # Calculate SSE against the data (Alive = N-D, Dead = D)
-  sse_alive <- sum((sim_results$NL - (data_subset$N - data_subset$D))^2, na.rm = TRUE)
-  sse_dead <- sum((sim_results$ND - data_subset$D)^2, na.rm = TRUE)
-  
-  # Return the total SSE
-  return(sse_alive + sse_dead)
+get_matching_row <- function(row) {
+  meta[cellLine == row$cellLine &
+       experiment == row$experiment &
+       plateID == row$plateID &
+       ploidy == row$ploidy &
+       glucose == row$glucose]
 }
 
-# 3. Loop through each glucose value, optimize inits, simulate, and collect results
-unique_glucose <- as.numeric(unique(d$glucose))
+library(stringi)
 
-sim_data_list <- lapply(unique_glucose, function(g) {
+match_files_from_base_keys <- function(base_keys, ff) {
+  # Extract prefix and suffix using regex
+  parts <- stri_match_first_regex(base_keys, "^(.*)_([^_]+_[^_]+)$")
+  # parts[,2] = prefix, parts[,3] = suffix
+  patterns <- paste0("^", parts[,2], "_.*_", parts[,3], "_")
   
-  # Subset the data for the current glucose condition
-  d_sub <- d[d$glucose == g, ]
+  # Return a list of matched files per base_key
+  lapply(patterns, function(pat) ff[grepl(pat, ff)])
+}
+
+split_files_by_timepoint <- function(file_list) {
+  # Extract timepoint string: e.g., "00d08h00m"
+  timepoints <- stri_extract_first_regex(file_list, "\\d{2}d\\d{2}h\\d{2}m")
   
-  # Provide a starting guess for the optimization
-  start_inits <- c(NL = 1000, ND = 50) 
-  
-  # Bundle all other arguments into a single list to pass to optim
-  other_args_list <- list(
-    params = params,
-    model = model_B,
-    g = g,
-    data_subset = d_sub
-  )
-  
-  # Use optim to find the initial conditions that minimize the SSE
-  opt_result <- optim(
-    par = start_inits,
-    fn = objective_sse,
-    other_args = other_args_list, # Pass the bundled list here
-    method = "L-BFGS-B",         # A method that allows box constraints
-    lower = c(0, 0)              # Constrain initial counts to be non-negative
-  )
-  
-  # These are the optimized initial conditions for this glucose level
-  optimized_inits <- c(NL = opt_result$par[1], ND = opt_result$par[2])
-  names(optimized_inits) <- names(start_inits)
-  # Run a final, smooth simulation using the optimized initial conditions
-  sim_times <- seq(0, max(d$hours, na.rm = TRUE), by = 1)
-  ev_final <- eventTable() %>%
-    add.sampling(sim_times) %>%
-    add.dosing(dose = g, nbr.doses = 1, dosing.to = 3, start.time = 0)
-    
-  model_B$solve(params, ev_final, optimized_inits) %>%
-    as.data.frame() %>%
-    mutate(glucose = g) # Add the glucose level for faceting
-})
+  # Split into named list by unique timepoint
+  split(file_list, timepoints)
+}
 
-# 4. Combine and format simulation results for plotting
-sim_data <- bind_rows(sim_data_list) %>%
-  rename(alive = NL, dead = ND) %>%
-  pivot_longer(cols = c(alive, dead), names_to = "type", values_to = "value")
+deltaA <- abs(smm$alive-(combined$N-combined$D))
+deltaD <- abs(smm$dead-combined$D)
 
-# 5. Create the plot with points and add the optimized simulation lines
-p <- ggplot(d, aes(x = hours)) +
-  geom_point(aes(y = N - D, color = "alive")) +
-  geom_point(aes(y = D, color = "dead")) +
-  geom_line(data = sim_data, aes(x = time, y = value, color = type)) +
-  facet_grid(rows = vars(as.numeric(glucose)), cols = vars(ploidy), scales = "free") +
-  labs(
-    title = d$cellLine[1],
-    subtitle = "Simulations with Optimized Initial Conditions",
-    y = "Cell Count",
-    x = "Hours",
-    color = "Cell Type"
-  ) +
-  theme_bw()
+base_keys <- get_matching_row(smm[1443,])$base_key
 
-p
+ims <- match_files_from_base_keys(base_keys, lookup$base)
 
-
+ims <- lapply(ims, split_files_by_timepoint)
 
 
 ```
+
+```{r}
+source("scripts/image_utils.R")
+#lookup <- make_lookup()
+deltaA <- abs(smm$alive-(combined$N-combined$D))
+deltaD <- abs(smm$dead-combined$D)
+
+base_keys <- get_matching_row(smm[1443,])$base_key
+
+time_keys <- lapply(base_keys,function(fi) unique(lookup$base[grepl(fi,lookup$base)]))
+
+
+
+c1 <- lapply(time_keys[[1]],make_composite,lookup=lookup)
+stacked <- do.call(combine,c1)
+
+```
+
+
+```{r}
+library(EBImage)
+
+
+make_composite_r <- function(files_by_channel) {
+  # Initialize container for channels
+  raw_imgs <- list(phase = list(), alive = list(), dead = list())
+
+  # Sort into channel bins
+  for (f in files_by_channel) {
+    name <- tolower(strsplit(basename(f), "_")[[1]][[5]])
+    img <- readImage(file.path("all_raw",f))
+    if (name == "phase") {
+      raw_imgs$phase[[length(raw_imgs$phase) + 1]] <- img
+    } else if (grepl("alive", name)) {
+      raw_imgs$alive[[length(raw_imgs$alive) + 1]] <- img
+    } else if (grepl("dead", name)) {
+      raw_imgs$dead[[length(raw_imgs$dead) + 1]] <- img
+    }
+  }
+
+  # Max project across z-stack per channel
+  proj <- lapply(raw_imgs, function(lst) {
+    if (length(lst) == 0) return(NULL)
+    Reduce(pmax, lst)
+  })
+
+  # Robust normalize
+  robust_normalize <- function(img) {
+    q <- quantile(as.numeric(img), c(0.01, 0.99), na.rm = TRUE)
+    img <- (img - q[1]) / (q[2] - q[1])
+    img[img < 0] <- 0
+    img[img > 1] <- 1
+    return(img)
+  }
+
+  proj <- lapply(proj, function(x) if (!is.null(x)) robust_normalize(x) else NULL)
+
+  # Use phase as default base
+  phase <- proj$phase
+  if (is.null(phase)) {
+    phase <- matrix(0, nrow = nrow(proj[[which(!sapply(proj, is.null))[1]]]), ncol = ncol(proj[[which(!sapply(proj, is.null))[1]]]))
+  }
+
+  comp <- array(0, dim = c(dim(phase), 3))
+
+  comp[,,1] <- if (!is.null(proj$dead)) {
+    pmin(phase + proj$dead, 1)
+  } else {
+    phase
+  }
+
+  comp[,,2] <- if (!is.null(proj$alive)) {
+    pmin(phase + proj$alive, 1)
+  } else {
+    phase
+  }
+
+  comp[,,3] <- phase
+
+  return(Image(comp, colormode = "Color"))
+}
+
+comp_img <- make_composite_r(ims[[1]][["00d00h00m"]])
+display(comp_img)
+```
+
 

@@ -5,6 +5,9 @@ date: "2025-07-17"
 output: html_document
 ---
 
+MCF10A seeding day -1 normal media, day 0 wash then direct onto glucose media. (because they really didn't like 0 glucose media)
+All other cell lines 6 hours on starvation media, then add glucose media at 2x conc to make up to the correct concentrations.
+
 ```{r setup, include=FALSE}
 knitr::opts_knit$set(root.dir="/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/")
 ```
@@ -85,6 +88,8 @@ python scripts/image_processing/create_image_set.py --raw_data_dir all_raw --csv
 ```{bash,eval=FALSE}
 python scripts/image_processing/create_image_set.py --raw_data_dir all_raw --csv_path data/eval/eval_image_ids.csv --composites_dir data/eval/composites --cpose_inputs_dir data/eval/cellpose_inputs
 
+python scripts/image_processing/create_image_set.py --raw_data_dir all_raw --csv_path data/eval/eval_image_ids.csv --composites_dir data/eval/composites2 --cpose_inputs_dir data/eval/cellpose_inputs2 --multichannel_dir data/eval/multichannel
+
 ```
 
 Now need to finetune cellpose. Run e.g.:
@@ -121,6 +126,7 @@ MOVE FILES ABOUT TO MATCH SCRIPTS, DELETE OLDIES!
 DELETE OLD PYTHON SCRIPTS
 GIT!!
 
+The next few chunks are for validation of cell counting pipeline, but they may be outdated - to do is to check each of these and either deleted or keep as necessary
     
 ```{r}
 library(dplyr)
@@ -159,8 +165,13 @@ p <- ggplot(df)+
   facet_wrap(~cellLine,scales="free")+
   geom_abline()+
   geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
-  geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))
+  geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))+
+  scale_x_continuous("manual counts")+
+  scale_y_continuous("predicted counts")
 p
+
+cor(df$alive_manual,df$alive_pred)
+cor(df$dead_manual,df$dead_pred)
 ```
 
 
@@ -497,5 +508,396 @@ p <- ggplot(df)+
   geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
   geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))
 p
+```
+Glucose data calibration. There's something "amiss" with three of the data points in the calibration assay (Didem appears to have excluded three points). Excluding them does result in greater confidence in glucose prediction based on the fluorescence - but is that confidence misplaced? More investigation is warranted.
+
+
+```{r}
+
+costf <- function(pars,x){
+  a <- pars[1]
+  b <- pars[2]
+  pars <- abs(pars)
+  lval <- log(x$Lum)
+  lpred <- log(x$G*a+b)
+  err <- sum((lval-lpred)^2)
+  if(is.na(err)) return(10^12)
+  return(err)
+}
+
+glu_prob <- function(glu,fluor,a,b,sdest){
+  Efluor <- a*glu + b
+  dnorm(log(fluor)-log(Efluor),sd=sdest)
+}
+
+predf <- function(pars,x=x){
+    a <- pars[1]
+    b <- pars[2]
+    pars <- abs(pars)
+    x$G*a+b
+}
+
+x <- data.table::fread("data/glucose/processed/SUM-159-chem.SNU668/calibration.csv")
+x <- data.table::fread("data/glucose/processed/MCF10A.MDA-MB-231/calibration.csv")
+xsd <- aggregate(list(sd=x$Lum),by=list(G=x$G),sd)
+
+
+fit0 <- lm(Lum~G,data=x)
+par0 <- c(log(min(x$Lum)),as.numeric(coef(fit0)["G"]))
+fit <- optim(par0,costf,x=x)
+
+x$pLum <- predf(fit$par,x=x)
+x$pLumLin <- predict(fit0)
+
+sdlog <- sd(log(x$pLum)-log(x$Lum))
+
+## heteroscedacity 
+p <- ggplot(xsd,aes(x=G,y=sd))+
+  geom_point()
+p
+
+
+p <- ggplot(x,aes(x=G,y=Lum))+
+  geom_point()+
+  geom_line(aes(y=pLum,color="multiplicative"))+
+  geom_line(aes(y=pLumLin,color="linear"))+
+  scale_x_log10()+
+  scale_y_log10()
+p
+
+xmpl <- data.frame(G=exp(seq(-15,0,by=0.1)),lum=7000)
+xmpl$p <- glu_prob(xmpl$G,xmpl$lum,a=fit$par[2],b=fit$par[1],sdest=sdlog)
+
+p <- ggplot(xmpl,aes(x=G,y=p))+
+  geom_line()
+p
+
+
+```
+
+
+Matching glucose and cell line data... and bundling into a nice fitting object.
+
+The glu_map tells which glucose assay data corresponds to which cellcounts data. It is intended that
+for each cellLine x experiment combo, there should be a corresponding folder containing the glucose assay data...
+
+```{r}
+glu_map <- c('MCF10A-ctrl.A00-IncucyteRawDataLiveDead-varyGlucose-241015'=NULL,
+             'MCF10A-hras.A00-IncucyteRawDataLiveDead-varyGlucose-241015'=NULL,
+             'MCF10A.A00b-IncucyteRawDataLiveDead-varyGlucose-241015'    ="MCF10A.MDA-MB-231",
+             'MCF10A.A00c-IncucyteRawDataLiveDead-varyGlucose-241015'    ="MCF10A.MDA-MB-231",
+             'MDA-MB-231.B00-IncucyteRawDataLiveDead-varyGlucose-250213' ="MCF10A.MDA-MB-231",
+             'SNU668.A00-IncucyteRawDataLiveDead-varyGlucose-250324'     ="SUM-159-chem.SNU668",
+             'SUM-159-chem.M00b-IncucyteRawDataLiveDead-varyGlucose' = "SUM-159-chem.SNU668",   
+             'SUM-159-fuse.C00-IncucyteRawDataLiveDead-varyGlucose'      =NULL,
+             'SUM-159-fuse.I00-IncucyteRawDataLiveDead-varyGlucose' ="SUM-159-fuse")
+```
+
+
+```{r}
+ploidy_map <- list('SUM-159-chem'=c("2N"="low","4N"="high"),
+                   SNU668=c(high="high",low="low"),
+                   MCF10A=c("4N"="high","2N"="low"),
+                   'MDA-MB-231'=c(parental="high","3N"="low"),
+                   'SUM-159-fuse'=c("2N"="low","4N"="high"))
+```
+
+
+```{r}
+
+costf <- function(pars,x){
+  a <- pars[1]
+  b <- pars[2]
+  pars <- abs(pars)
+  lval <- log(x$Lum)
+  lpred <- log(x$G*a+b)
+  err <- sum((lval-lpred)^2)
+  if(is.na(err)) return(10^12)
+  return(err)
+}
+
+predf <- function(pars,x){
+    a <- pars[1]
+    b <- pars[2]
+    pars <- abs(pars)
+    x$G*a+b
+}
+
+make_glucose_model <- function(xg, pars){
+  a <- unname(pars["a"]); b <- unname(pars["b"]); sdlog <- unname(pars["sdlog"])
+  stopifnot(is.finite(a), is.finite(b), is.finite(sdlog), sdlog > 0)
+  get_pLum <- function(G, dat){
+    dilution <- 1000/unique(dat$`Dilution Factor`)
+    mu <- a*G*dilution + b                       # expected fluorescence at the provided G
+    p  <- dnorm(log(dat$lum) - log(mu), sd = sdlog)  # P(obs lum | G)
+    return(p)
+  }
+
+  return(get_pLum)
+}
+
+
+process_glucose_assay <- function(path2data){
+  x <- data.table::fread(file.path(path2data,"calibration.csv"))
+  fit0 <- lm(Lum~G,data=x)
+  par0 <- c(log(min(x$Lum)),as.numeric(coef(fit0)["G"]))
+  fit <- optim(par0,costf,x=x)
+  pars <- fit$par
+  names(pars) <- c("a","b")
+  x$pLum <- predf(pars,x=x)
+  sdlog <- sd(log(x$pLum)-log(x$Lum))
+  pars <- c(pars,sdlog=sdlog)
+  
+  xg <- data.table::fread(file.path(path2data,"data.csv"))
+  tmp <- xg[is.na(xg$ploidy),]
+  xg$ploidy[is.na(xg$ploidy)] <- "low"
+  tmp$ploidy[is.na(tmp$ploidy)] <- "high"
+  xg <- rbind(xg,tmp)  
+  xg <- reshape2::melt(xg,measure.vars = paste0("R",1:3))
+  xg$hours <- xg$Day*24
+  xg <- xg[,c("CellLine","ploidy", "G0", "hours", "value","Dilution Factor")]
+  colnames(xg)[colnames(xg)=="value"] <- "lum"
+  colnames(xg)[colnames(xg)=="CellLine"] <- "cellLine"
+  
+  list(glucose=xg,ll_lum=make_glucose_model(xg, pars))
+}
+
+ff <- list.files("data/glucose/processed",full.names = T)
+
+for(path2data in ff){
+  x <- process_glucose_assay(path2data)
+  saveRDS(x,file.path(path2data,"fit_obj.Rds"))
+  test_dat <- x$glucose%>%filter(cellLine==x$glucose$cellLine[1],hours==0,G0==5)
+  test_gluc <- seq(0,10,0.1)
+  test_prob <- sapply(test_gluc,function(gi){
+    prod(x$ll_lum(gi,test_dat))
+  })
+  
+  plot(test_gluc,test_prob)
+}
+
+
+
+
+
+
+```
+```{r}
+
+x <- readRDS("data/counts/corrected.Rds")
+x <- x[paste0(x$cellLine,".",x$experiment)%in%names(glu_map),] ## ultimately need not be necessary?
+x <- split(x,f=paste0(x$cellLine,".",x$experiment,".",x$ploidy))
+
+x <- lapply(x,function(xi){
+  
+  xi <- rename(xi,G0=glucose)
+  cellLine <- xi$cellLine[1]
+  xi$ploidy <- ploidy_map[[cellLine]][xi$ploidy]
+  ploidy <- xi$ploidy[1]
+  experiment <- xi$experiment[1]
+  cells <- xi[,c("cellLine","ploidy","G0","hours","N","D")]
+
+  glucose_id <- paste(c(cellLine,experiment),collapse=".")
+  data <- readRDS(file.path("data/glucose/processed/",glu_map[glucose_id],"fit_obj.Rds"))
+  data$glucose <- data$glucose[data$glucose$cellLine==cellLine& data$glucose$ploidy==ploidy,]
+  data$glucose <- data$glucose[,c("G0", "hours", "lum", "Dilution Factor")]
+  data$cells <- cells[,c("G0","hours","N","D")]
+  data$id <- paste(c(cellLine,ploidy,experiment),collapse=".")
+  
+  saveRDS(data,paste0("data/model_inputs/",data$id,".Rds"))
+  return(0)
+})
+
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+plot_cell_line_summary <- function(cell_line, data_dir = "data/model_inputs") {
+  
+  # 1. Find all files matching the cell line pattern
+  pattern <- paste0("^", cell_line, "\\.") 
+  files <- list.files(data_dir, pattern = pattern, full.names = TRUE)
+  
+  if(length(files) == 0) stop(paste("No files found for cell line:", cell_line))
+  
+  # 2. Iterate, Load, Process
+  processed_list <- lapply(files, function(f) {
+    
+    dat <- readRDS(f)
+    f_name <- basename(f)
+    # Extract ploidy (2nd element in dot-separated filename)
+    ploidy_label <- strsplit(f_name, "\\.")[[1]][2] 
+    
+    # --- Extract Params for THIS specific experiment ---
+    env <- environment(dat$ll_lum)
+    a_est <- env$a
+    b_est <- env$b
+    
+    # --- Process Glucose ---
+    df_gluc <- dat$glucose %>%
+      mutate(
+        ploidy = ploidy_label,
+        G0 = as.numeric(G0), # Ensure numeric for correct sorting
+        dilution_factor = 1000 / `Dilution Factor`,
+        G_est = (lum - b_est) / (a_est * dilution_factor),
+        G_est = pmax(0, G_est)
+      ) %>%
+      select(G0, hours, ploidy, G_est)
+    
+    # --- Process Cells (Calculate Alive = Total - Dead) ---
+    df_cells <- dat$cells %>%
+      mutate(
+        ploidy = ploidy_label,
+        G0 = as.numeric(G0), # Ensure numeric for correct sorting
+        A = N - D  # Calculate Alive cells
+      ) %>% 
+      select(G0, hours, ploidy, A, D) # Keep only Alive (A) and Dead (D)
+    
+    return(list(gluc = df_gluc, cells = df_cells))
+  })
+  
+  # 3. Merge all loaded data
+  all_glucose <- bind_rows(lapply(processed_list, `[[`, "gluc"))
+  all_cells   <- bind_rows(lapply(processed_list, `[[`, "cells"))
+  
+  # 4. Summarize for Plotting
+  
+  # Summarize Cells (Now A and D)
+  summ_cells <- all_cells %>%
+    pivot_longer(cols = c(A, D), names_to = "State", values_to = "Count") %>%
+    mutate(State = factor(State, levels = c("A", "D"), labels = c("Alive", "Dead"))) %>%
+    group_by(G0, hours, ploidy, State) %>%
+    summarise(
+      mean_val = mean(Count, na.rm=TRUE),
+      sd_val = sd(Count, na.rm=TRUE),
+      .groups = "drop"
+    )
+  
+  # Summarize Glucose
+  summ_gluc <- all_glucose %>%
+    group_by(G0, hours, ploidy) %>%
+    summarise(
+      mean_val = mean(G_est, na.rm=TRUE),
+      sd_val = sd(G_est, na.rm=TRUE),
+      .groups = "drop"
+    )
+
+  # 5. Generate Plots
+  
+  # Plot 1: Cell Counts (Alive vs Dead)
+  p_cells <- ggplot(summ_cells, aes(x = hours, y = mean_val, color = State, group = State)) +
+    geom_errorbar(aes(ymin = pmax(0, mean_val - sd_val), 
+                      ymax = mean_val + sd_val), width = 4, alpha = 0.5) +
+    geom_line() +
+    geom_point(size = 1.5) +
+    # Use as.factor(G0) in facet if you want neat labels, but numeric underlying data ensures sort order
+    facet_grid(rows = vars(G0), cols = vars(ploidy), labeller = label_both,scales="free") +
+    scale_color_manual(values = c("Alive" = "#2E8B57", "Dead" = "#CD5C5C")) +
+    labs(title = paste(cell_line, "- Cell Counts (Alive vs Dead)"),
+         y = "Count", x = "Time (Hours)") +
+    theme_bw() +
+    theme(legend.position = "bottom")
+  
+  # Plot 2: Glucose Estimates
+  p_gluc <- ggplot(summ_gluc, aes(x = hours, y = mean_val)) +
+    geom_hline(aes(yintercept = G0), linetype = "dashed", color = "gray60") +
+    geom_errorbar(aes(ymin = pmax(0, mean_val - sd_val), 
+                      ymax = mean_val + sd_val), width = 4, color = "blue", alpha = 0.5) +
+    geom_line(color = "blue") +
+    geom_point(color = "blue", size = 1.5) +
+    facet_grid(rows = vars(G0), cols = vars(ploidy), labeller = label_both,scales="free") +
+    labs(title = paste(cell_line, "- Estimated Glucose"),
+         y = "[Glucose] (mM)", x = "Time (Hours)") +
+    theme_bw()
+  
+  return(list(cells = p_cells, glucose = p_gluc))
+}
+lines <- c("MCF10A","MDA-MB-231","SNU668","SUM-159-chem","SUM-159-fuse")
+
+plots <- lapply(lines,function(li){
+  plot_cell_line_summary(li)
+})
+```
+
+
+
+```{r}
+
+
+
+x <- readRDS("data/counts/corrected.Rds")
+x <- split(x,f=paste0(x$cellLine,".",x$experiment))
+
+xi <- x[[6]]
+id <- names(x)[6]
+data <- readRDS(file.path("data/glucose/processed/",glu_map[id],"fit_obj.Rds"))
+
+xi <- rename(xi,G0=glucose)
+data$cells <- xi[,c("cellLine","ploidy","G0","hours","N","D")]
+
+data$cells <- filter(data$cells,ploidy=="high",cellLine=="SNU668")[,c("G0","hours","N","D")]
+data$glucose <- filter(data$glucose,ploidy=="high",cellLine=="SNU668")[,c("G0","hours","lum","Dilution Factor")]
+
+par_info <- data.table(
+  par   = c("theta", "kp", "kd", "kd2", "g50a", "na", "g50d", "nd", "v1", "v2"),
+  lower = c(1e3, 1e-3, 1e-5, 1e-5, 1e-5, 1, 1e-5, 1, 1e-8, 1e-8),
+  upper = c(1e5, 1, 10, 10, 5, 10, 1, 10, 1e-3, 1e-3)
+)
+source("scripts/rxode_models.R")
+source("scripts/parameter_estimation_tmp.R")
+
+model <- load_model("model_B")
+
+tstvals <- pbapply::pbsapply(1:200,function(i){
+  logp <- runif(length(par_bounds$par),log(par_bounds$lower),log(par_bounds$upper))
+  deoptim_objective_function(logp,model,data,par_names=par_bounds$par)
+})
+
+
+
+```
+
+
+```{r}
+
+y <- data.table::fread("data/glucose/processed/250925_Glucose_Promega_chemicalSUM159-SNU668_Andor.csv")
+
+tmp <- y[is.na(y$ploidy),]
+y$ploidy[is.na(y$ploidy)]<-"2N"
+tmp$ploidy <- "4N"
+y <- rbind(tmp,y)
+
+pg <- ggplot(y,aes(x=Day,y=G,color=ploidy,group=ploidy))+
+  facet_grid(cols=vars(CellLine),rows=vars(G0),scales="free")+
+  geom_point()+
+  geom_line()+
+  scale_y_continuous("Glucose (mM)")
+pg
+
+```
+```{r}
+x <- readRDS("data/counts/corrected.Rds")
+
+xx <- x[x$cellLine%in%c("SNU668","SUM-159-chem"),]
+xx <- aggregate(list(N=xx$N,D=xx$D),by=list(ploidy=xx$ploidy,
+                                            glucose=xx$glucose,
+                                            hours=xx$hours,
+                                            cellLine=xx$cellLine),
+                mean)
+
+
+pn <- ggplot(xx,aes(x=hours/24,y=N,color=ploidy,group=ploidy))+
+  facet_grid(rows=vars(as.numeric(glucose)),cols=vars(cellLine),scales="free")+
+  geom_point()+
+  scale_x_continuous("days")+
+  scale_y_continuous("alive cells (per field)")
+pn
+
+
 ```
 

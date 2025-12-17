@@ -37,7 +37,7 @@ mod_gen <- cmdstan_model("STAN/model_B.stan", force_recompile = FALSE)
 csv_files <- list.files(output_dir, pattern = "\\.csv$", full.names = TRUE)
 csv_files <- csv_files[!grepl("temp_best_chain_", basename(csv_files))]
 csv_files <- csv_files[order(file.info(csv_files)$mtime, decreasing = TRUE)]
-csv_files <- na.omit(csv_files[1:min(4, length(csv_files))])
+csv_files <- na.omit(csv_files[1:min(1, length(csv_files))])
 
 if(length(csv_files) == 0) stop("No chain CSV files found in ", output_dir)
 

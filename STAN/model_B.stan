@@ -1,23 +1,20 @@
 functions {
   // Smooth, differentiable upper cap for log-parameters.
-  // For x << cap: ~ x
-  // For x >> cap: ~ cap
   real softcap(real x, real cap) {
     return cap - log1p_exp(cap - x);
   }
 
   // ============================================================
-  // ODE in transformed state space
-  // y = [u, v, w]
-  //   NL = exp(u)
-  //   ND = exp(v)
-  //   s_raw = inv_logit(w) in (0,1)
-  //   s = s_eps + (1 - 2*s_eps) * s_raw in (s_eps, 1-s_eps)
-  //   G = G_floor + (G0 - G_floor) * s   in (G_floor, G0)
+  // ODE in HYBRID state space
+  // y = [u, v, G_norm]
+  //   u = log(NL)      (Log-Space Live Cells)
+  //   v = log(ND)      (Log-Space Dead Cells)
+  //   G_norm = G / G0  (Linear-Space Normalized Glucose, starts at 1.0)
   //
-  // p = [theta,kp,kd,kd2,g50a,na,g50d,nd,v1,v2, G0, G_floor, s_eps]
+  // p = [theta, kp, kd, kd2, g50a, na, g50d, nd, v1, v2, G0]
   // ============================================================
   vector model_b_ode(real t, vector y, array[] real p) {
+   
     real theta = p[1];
     real kp    = p[2];
     real kd    = p[3];
@@ -28,41 +25,63 @@ functions {
     real nd    = p[8];
     real v1    = p[9];
     real v2    = p[10];
-
-    real G0      = p[11];
-    real G_floor = p[12];
-    real s_eps   = p[13];
+    real G0    = p[11];
 
     real NL = exp(y[1]);
     real ND = exp(y[2]);
+    
+    // G_norm is linear. Clamp to 0 to prevent negative excursions.
+    real k_smooth = 100.0; 
+    real G_norm = log1p_exp(k_smooth * y[3]) / k_smooth;
+    real G = G0 * G_norm;
 
-    real s_raw = inv_logit(y[3]);
-    real s     = s_eps + (1.0 - 2.0 * s_eps) * s_raw;
-    real G     = G_floor + (G0 - G_floor) * s;
-
-    real eps = 1e-12;
-
-    real actA   = 1.0 / (1.0 + pow(g50a / (G + eps), na));
-    real term_d = 1.0 / (1.0 + pow(g50d / (G + eps), nd));
+    // ------------------------------------------------------------
+    // Hill Functions (Log-Sum-Exp Stability)
+    // actA = 1 / (1 + (K/G)^n)  ---> inv_logit( n * (logG - logK) )
+    // As G -> 0, log(G) -> -Inf, inv_logit -> 0. Stable.
+    // We keep a tiny safety 1e-18 inside log() just to avoid strict -Inf 
+    // if the solver hits exactly 0.0.
+    // ------------------------------------------------------------
+    real log_G = log(G + 1e-18);
+    real actA   = inv_logit(na * (log_G - log(g50a)));
+    real term_d = inv_logit(nd * (log_G - log(g50d)));
     real inhD   = 1.0 - term_d;
 
-    real confl = kd2 * (NL * NL) / (theta + eps);
+    // ------------------------------------------------------------
+    // ODEs for Log-States (u, v)
+    // du/dt = (1/NL) * dNL/dt. 
+    // We divide the RHS by NL analytically to remove the 'NL' denominator.
+    // ------------------------------------------------------------
+    
+    // dNL terms divided by NL:
+    // Growth: kp * (1 - NL/theta) * actA
+    // Death:  -kd * inhD
+    // Confl:  -kd2 * NL / theta
+    real du_dt = kp * (1.0 - NL/theta) * actA - kd * inhD - kd2 * NL/theta;
 
-    real dNL = kp * NL * (1.0 - NL / (theta + eps)) * actA - kd * NL * inhD - confl;
-    real dND = kd * NL * inhD + confl;
+    // dND terms divided by ND:
+    // Death input: kd * (NL/ND) * inhD
+    // Confl input: kd2 * (NL^2 / ND) / theta
+    real dv_dt = (kd * NL * inhD + kd2 * (NL * NL) / theta) / ND;
 
-    // taper -> 0 as G -> G_floor (s -> s_eps)
-    real taper = (s - s_eps) / (1.0 - 2.0 * s_eps + eps);
+    // ------------------------------------------------------------
+    // ODE for Linear State (G_norm)
+    // dG_norm/dt = (1/G0) * dG/dt
+    // ------------------------------------------------------------
+    real dG_dt_physical = -NL * (v1 * actA + v2 * term_d) / 2.0;
+    real dG_norm_dt;
 
-    real dG  = -NL * (v1 * actA + v2 * term_d) / 2.0 * taper;
-
-    // chain rule denom; s_raw*(1-s_raw) never exactly 0
-    real denom = (G0 - G_floor) * (1.0 - 2.0 * s_eps) * s_raw * (1.0 - s_raw) + eps;
+    // CRITICAL FIX: Handle G0=0 case to avoid division by zero
+    if (G0 > 1e-12) {
+      dG_norm_dt = dG_dt_physical / G0;
+    } else {
+      dG_norm_dt = 0.0;
+    }
 
     vector[3] dydt;
-    dydt[1] = dNL / (NL + eps);
-    dydt[2] = dND / (ND + eps);
-    dydt[3] = dG  / denom;
+    dydt[1] = du_dt;
+    dydt[2] = dv_dt;
+    dydt[3] = dG_norm_dt;
 
     return dydt;
   }
@@ -89,25 +108,22 @@ functions {
       real phi_N, real phi_D
   ) {
     real log_lik = 0;
-
     int N_grid = size(t_grid);
     array[N_grid] real t_eval = t_grid;
+    // BDF solver dislikes t=0 as a start point if we ask for output at t=0
     if (abs(t_eval[1]) < 1e-14) t_eval[1] = 1e-8;
 
-    // Smooth caps on log-params before exp()
-    real cap_log_main = 40.0;  // exp(40) ~ 2e17 (finite; already "astronomical")
-    real cap_log_hill = 6.0;   // exp(6) ~ 403, so na/nd <= ~404+1
+    real cap_log_main = 40.0;
+    real cap_log_hill = 1.6; // Clamped to ~6
 
     for (i in 1:size(slice_wells)) {
       int w = slice_wells[i];
       int l = line_id[w];
       int h = high_p[w];
 
-      array[13] real p_w;
-
+      array[11] real p_w; 
       for (pp in 1:10) {
         real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * h;
-
         if (pp == 6 || pp == 8) {
           p_w[pp] = 1.0 + exp(softcap(raw, cap_log_hill));
         } else {
@@ -116,45 +132,44 @@ functions {
       }
 
       real G0 = G0_per_well[w];
-      real G_floor = fmin(1e-12, 0.5 * G0);
-      real s_eps = 1e-6;
-
       p_w[11] = G0;
-      p_w[12] = G_floor;
-      p_w[13] = s_eps;
-
-      // ICs directly in log space (avoids exp->inf->log)
+      
+      // ICs
       vector[3] y0_w;
-      y0_w[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * h;
-      y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h;
-      y0_w[3] = 5.0;
+      y0_w[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * h; // u0
+      y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h; // v0
+      y0_w[3] = 1.0; // G_norm starts at 100%
 
       array[N_grid] vector[3] y_hat;
-      y_hat = ode_bdf_tol(model_b_ode, y0_w, 0.0, t_eval, 1e-6, 1e-6, 100000, p_w);
-
+      y_hat = ode_bdf_tol(model_b_ode, y0_w, 0.0, t_eval, 1e-4, 1e-5, 50000, p_w);
+      
+      // Count Likelihood
       for (n in 1:size(w_idx_count)) {
         if (w_idx_count[n] == w) {
           int idx = g_idx_count[n];
-          real NL_hat = exp(y_hat[idx, 1]) + 1e-12;
-          real ND_hat = exp(y_hat[idx, 2]) + 1e-12;
+          real NL_hat = exp(y_hat[idx, 1]);
+          real ND_hat = exp(y_hat[idx, 2]);
 
           log_lik += neg_binomial_2_lpmf(N_obs[n] | NL_hat, phi_N);
           log_lik += neg_binomial_2_lpmf(D_obs[n] | ND_hat, phi_D);
         }
       }
 
+      // Glucose Likelihood
       for (n in 1:size(w_idx_gluc)) {
         if (w_idx_gluc[n] == w) {
           int idx = g_idx_gluc[n];
+          
+          real k_smooth = 100.0; // same as in ODE
+          real G_norm_hat = log1p_exp(k_smooth * y_hat[idx, 3]) / k_smooth;
+          real G_hat = G0 * G_norm_hat;
 
-          real s_raw = inv_logit(y_hat[idx, 3]);
-          real s     = s_eps + (1.0 - 2.0 * s_eps) * s_raw;
-          real G_hat = G_floor + (G0 - G_floor) * s;
 
           int e = exp_id[w];
-          real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e] + 1e-12;
-
-          log_lik += lognormal_lpdf(lum_obs[n] | log(mu), calib_sigma[e]);
+          real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
+          
+          // Tiny safety for lognormal 
+          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
         }
       }
     }
@@ -173,7 +188,6 @@ data {
 
   int<lower=1> N_grid;
   array[N_grid] real t_grid;
-
   array[N_wells] int line_id;
   array[N_wells] int is_high_ploidy;
   array[N_wells] int exp_id;
@@ -208,9 +222,6 @@ data {
   vector<lower=0>[N_exps] calib_b_fixed;
 
   int<lower=0,upper=2> mode;
-  // 0 = posterior (likelihood on; ODE in GQ)
-  // 1 = prior draws, parameter-only (no likelihood; NO ODE anywhere)
-  // 2 = prior predictive (no likelihood; ODE in GQ)
 }
 
 parameters {
@@ -273,66 +284,47 @@ generated quantities {
   array[N_wells, N_grid] vector[3] y_sim;
   real log_lik = 0;
 
-  // ------------------------------------------------------------
-  // Always initialize so y_sim is defined even when we skip ODEs
-  // ------------------------------------------------------------
   for (w in 1:N_wells)
     for (g in 1:N_grid)
       y_sim[w, g] = rep_vector(0.0, 3);
 
-  // ------------------------------------------------------------
-  // Modes:
-  //   mode = 0 : posterior  (ODE + log_lik)
-  //   mode = 1 : prior only (NO ODE, no log_lik)
-  //   mode = 2 : prior predictive (ODE, no log_lik)
-  // ------------------------------------------------------------
   if (mode != 1) {
-    // Solve ODE for every well to build predictions
     array[N_grid] real t_eval = t_grid;
     if (abs(t_eval[1]) < 1e-14) t_eval[1] = 1e-8;
 
     real cap_log_main = 40.0;
-    real cap_log_hill = 2.5;
+    real cap_log_hill = 3.0; 
 
     for (w in 1:N_wells) {
       int l = line_id[w];
       int h = is_high_ploidy[w];
+      array[11] real p_w; 
 
-      array[13] real p_w;
-
-      // top-10 ODE params (soft-capped, with Hill exponents >= 1)
       for (pp in 1:10) {
         real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * h;
         if (pp == 6 || pp == 8) p_w[pp] = 1.0 + exp(softcap(raw, cap_log_hill));
         else                    p_w[pp] = exp(softcap(raw, cap_log_main));
       }
 
-      // per-well glucose anchors
       real G0 = G0_per_well[w];
-      real G_floor = fmin(1e-12, 0.5 * G0);
-      real s_eps = 1e-6;
       p_w[11] = G0;
-      p_w[12] = G_floor;
-      p_w[13] = s_eps;
 
-      // initial conditions in transformed space (u,v,w)
+      // ICs
       vector[3] y0_w;
       y0_w[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * h;
       y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h;
-      y0_w[3] = 5.0;
+      y0_w[3] = 1.0; 
 
-      // integrate
       array[N_grid] vector[3] y_hat =
-        ode_bdf_tol(model_b_ode, y0_w, 0.0, t_eval, 1e-6, 1e-6, 100000, p_w);
+        ode_bdf_tol(model_b_ode, y0_w, 0.0, t_eval, 1e-4, 1e-5, 50000, p_w);
 
-      // back-transform and store NL, ND, G
       for (g in 1:N_grid) {
         real NL_hat = exp(y_hat[g, 1]);
         real ND_hat = exp(y_hat[g, 2]);
+        real k_smooth = 100.0; // same as in ODE
+        real G_norm_hat = log1p_exp(k_smooth * y_hat[g, 3]) / k_smooth;
+        real G_hat = G0 * G_norm_hat;
 
-        real s_raw = inv_logit(y_hat[g, 3]);
-        real s     = s_eps + (1.0 - 2.0 * s_eps) * s_raw;
-        real G_hat = G_floor + (G0 - G_floor) * s;
 
         y_sim[w, g, 1] = NL_hat;
         y_sim[w, g, 2] = ND_hat;
@@ -341,26 +333,23 @@ generated quantities {
     }
   }
 
-  // Only compute full-data log-likelihood in posterior mode
   if (mode == 0) {
-    // Count data (NegBin2 on NL, ND)
     for (n in 1:N_obs_count) {
       int w = well_idx_count[n];
       int g = grid_idx_count[n];
-      real NL_hat = y_sim[w, g, 1] + 1e-12;
-      real ND_hat = y_sim[w, g, 2] + 1e-12;
+      real NL_hat = y_sim[w, g, 1];
+      real ND_hat = y_sim[w, g, 2];
       log_lik += neg_binomial_2_lpmf(N_obs[n] | NL_hat, phi_N);
       log_lik += neg_binomial_2_lpmf(D_obs[n] | ND_hat, phi_D);
     }
 
-    // Glucose lum (lognormal on a_e*G_hat*dilution + b_e)
     for (n in 1:N_obs_gluc) {
       int w = well_idx_gluc[n];
       int g = grid_idx_gluc[n];
       int e = exp_id[w];
       real G_hat = y_sim[w, g, 3];
-      real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e] + 1e-12;
-      log_lik += lognormal_lpdf(lum_obs[n] | log(mu), calib_sigma[e]);
+      real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
+      log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
     }
   }
 }

@@ -16,7 +16,7 @@ if (!requireNamespace("gridExtra", quietly = TRUE)) {
 # ============================================================
 # 1) CONFIG & DATA
 # ============================================================
-output_dir <- "~/tmp" 
+output_dir <- "~/tmp_quota/" 
 
 # [HARDCODED SETTINGS] 
 WARMUP_ITERS <- 1500
@@ -29,7 +29,7 @@ stan_data$mode <- 0
 if(is.null(stan_data$calib_a_fixed)) stop("stan_data missing 'calib_a_fixed'.")
 
 # Compile model
-mod_gen <- cmdstan_model("STAN/model_B.stan", force_recompile = FALSE)
+mod_gen <- cmdstan_model("STAN/model_q.stan", force_recompile = FALSE)
 
 # ============================================================
 # 2) PROCESS CHAIN CSVs

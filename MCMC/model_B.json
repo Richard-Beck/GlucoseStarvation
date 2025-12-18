@@ -1,0 +1,8 @@
+{
+  "model_name": "model_B",
+  "N_params": 10,
+  "param_names": ["theta", "kp", "kd", "kd2", "g50a", "na", "g50d", "nd", "v1", "v2"],
+  "prior_means": [20.0, -3.5, -5.3, -6.9, -0.7, 0.0, -0.7, 0.0, -9.9, -9.9],
+  "prior_sds": [2.0, 1.0, 1.0, 2.0, 1.5, 1.0, 1.5, 1.0, 1.5, 1.5],
+  "notes": "Theta (index 1) default is placeholder. Script should update based on max(N_obs)."
+}

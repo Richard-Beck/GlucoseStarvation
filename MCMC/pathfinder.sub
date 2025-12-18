@@ -29,4 +29,4 @@ echo "Allocated cores: $SLURM_JOB_CPUS_PER_NODE"
 echo "Using Container: $CONTAINER_URI"
 
 # Run Rscript inside the container
-apptainer exec $BINDS $CONTAINER_URI Rscript STAN/fitSTAN.R
+apptainer exec $BINDS $CONTAINER_URI Rscript MCMC/run_pathfinder.R model_B

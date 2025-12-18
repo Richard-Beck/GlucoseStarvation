@@ -6,3 +6,5 @@ all_raw
 figures
 *.pdf
 results
+plots
+

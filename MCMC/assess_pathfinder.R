@@ -36,10 +36,10 @@ cat("\nExtracting y_sim and noise parameters...\n")
 mu_mat <- fit$draws("y_sim", inc_warmup = FALSE, format = "matrix") 
 var_names <- colnames(mu_mat)
 
-# 2. Extract Noise Parameters (Draws)
-phi_draws <- fit$draws(c("phi_N", "phi_D"), inc_warmup = FALSE, format = "df")
-phi_N_vec <- phi_draws$phi_N
-phi_D_vec <- phi_draws$phi_D
+# 2. Extract Noise Parameters (Draws) - UPDATED NAMES
+phi_draws <- fit$draws(c("phi_total", "phi_frac"), inc_warmup = FALSE, format = "df")
+phi_total_vec <- phi_draws$phi_total
+phi_frac_vec  <- phi_draws$phi_frac
 
 # 3. Helper: Map Dilution to Well (needed for Glucose calc)
 dil_by_well <- rep(NA_real_, stan_data$N_wells)
@@ -47,10 +47,9 @@ for (w in 1:stan_data$N_wells) {
   ii <- which(stan_data$well_idx_gluc == w)
   if (length(ii) > 0) {
     u <- unique(stan_data$dilution[ii])
-    # Fallback if multiple dilutions appear (rare/unexpected)
     dil_by_well[w] <- u[1] 
   } else {
-    dil_by_well[w] <- 1.0 # Default if no gluc data
+    dil_by_well[w] <- 1.0 
   }
 }
 
@@ -61,66 +60,94 @@ idx_df <- tibble(variable = var_names) %>%
   mutate(
     well_idx = w,
     time     = stan_data$t_grid[t],
-    type     = case_when(s==1 ~ "NL", s==2 ~ "ND", s==3 ~ "G", TRUE ~ "Other")
+    type     = case_when(s==1 ~ "NL", s==2 ~ "ND", s==3 ~ "G", TRUE ~ "Other"),
+    col_idx  = 1:n()
   ) %>%
   filter(type %in% c("NL","ND","G"))
 
-cat("Simulating posterior predictive replicates...\n")
-
-# Pre-allocate
-n_vars <- nrow(idx_df)
-med <- numeric(n_vars); lo <- numeric(n_vars); hi <- numeric(n_vars)
+cat("Simulating posterior predictive replicates (Total/Fraction Model)...\n")
 
 # Helper for quantiles
 q_summ <- function(x) {
   c(median = quantile(x, 0.5, names=F), lo = quantile(x, 0.05, names=F), hi = quantile(x, 0.95, names=F))
 }
 
-# 5. Main Simulation Loop
-for (j in seq_len(n_vars)) {
-  # Latent mean from ODE (vector of draws)
-  mu <- pmax(0, as.numeric(mu_mat[, j])) 
-  s_type <- idx_df$type[j]
+res_list <- list()
+
+# --- Separate Indices for Pairing ---
+idx_NL <- idx_df %>% filter(type == "NL")
+idx_ND <- idx_df %>% filter(type == "ND")
+idx_G  <- idx_df %>% filter(type == "G")
+
+# Join NL and ND to ensure we simulate them as a pair
+# Assumes the structure of y_sim is consistent (it is, coming from Stan)
+idx_pairs <- inner_join(idx_NL, idx_ND, by = c("well_idx", "time"), suffix = c("_NL", "_ND"))
+
+# --- A. Simulate Counts (NL + ND) ---
+for (i in 1:nrow(idx_pairs)) {
+  c_nl <- idx_pairs$col_idx_NL[i]
+  c_nd <- idx_pairs$col_idx_ND[i]
   
-  if (s_type == "NL") {
-    # Negative Binomial Replicates
-    yrep <- rnbinom(n = length(mu), size = phi_N_vec, mu = mu)
-    
-  } else if (s_type == "ND") {
-    # Negative Binomial Replicates
-    yrep <- rnbinom(n = length(mu), size = phi_D_vec, mu = mu)
-    
-  } else {
-    # Glucose: Simulate Luminescence -> Convert back to Conc
-    w <- idx_df$well_idx[j]
-    e <- stan_data$exp_id[w]
-    d <- dil_by_well[w]
-    
-    # Retrieve FIXED calibration params for this experiment
-    a <- stan_data$calib_a_fixed[e]
-    b <- stan_data$calib_b_fixed[e]
-    sig <- stan_data$calib_sigma_fixed[e] 
-    
-    # 1. Expected Luminescence (Latent G -> Lum)
-    mu_lum <- a * mu * d + b
-    
-    # 2. Simulate Noisy Observation (Lognormal)
-    # Note: Use lognormal logic compatible with Stan model
-    yrep_lum <- exp(rnorm(n = length(mu), mean = log(mu_lum + 1e-12), sd = sig))
-    
-    # 3. Convert Simulated Luminescence back to Concentration (for plotting)
-    # This shows the "range of possible observations" in the units of the plot
-    yrep <- pmax(0, (yrep_lum - b) / (a * d))
-  }
+  # Latent means
+  mu_nl_vec <- pmax(0, as.numeric(mu_mat[, c_nl]))
+  mu_nd_vec <- pmax(0, as.numeric(mu_mat[, c_nd]))
+  
+  # 1. Calculate Latent Total and Fraction
+  mu_tot <- mu_nl_vec + mu_nd_vec
+  p_hat  <- mu_nl_vec / (mu_tot + 1e-12)
+  p_hat  <- pmax(1e-6, pmin(1 - 1e-6, p_hat))
+  
+  # 2. Simulate Total Count ~ NegBinomial(mu_tot, phi_total)
+  rep_tot <- rnbinom(n = length(mu_tot), size = phi_total_vec, mu = mu_tot)
+  
+  # 3. Simulate Alive Count ~ BetaBinomial(rep_tot, p_hat, phi_frac)
+  alpha <- p_hat * phi_frac_vec
+  beta  <- (1 - p_hat) * phi_frac_vec
+  
+  p_star <- rbeta(n = length(mu_tot), shape1 = alpha, shape2 = beta)
+  rep_nl <- rbinom(n = length(mu_tot), size = rep_tot, prob = p_star)
+  rep_nd <- rep_tot - rep_nl
+  
+  # 4. Summarize
+  qs_nl <- q_summ(rep_nl)
+  qs_nd <- q_summ(rep_nd)
+  
+  res_list[[length(res_list) + 1]] <- data.frame(
+    well_idx = idx_pairs$well_idx[i], time = idx_pairs$time[i], type = "NL",
+    median = qs_nl[1], lo = qs_nl[2], hi = qs_nl[3]
+  )
+  res_list[[length(res_list) + 1]] <- data.frame(
+    well_idx = idx_pairs$well_idx[i], time = idx_pairs$time[i], type = "ND",
+    median = qs_nd[1], lo = qs_nd[2], hi = qs_nd[3]
+  )
+}
+
+# --- B. Simulate Glucose (Standard Lognormal) ---
+for (i in 1:nrow(idx_G)) {
+  c_g <- idx_G$col_idx[i]
+  mu_g <- pmax(0, as.numeric(mu_mat[, c_g]))
+  
+  w <- idx_G$well_idx[i]
+  e <- stan_data$exp_id[w]
+  d <- dil_by_well[w]
+  
+  a <- stan_data$calib_a_fixed[e]
+  b <- stan_data$calib_b_fixed[e]
+  sig <- stan_data$calib_sigma_fixed[e] 
+  
+  mu_lum <- a * mu_g * d + b
+  yrep_lum <- exp(rnorm(n = length(mu_g), mean = log(mu_lum + 1e-12), sd = sig))
+  yrep <- pmax(0, (yrep_lum - b) / (a * d))
   
   qs <- q_summ(yrep)
-  med[j] <- qs[1]; lo[j] <- qs[2]; hi[j] <- qs[3]
+  res_list[[length(res_list) + 1]] <- data.frame(
+    well_idx = w, time = idx_G$time[i], type = "G",
+    median = qs[1], lo = qs[2], hi = qs[3]
+  )
 }
 
 cat("Formatting Simulation Data...\n")
-summ_clean <- idx_df %>%
-  mutate(median = med, lo = lo, hi = hi) %>%
-  select(well_idx, time, type, median, lo, hi)
+summ_clean <- bind_rows(res_list)
 
 # Metadata Map
 meta_df <- data.frame(
@@ -238,7 +265,6 @@ dev.off()
 # 4. RECONSTRUCT TRANSFORMED PARAMETERS
 # ==============================================================================
 cat("\nReconstructing effective ODE parameters (Transformed)...\n")
-# ... (Remainder of script remains unchanged)
 vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high")
 draws_df <- as_draws_df(fit$draws(variables = vars_needed, inc_warmup = FALSE))
 

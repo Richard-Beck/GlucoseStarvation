@@ -14,7 +14,7 @@ functions {
     real sigma_G = p[8];
     real KG      = p[9];
     real q50g_frac = p[10];
-    real q50d_frac = p[11]; 
+    real q50d_frac = p[11];
     real na = p[12];
     real nd = p[13];
 
@@ -33,8 +33,7 @@ functions {
 
     real NL = exp(y[1]);
     real ND = exp(y[2]);
-
-    real k_smooth_G = 100.0;
+    real k_smooth_G = 100.0; // CHANGED: Consistent smoothing constant
     real G_raw = y[3];
     real G = log1p_exp(k_smooth_G * G_raw) / k_smooth_G;
     
@@ -42,11 +41,9 @@ functions {
     real qN_raw = y[4];
     real qN_low = log1p_exp(k_smooth_q * qN_raw) / k_smooth_q;
     real qN = 1.0 - (log1p_exp(k_smooth_q * (1.0 - qN_low)) / k_smooth_q);
-
     real drive = log1p_exp(k_smooth_q * (1.0 - qN)) / k_smooth_q;
     real gate  = G / (KG + G + 1e-12);
     real Jin = k_home * gate * drive;
-    
     real log_qN = log(qN + 1e-12);
     real reg_growth  = inv_logit(na * (log_qN - log(q50gN + 1e-12)));
     real term_d_hill = inv_logit(nd * (log_qN - log(q50dN + 1e-12)));
@@ -74,7 +71,7 @@ functions {
       vector mu_global, vector sigma_line, vector beta_high, matrix z_line,
       vector mu_IC, vector sigma_IC, vector beta_IC, matrix z_IC,
       vector calib_sigma_fixed,
-      real phi_N, real phi_D
+      real phi_total, real phi_frac
   ) {
     real log_lik = 0;
     int N_grid = size(t_grid);
@@ -109,7 +106,6 @@ functions {
       y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h;
       y0_w[3] = G0;
       y0_w[4] = 1.0;
-      
       array[N_grid] vector[4] y_hat;
       y_hat = ode_bdf_tol(model_q_ode, y0_w, 0.0, t_eval, 1e-3, 1e-4, 5000, p_w);
       
@@ -117,13 +113,23 @@ functions {
         int idx = g_idx_count[n];
         real NL_hat = exp(y_hat[idx, 1]);
         real ND_hat = exp(y_hat[idx, 2]);
-        log_lik += neg_binomial_2_lpmf(N_obs[n] | NL_hat, phi_N);
-        log_lik += neg_binomial_2_lpmf(D_obs[n] | ND_hat, phi_D);
+        
+        real total_hat = NL_hat + ND_hat;
+        real p_hat     = NL_hat / (total_hat + 1e-18);
+        p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
+
+        int total_obs = N_obs[n] + D_obs[n];
+
+        log_lik += neg_binomial_2_lpmf(total_obs | total_hat, phi_total);
+        
+        real alpha_p = p_hat * phi_frac;
+        real beta_p  = (1.0 - p_hat) * phi_frac;
+        log_lik += beta_binomial_lpmf(N_obs[n] | total_obs, alpha_p, beta_p);
       }
 
       for (n in 1:size(w_idx_gluc)) if (w_idx_gluc[n] == w) {
         int idx = g_idx_gluc[n];
-        real k_smooth_G = 10.0;
+        real k_smooth_G = 100.0; // CHANGED: Consistent smoothing constant
         real G_hat = log1p_exp(k_smooth_G * y_hat[idx, 3]) / k_smooth_G;
         int e = exp_id[w];
         real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
@@ -185,8 +191,8 @@ parameters {
   vector<lower=0>[2] sigma_IC;
   vector[2] beta_IC;
   matrix[2, N_lines] z_IC;
-  real<lower=0> phi_N;
-  real<lower=0> phi_D;
+  real<lower=0> phi_total;
+  real<lower=0> phi_frac;
 }
 
 model {
@@ -199,9 +205,10 @@ model {
   sigma_IC ~ exponential(1);
   to_vector(z_IC) ~ std_normal();
   beta_IC ~ normal(0, 1);
-  phi_N ~ exponential(0.1);
-  phi_D ~ exponential(0.1);
-
+  
+  phi_total ~ exponential(0.1);
+  phi_frac ~ exponential(0.1);
+  
   if (mode == 0) {
     array[N_wells] int seq_wells;
     for (i in 1:N_wells) seq_wells[i] = i;
@@ -216,7 +223,7 @@ model {
       mu_global, sigma_line, beta_high, z_line,
       mu_IC, sigma_IC, beta_IC, z_IC,
       calib_sigma_fixed,
-      phi_N, phi_D
+      phi_total, phi_frac
     );
   }
 }
@@ -224,13 +231,11 @@ model {
 generated quantities {
   array[N_wells, N_grid] vector[4] y_sim;
   real log_lik = 0;
-
   if (mode != 1 && calc_sim == 1) {
     array[N_grid] real t_eval = t_grid;
     if (abs(t_eval[1]) < 1e-14) t_eval[1] = 1e-8;
     real cap_log_main = 15.0;
     real cap_log_hill = 2.7;
-
     for (w in 1:N_wells) {
       int l = line_id[w];
       int h = is_high_ploidy[w];
@@ -273,9 +278,18 @@ generated quantities {
           int g = grid_idx_count[n];
           real NL_hat = y_sim[w, g, 1];
           real ND_hat = y_sim[w, g, 2];
-          log_lik += neg_binomial_2_lpmf(N_obs[n] | NL_hat, phi_N);
-          log_lik += neg_binomial_2_lpmf(D_obs[n] | ND_hat, phi_D);
-        }
+          
+          real total_hat = NL_hat + ND_hat;
+          real p_hat     = NL_hat / (total_hat + 1e-18);
+          p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
+          int total_obs = N_obs[n] + D_obs[n];
+          
+          real alpha_p = p_hat * phi_frac;
+          real beta_p  = (1.0 - p_hat) * phi_frac;
+
+          log_lik += neg_binomial_2_lpmf(total_obs | total_hat, phi_total);
+          log_lik += beta_binomial_lpmf(N_obs[n] | total_obs, alpha_p, beta_p);
+       }
         for (n in 1:N_obs_gluc) {
           int w = well_idx_gluc[n];
           int g = grid_idx_gluc[n];
@@ -283,7 +297,7 @@ generated quantities {
           real G_hat = y_sim[w, g, 3];
           real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
           log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
-        }
+       }
     }
   }
 }

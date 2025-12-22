@@ -192,6 +192,7 @@ cat("Estimating fixed calibration (log-fit) per experiment...\n")
 N_exps <- length(u_calibs)
 a_fix <- rep(NA_real_, N_exps)
 b_fix <- rep(NA_real_, N_exps)
+sigma_fix <- rep(NA_real_, N_exps)
 
 cal_df <- data.frame(
   e   = all_calib_raw$exp_idx,
@@ -223,6 +224,21 @@ for (e in 1:N_exps) {
   opt <- optim(c(a0, b0), costf, x = sub, method = "Nelder-Mead")
   a_fix[e] <- max(1e-6, abs(opt$par[1]))
   b_fix[e] <- max(1e-6, abs(opt$par[2]))
+  
+  # Calculate expected mu based on best fit a/b
+  mu_est <- sub$G * a_est + b_est
+  
+  # Calculate sigma of the log-residuals (matching the lognormal likelihood in Stan)
+  # Ensure we only take valid logs
+  valid_idx <- mu_est > 0 & sub$Lum > 0
+  if (sum(valid_idx) > 2) {
+    resid <- log(sub$Lum[valid_idx]) - log(mu_est[valid_idx])
+    # You might want to set a floor (e.g. 0.1) to prevent overfitting to clean calibration data
+    # while the experimental data is noisier.
+    sigma_fix[e] <- max(0.1, sd(resid)) 
+  } else {
+    sigma_fix[e] <- 0.1 # Default fallback
+  }
 }
 
 # ==============================================================================
@@ -269,7 +285,8 @@ stan_data <- list(
   
   # Fixed Calibration
   calib_a_fixed = a_fix,
-  calib_b_fixed = b_fix
+  calib_b_fixed = b_fix,
+  calib_sigma_fixed = sigma_fix
 )
 
 saveRDS(stan_data, "data/stan_ready_data.Rds")

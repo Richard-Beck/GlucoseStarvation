@@ -14,7 +14,7 @@ MODEL_NAME <- if (length(args) >= 1) args[1] else "model_q"
 
 # Files
 res_file  <- file.path("results", paste0("pathfinder_", MODEL_NAME, ".Rds"))
-data_file <- "data/stan_ready_data.Rds" # Assuming data stays in data/
+data_file <- "data/stan_ready_data.Rds" 
 json_file <- file.path("MCMC", paste0(MODEL_NAME, ".json"))
 
 if (!file.exists(res_file)) stop("Result file not found: ", res_file)
@@ -28,29 +28,98 @@ config <- jsonlite::read_json(json_file, simplifyVector = TRUE)
 param_names <- config$param_names
 
 # ==============================================================================
-# 2. DATA PREPARATION FOR PPC
+# 2. DATA PREPARATION FOR PPC (Posterior Predictive Intervals)
 # ==============================================================================
-cat("\nExtracting y_sim for PPC...\n")
-draws_sim <- fit$draws("y_sim", inc_warmup = FALSE)
+cat("\nExtracting y_sim and noise parameters...\n")
 
-cat("Calculating Credible Intervals (Summary)...\n")
-summ_sim <- summarize_draws(
-  draws_sim, 
-  median = function(x) quantile(x, 0.5, names = FALSE),
-  lo     = function(x) quantile(x, 0.05, names = FALSE),
-  hi     = function(x) quantile(x, 0.95, names = FALSE)
-)
+# 1. Extract Latent Trajectories (Draws x Variables)
+mu_mat <- fit$draws("y_sim", inc_warmup = FALSE, format = "matrix") 
+var_names <- colnames(mu_mat)
 
-cat("Formatting Simulation Data...\n")
-summ_clean <- summ_sim %>%
+# 2. Extract Noise Parameters (Draws)
+phi_draws <- fit$draws(c("phi_N", "phi_D"), inc_warmup = FALSE, format = "df")
+phi_N_vec <- phi_draws$phi_N
+phi_D_vec <- phi_draws$phi_D
+
+# 3. Helper: Map Dilution to Well (needed for Glucose calc)
+dil_by_well <- rep(NA_real_, stan_data$N_wells)
+for (w in 1:stan_data$N_wells) {
+  ii <- which(stan_data$well_idx_gluc == w)
+  if (length(ii) > 0) {
+    u <- unique(stan_data$dilution[ii])
+    # Fallback if multiple dilutions appear (rare/unexpected)
+    dil_by_well[w] <- u[1] 
+  } else {
+    dil_by_well[w] <- 1.0 # Default if no gluc data
+  }
+}
+
+# 4. Parse Indices
+idx_df <- tibble(variable = var_names) %>%
   mutate(clean = gsub("y_sim\\[|\\]", "", variable)) %>%
-  separate(clean, c("w", "t", "s"), sep = ",", convert = TRUE) %>%
+  separate(clean, c("w","t","s"), sep = ",", convert = TRUE) %>%
   mutate(
     well_idx = w,
     time     = stan_data$t_grid[t],
     type     = case_when(s==1 ~ "NL", s==2 ~ "ND", s==3 ~ "G", TRUE ~ "Other")
   ) %>%
-  filter(type %in% c("NL", "ND", "G")) %>%
+  filter(type %in% c("NL","ND","G"))
+
+cat("Simulating posterior predictive replicates...\n")
+
+# Pre-allocate
+n_vars <- nrow(idx_df)
+med <- numeric(n_vars); lo <- numeric(n_vars); hi <- numeric(n_vars)
+
+# Helper for quantiles
+q_summ <- function(x) {
+  c(median = quantile(x, 0.5, names=F), lo = quantile(x, 0.05, names=F), hi = quantile(x, 0.95, names=F))
+}
+
+# 5. Main Simulation Loop
+for (j in seq_len(n_vars)) {
+  # Latent mean from ODE (vector of draws)
+  mu <- pmax(0, as.numeric(mu_mat[, j])) 
+  s_type <- idx_df$type[j]
+  
+  if (s_type == "NL") {
+    # Negative Binomial Replicates
+    yrep <- rnbinom(n = length(mu), size = phi_N_vec, mu = mu)
+    
+  } else if (s_type == "ND") {
+    # Negative Binomial Replicates
+    yrep <- rnbinom(n = length(mu), size = phi_D_vec, mu = mu)
+    
+  } else {
+    # Glucose: Simulate Luminescence -> Convert back to Conc
+    w <- idx_df$well_idx[j]
+    e <- stan_data$exp_id[w]
+    d <- dil_by_well[w]
+    
+    # Retrieve FIXED calibration params for this experiment
+    a <- stan_data$calib_a_fixed[e]
+    b <- stan_data$calib_b_fixed[e]
+    sig <- stan_data$calib_sigma_fixed[e] 
+    
+    # 1. Expected Luminescence (Latent G -> Lum)
+    mu_lum <- a * mu * d + b
+    
+    # 2. Simulate Noisy Observation (Lognormal)
+    # Note: Use lognormal logic compatible with Stan model
+    yrep_lum <- exp(rnorm(n = length(mu), mean = log(mu_lum + 1e-12), sd = sig))
+    
+    # 3. Convert Simulated Luminescence back to Concentration (for plotting)
+    # This shows the "range of possible observations" in the units of the plot
+    yrep <- pmax(0, (yrep_lum - b) / (a * d))
+  }
+  
+  qs <- q_summ(yrep)
+  med[j] <- qs[1]; lo[j] <- qs[2]; hi[j] <- qs[3]
+}
+
+cat("Formatting Simulation Data...\n")
+summ_clean <- idx_df %>%
+  mutate(median = med, lo = lo, hi = hi) %>%
   select(well_idx, time, type, median, lo, hi)
 
 # Metadata Map
@@ -115,13 +184,15 @@ for(lid in unique_lines) {
   
   # --- LEFT PANEL: Live/Dead Cells ---
   p1 <- ggplot() +
+    # PREDICTION INTERVAL (Shaded Region)
     geom_ribbon(data = d_sim %>% filter(type != "G"), 
                 aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
+    # MEDIAN TRAJECTORY
     geom_line(data = d_sim %>% filter(type != "G"), 
               aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
+    # OBSERVED DATA
     geom_point(data = d_obs %>% filter(type != "G"), 
                aes(x=time, y=value, color=type, shape=type), size=1.5, alpha=0.7) +
-    # FACET: Rows=Glucose, Cols=Ploidy. Scales=FREE.
     facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
     scale_y_continuous(labels = scales::comma) + 
     scale_color_manual(values = cols) +
@@ -133,10 +204,13 @@ for(lid in unique_lines) {
   
   # --- RIGHT PANEL: Glucose ---
   p2 <- ggplot() +
+    # PREDICTION INTERVAL (Shaded Region)
     geom_ribbon(data = d_sim %>% filter(type == "G"), 
                 aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
+    # MEDIAN TRAJECTORY
     geom_line(data = d_sim %>% filter(type == "G"), 
               aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
+    # OBSERVED DATA
     geom_point(data = d_obs %>% filter(type == "G"), 
                aes(x=time, y=value, color=type), size=1.5, alpha=0.7) +
     facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
@@ -151,6 +225,7 @@ for(lid in unique_lines) {
     plot_layout(guides = "collect") + 
     plot_annotation(
       title = paste0("Posterior Check: Cell Line ", lid, " (", MODEL_NAME, ")"),
+      subtitle = "Shaded regions represent 90% Posterior Predictive Intervals (simulated data)",
       theme = theme(plot.title = element_text(size = 16, face = "bold"))
     )
   
@@ -160,18 +235,16 @@ for(lid in unique_lines) {
 dev.off()
 
 # ==============================================================================
-# 4. RECONSTRUCT TRANSFORMED PARAMETERS (RESTORED)
+# 4. RECONSTRUCT TRANSFORMED PARAMETERS
 # ==============================================================================
 cat("\nReconstructing effective ODE parameters (Transformed)...\n")
-
+# ... (Remainder of script remains unchanged)
 vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high")
 draws_df <- as_draws_df(fit$draws(variables = vars_needed, inc_warmup = FALSE))
 
-# Functions used in Stan
 softcap <- function(x, cap) cap - log1p(exp(cap - x))
 inv_logit <- function(x) 1 / (1 + exp(-x))
 
-# Define Groups
 groups <- tibble(
   line_id = stan_data$line_id, 
   high = stan_data$is_high_ploidy
@@ -195,16 +268,12 @@ for(g in 1:nrow(groups)) {
   colnames(p_mat) <- param_names
   
   for(pp in 1:n_params) {
-    # Extract hierarchical components
     mu    <- draws_df[[paste0("mu_global[", pp, "]")]]
     sigma <- draws_df[[paste0("sigma_line[", pp, "]")]]
     z     <- draws_df[[paste0("z_line[", pp, ",", l, "]")]]
     beta  <- draws_df[[paste0("beta_high[", pp, "]")]]
-    
-    # Linear Predictor
     raw <- mu + sigma * z + beta * h
     
-    # --- MODEL SPECIFIC TRANSFORMS ---
     if (MODEL_NAME == "model_B") {
       cap_main <- 40.0; cap_hill <- 6.0
       if (pp %in% c(6, 8)) {
@@ -228,12 +297,7 @@ for(g in 1:nrow(groups)) {
   
   df_g <- as.data.frame(p_mat)
   df_g$group <- lbl
-  if(".chain" %in% names(draws_df)) {
-    df_g$chain <- as.factor(draws_df$.chain)
-  } else {
-    df_g$chain <- as.factor(1)
-  }
-  
+  df_g$chain <- if(".chain" %in% names(draws_df)) as.factor(draws_df$.chain) else as.factor(1)
   reconstructed_list[[g]] <- pivot_longer(df_g, cols = all_of(param_names), names_to = "param", values_to = "value")
 }
 
@@ -241,12 +305,10 @@ reconstructed_df <- bind_rows(reconstructed_list)
 reconstructed_df$group <- factor(reconstructed_df$group, levels = groups$group_lbl)
 reconstructed_df$param <- factor(reconstructed_df$param, levels = param_names)
 
-# --- PLOT TRANSFORMED ---
 cat("Generating Transformed Parameter Plot (results/final_posterior_parameters.pdf)...\n")
 plot_height <- max(8, length(unique(reconstructed_df$group)) * 2.5)
 
 pdf("results/final_posterior_parameters.pdf", width = 20, height = plot_height)
-
 p_trans <- ggplot(reconstructed_df, aes(x = value)) +
   geom_histogram(bins = 50, fill = "#377EB8", alpha = 0.6, color = NA) +
   facet_grid(group ~ param, scales = "free") +
@@ -262,7 +324,6 @@ p_trans <- ggplot(reconstructed_df, aes(x = value)) +
     subtitle = "Effective parameters per cell line (including random effects & transforms)",
     x = "Value (Log Scale)", y = "Count"
   )
-
 print(p_trans)
 dev.off()
 
@@ -280,21 +341,17 @@ beta_df$param_name <- factor(param_names[beta_df$idx], levels = param_names)
 
 pdf("results/wgd_effect_posterior.pdf", width = 12, height = 8)
 
-# Plot 1: Raw Beta
 p_beta_raw <- ggplot(beta_df, aes(x = value, fill = stat(x > 0))) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
   geom_histogram(bins = 60, alpha = 0.7, color = "white", size = 0.1) +
   facet_wrap(~ param_name, scales = "free") +
   scale_fill_manual(values = c("TRUE"="#E41A1C", "FALSE"="#377EB8"), guide="none") +
   theme_bw() +
-  labs(
-    title = paste0("WGD Effect (Raw Beta Parameters) - ", MODEL_NAME),
-    subtitle = "Value > 0 (Red) = WGD increases raw value. Value < 0 (Blue) = WGD decreases it.",
-    x = "Raw Beta Value", y = "Density"
-  )
+  labs(title = paste0("WGD Effect (Raw Beta Parameters) - ", MODEL_NAME),
+       subtitle = "Value > 0 (Red) = WGD increases raw value. Value < 0 (Blue) = WGD decreases it.",
+       x = "Raw Beta Value", y = "Density")
 print(p_beta_raw)
 
-# Plot 2: Fold Change
 fc_df <- beta_df %>% mutate(fold_change = exp(value))
 p_fc <- ggplot(fc_df, aes(x = fold_change)) +
   geom_vline(xintercept = 1, linetype = "dashed") +
@@ -313,7 +370,6 @@ cat("\nGenerating Comprehensive Raw Parameter Plots (results/all_raw_parameters.
 
 vars_raw <- c("mu_global", "beta_high", "sigma_line")
 draws_all_raw <- fit$draws(vars_raw, inc_warmup = FALSE)
-
 all_raw_df <- as_draws_df(draws_all_raw) %>%
   pivot_longer(cols = everything(), names_to = "full_name", values_to = "value") %>%
   filter(!full_name %in% c(".chain", ".iteration", ".draw"))
@@ -339,73 +395,38 @@ dev.off()
 cat("\n>>> Assessment Complete.\n")
 
 # ==============================================================================
-# 7. PSEUDO-TRACE DIAGNOSTIC (Draw Diversity Check)
+# 7. DIAGNOSTICS
 # ==============================================================================
-cat("\nGenerating Pseudo-Trace Plots (results/pseudo_trace_check.pdf)...\n")
+cat("\nGenerating Diagnostics...\n")
 
-# Re-extract mu_global WITH draw indices (previous df might have filtered them)
 draws_trace <- fit$draws("mu_global", inc_warmup = FALSE)
 trace_df <- as_draws_df(draws_trace) %>%
-  mutate(.draw = 1:n()) %>% # Ensure explicit draw index
+  mutate(.draw = 1:n()) %>% 
   pivot_longer(cols = starts_with("mu_global"), names_to = "param_idx", values_to = "value")
 
-# Map Index to Name
 trace_df$idx <- as.integer(str_extract(trace_df$param_idx, "[0-9]+"))
 trace_df$param_name <- factor(param_names[trace_df$idx], levels = param_names)
 
 pdf("results/pseudo_trace_check.pdf", width = 12, height = 8)
-
 p_trace <- ggplot(trace_df, aes(x = .draw, y = value)) +
-  # Use jitter to see density if draws are identical
   geom_point(alpha = 0.4, size = 0.8, color = "#2c3e50") +
   facet_wrap(~ param_name, scales = "free_y") +
   theme_bw() +
-  labs(
-    title = "Pseudo-Trace of Pathfinder Draws", 
-    subtitle = "Diagnostic: 'Fuzzy Bar' = Good Approximation. 'Discrete Lines' = Disjoint/Fragile Modes.",
-    x = "Draw Index (Random Sample)", 
-    y = "Raw Parameter Value"
-  )
-
+  labs(title = "Pseudo-Trace of Pathfinder Draws", x = "Draw Index", y = "Raw Parameter Value")
 print(p_trace)
 dev.off()
 
-cat("  Saved pseudo-trace to 'results/pseudo_trace_check.pdf'\n")
-
-# ==============================================================================
-# 8. PATHFINDER DIAGNOSTICS (Success/Fail Check)
-# ==============================================================================
-cat("\nChecking Pathfinder Convergence Diagnostics...\n")
-
-# 1. Return Codes (Did the processes crash?)
-# 0 = Success, Non-Zero = Crash/Failure
 codes <- fit$return_codes()
 n_fail <- sum(codes != 0)
 cat(sprintf("  Total Paths Run: %d\n", length(codes)))
 cat(sprintf("  Failed (Crashed): %d\n", n_fail))
-if (n_fail > 0) {
-  cat("  WARNING: Some paths crashed. Check prior initialization range.\n")
-}
 
-# 2. Log-Probability (lp__) Distribution
-# This tells you if the 'successful' paths found the same mode.
-# If you see a bimodal histogram, some paths got stuck in a bad local optima.
 draws_lp <- fit$draws("lp__", inc_warmup = FALSE)
 lp_df <- as_draws_df(draws_lp)
-
 pdf("results/diagnostic_lp_check.pdf", width = 8, height = 6)
-
 p_lp <- ggplot(lp_df, aes(x = lp__)) +
   geom_histogram(bins = 50, fill = "purple", alpha = 0.7, color = "black") +
   theme_bw() +
-  labs(
-    title = "Log-Probability (lp__) Distribution",
-    subtitle = "Left-tail outliers indicate paths stuck in poor local optima.",
-    x = "Log Probability",
-    y = "Count of Draws"
-  )
-
+  labs(title = "Log-Probability (lp__) Distribution", x = "Log Probability", y = "Count of Draws")
 print(p_lp)
 dev.off()
-
-cat("  Saved lp__ diagnostic to 'results/diagnostic_lp_check.pdf'\n")

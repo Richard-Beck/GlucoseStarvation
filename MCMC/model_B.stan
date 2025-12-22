@@ -57,7 +57,7 @@ functions {
       vector calib_a_fixed, vector calib_b_fixed,
       vector mu_global, vector sigma_line, vector beta_high, matrix z_line,
       vector mu_IC, vector sigma_IC, vector beta_IC, matrix z_IC,
-      vector calib_sigma,
+      vector calib_sigma_fixed, // CHANGED: Now fixed data
       real phi_N, real phi_D
   ) {
     real log_lik = 0;
@@ -111,7 +111,8 @@ functions {
           real G_hat = G0 * G_norm_hat;
           int e = exp_id[w];
           real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
-          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
+          // CHANGED: Use calib_sigma_fixed
+          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
         }
       }
     }
@@ -160,9 +161,10 @@ data {
 
   vector<lower=0>[N_exps] calib_a_fixed;
   vector<lower=0>[N_exps] calib_b_fixed;
+  vector<lower=0>[N_exps] calib_sigma_fixed; // ADDED
 
   int<lower=0,upper=2> mode;
-  int<lower=0,upper=1> calc_sim; // New toggle
+  int<lower=0,upper=1> calc_sim;
 }
 
 parameters {
@@ -175,7 +177,7 @@ parameters {
   vector[2] beta_IC;
   matrix[2, N_lines] z_IC;
 
-  vector<lower=0>[N_exps] calib_sigma;
+  // REMOVED: vector<lower=0>[N_exps] calib_sigma;
 
   real<lower=0> phi_N;
   real<lower=0> phi_D;
@@ -193,7 +195,8 @@ model {
   beta_IC ~ normal(0, 1);
   phi_N ~ exponential(0.1);
   phi_D ~ exponential(0.1);
-  calib_sigma ~ exponential(1);
+  
+  // REMOVED: calib_sigma ~ exponential(1);
 
   if (mode == 0) {
     array[N_wells] int seq_wells;
@@ -209,7 +212,7 @@ model {
       calib_a_fixed, calib_b_fixed,
       mu_global, sigma_line, beta_high, z_line,
       mu_IC, sigma_IC, beta_IC, z_IC,
-      calib_sigma,
+      calib_sigma_fixed, // CHANGED
       phi_N, phi_D
     );
   }
@@ -219,7 +222,6 @@ generated quantities {
   array[N_wells, N_grid] vector[3] y_sim;
   real log_lik = 0;
 
-  // Only run simulation loop if calc_sim is true and not in prior-predictive mode
   if (mode != 1 && calc_sim == 1) {
     array[N_grid] real t_eval = t_grid;
     if (abs(t_eval[1]) < 1e-14) t_eval[1] = 1e-8;
@@ -259,12 +261,7 @@ generated quantities {
     }
   }
 
-  // Always calc log_lik if we are fitting (mode 0), regardless of calc_sim
   if (mode == 0) {
-    // Note: To calculate log_lik correctly without re-running the ODE solver 
-    // inside Generated Quantities, we rely on y_sim.
-    // IF calc_sim is 0, we cannot compute point-wise log_lik here easily without solving again.
-    // Strategy: If calc_sim is 0, we just return log_lik=0 or skip.
     if (calc_sim == 1) {
        for (n in 1:N_obs_count) {
           int w = well_idx_count[n];
@@ -273,15 +270,16 @@ generated quantities {
           real ND_hat = y_sim[w, g, 2];
           log_lik += neg_binomial_2_lpmf(N_obs[n] | NL_hat, phi_N);
           log_lik += neg_binomial_2_lpmf(D_obs[n] | ND_hat, phi_D);
-        }
-        for (n in 1:N_obs_gluc) {
+       }
+       for (n in 1:N_obs_gluc) {
           int w = well_idx_gluc[n];
           int g = grid_idx_gluc[n];
           int e = exp_id[w];
           real G_hat = y_sim[w, g, 3];
           real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
-          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
-        }
+          // CHANGED: Use calib_sigma_fixed
+          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
+       }
     }
   }
 }

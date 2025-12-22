@@ -34,7 +34,7 @@ functions {
     real NL = exp(y[1]);
     real ND = exp(y[2]);
 
-    real k_smooth_G = 10.0;
+    real k_smooth_G = 100.0;
     real G_raw = y[3];
     real G = log1p_exp(k_smooth_G * G_raw) / k_smooth_G;
     
@@ -73,7 +73,7 @@ functions {
       vector calib_a_fixed, vector calib_b_fixed,
       vector mu_global, vector sigma_line, vector beta_high, matrix z_line,
       vector mu_IC, vector sigma_IC, vector beta_IC, matrix z_IC,
-      vector calib_sigma,
+      vector calib_sigma_fixed,
       real phi_N, real phi_D
   ) {
     real log_lik = 0;
@@ -127,7 +127,7 @@ functions {
         real G_hat = log1p_exp(k_smooth_G * y_hat[idx, 3]) / k_smooth_G;
         int e = exp_id[w];
         real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
-        log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
+        log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
       }
     }
     return log_lik;
@@ -171,6 +171,7 @@ data {
   vector[13] prior_ode_sd;
   vector<lower=0>[N_exps] calib_a_fixed;
   vector<lower=0>[N_exps] calib_b_fixed;
+  vector<lower=0>[N_exps] calib_sigma_fixed;
   int<lower=0,upper=2> mode;
   int<lower=0,upper=1> calc_sim;
 }
@@ -184,7 +185,6 @@ parameters {
   vector<lower=0>[2] sigma_IC;
   vector[2] beta_IC;
   matrix[2, N_lines] z_IC;
-  vector<lower=0>[N_exps] calib_sigma;
   real<lower=0> phi_N;
   real<lower=0> phi_D;
 }
@@ -201,7 +201,6 @@ model {
   beta_IC ~ normal(0, 1);
   phi_N ~ exponential(0.1);
   phi_D ~ exponential(0.1);
-  calib_sigma ~ exponential(1);
 
   if (mode == 0) {
     array[N_wells] int seq_wells;
@@ -216,7 +215,7 @@ model {
       calib_a_fixed, calib_b_fixed,
       mu_global, sigma_line, beta_high, z_line,
       mu_IC, sigma_IC, beta_IC, z_IC,
-      calib_sigma,
+      calib_sigma_fixed,
       phi_N, phi_D
     );
   }
@@ -260,7 +259,7 @@ generated quantities {
       for (g in 1:N_grid) {
         y_sim[w, g, 1] = exp(y_hat[g, 1]);
         y_sim[w, g, 2] = exp(y_hat[g, 2]);
-        real k_smooth_G = 10.0;
+        real k_smooth_G = 100.0;
         y_sim[w, g, 3] = log1p_exp(k_smooth_G * y_hat[g, 3]) / k_smooth_G;
         real k_smooth_q = 50.0;
         real qN_low = log1p_exp(k_smooth_q * y_hat[g, 4]) / k_smooth_q;
@@ -283,7 +282,7 @@ generated quantities {
           int e = exp_id[w];
           real G_hat = y_sim[w, g, 3];
           real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
-          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma[e]);
+          log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
         }
     }
   }

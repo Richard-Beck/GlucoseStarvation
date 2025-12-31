@@ -99,7 +99,7 @@ fit_pf <- mod$pathfinder(
 #  init = init_fun,
   seed = 123,
   num_threads = 60,
-  num_paths = 180
+  num_paths = 600
 )
 
 # 5. SAVE

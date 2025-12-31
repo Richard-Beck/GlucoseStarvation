@@ -34,7 +34,7 @@ conda activate cpose
 
 # --- Run the Python script ---
 echo "Python environment activated. Running the script..."
-python scripts/image_processing/batch_segment_and_classify.py  --raw_data_dir all_raw --classifier_path data/train/curation_outputs/object_classifier.pkl --finetuned_cellpose_model data/train/models/cpsam-tuned --output_csv_path data/counts/batch_results.csv
+python scripts/image_processing/batch_segment_and_classify.py  --raw_data_dir all_raw --classifier_path data/train/classifier_training_outputs/object_classifier.pkl --output_csv_path data/counts/batch_results_v2.csv
 echo "=========================================================="
 echo "Job Finished at $(date)"
 echo "=========================================================="

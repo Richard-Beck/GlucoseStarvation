@@ -7,7 +7,7 @@ functions {
     real theta = p[1];
     real kp    = p[2];
     real kd    = p[3];
-    real kd2   = p[4];
+    real kd2   = 0;//p[4];
     real nu    = p[5];
     real rho   = p[6];
     real r     = p[7];

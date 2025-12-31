@@ -3,8 +3,10 @@ import csv
 import glob
 import argparse
 import threading
+import torch  # Added for GPU check
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-from tifffile import imread
+from tifffile import imread, imwrite # Added imwrite to save masks
 
 ### Clone this repo and set the path: https://github.com/Richard-Beck/imutils ###
 import sys
@@ -13,9 +15,9 @@ from imutils.object_classification import ObjectClassifier
 from cellpose.models import CellposeModel
 
 # --- Constants ---
-MAX_WORKERS = 8 # Number of parallel worker threads
-LABEL_MAP = {1: 'alive', 2: 'dead', 3: 'junk'} # Mapping of class IDs to names
-csv_writer_lock = threading.Lock() # Lock for thread-safe CSV writing
+MAX_WORKERS = 8  # NOTE: If you encounter CUDA errors, set this to 1
+LABEL_MAP = {1: 'alive', 2: 'dead', 3: 'junk'} 
+csv_writer_lock = threading.Lock() 
 
 def get_base_key(filepath: str) -> str:
     """Extracts a clean base name from a filepath by stripping common suffixes."""
@@ -30,13 +32,14 @@ def parse_args() -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="Batch classify objects in images using a trained classifier.")
     parser.add_argument("--classifier_path", required=True, help="Path to the trained object_classifier.pkl file.")
-    parser.add_argument("--finetuned_cellpose_model", default=None, help="Path to the fine-tuned Cellpose model file. If not provided, the default model will be used.")
+    # Removed --finetuned_cellpose_model as requested
     parser.add_argument("--output_csv_path", required=True, help="Path for the output CSV results file.")
-    parser.add_argument("--composite_dir", required=True, help="Directory with 3-channel images for the classifier.")
-    parser.add_argument("--cpose_input_dir", required=True, help="Directory with 2-channel images for Cellpose segmentation.")
+    parser.add_argument("--output_masks_dir", required=True, help="Directory to save the generated segmentation masks (TIFF).")
+    parser.add_argument("--composite_dir", required=True, help="Directory with 3-channel images (Float32) for the classifier.")
+    parser.add_argument("--cpose_input_dir", required=True, help="Directory with 2-channel images (Float32) for Cellpose segmentation.")
     return parser.parse_args()
 
-def process_files(cpose_path: str, composite_path: str, cellpose_model: CellposeModel, classifier: ObjectClassifier, csv_writer: csv.DictWriter):
+def process_files(cpose_path: str, composite_path: str, output_masks_dir: str, cellpose_model: CellposeModel, classifier: ObjectClassifier, csv_writer: csv.DictWriter):
     """
     Defines the processing pipeline for a matched pair of images.
     """
@@ -44,16 +47,27 @@ def process_files(cpose_path: str, composite_path: str, cellpose_model: Cellpose
     try:
         print(f"Processing: {key}")
         
-        # 1. Load pre-made images and run segmentation
-        cpose_input_img = imread(cpose_path)
+        # 1. Load Cellpose Input (Float32) and run segmentation
+        # Explicit cast to float32 for safety
+        cpose_input_img = imread(cpose_path).astype(np.float32)
+        
+        # Cellpose inference (uses shared model)
         masks, _, _ = cellpose_model.eval(cpose_input_img, diameter=None)
 
         if masks.max() == 0:
             print(f"  -> No objects found in {key}. Skipping.")
             return 0
 
-        # 2. Load the corresponding composite image for the classifier
-        composite_img = imread(composite_path)
+        # --- NEW: Save the Segmentation Mask ---
+        # We save as uint16 to support >255 objects. 
+        # The pixel values in this TIF correspond to the 'object_id' in your CSV.
+        mask_filename = f"{key}_mask.tif"
+        mask_save_path = os.path.join(output_masks_dir, mask_filename)
+        imwrite(mask_save_path, masks.astype(np.uint16))
+
+        # 2. Load the corresponding composite image (Float32)
+        # Explicit cast to float32 to match ObjectClassifier requirements
+        composite_img = imread(composite_path).astype(np.float32)
         
         # 3. Predict labels for all found objects (masks)
         predictions = classifier.predict_with_probabilities(composite_img, masks)
@@ -63,13 +77,14 @@ def process_files(cpose_path: str, composite_path: str, cellpose_model: Cellpose
         for obj_id, result in predictions.items():
             row = {
                 'image_key': key,
+                'mask_filename': mask_filename, # Added for easier joining later
                 'object_id': obj_id,
                 'predicted_label_id': result['prediction'],
                 'predicted_label_name': LABEL_MAP.get(result['prediction'], 'unknown')
             }
             # Add probability columns
             for i, prob in enumerate(result['probabilities']):
-                class_id = i + 1 # Classifier is 0-indexed, labels are 1-indexed
+                class_id = i + 1 
                 class_name = LABEL_MAP.get(class_id, f"class_{class_id}")
                 row[f'prob_{class_name}'] = f"{prob:.4f}"
             rows_to_write.append(row)
@@ -86,12 +101,17 @@ def process_files(cpose_path: str, composite_path: str, cellpose_model: Cellpose
 
 def main():
     """
-    Robust, parallelized batch classification script using pre-made images.
+    Robust batch classification script using pre-made images.
     """
     args = parse_args()
     
-    # --- 1. Initialize Models ---
+    # --- 1. Setup Directories ---
+    os.makedirs(args.output_masks_dir, exist_ok=True)
+
+    # --- 2. Initialize Models ---
     print("--- Initializing Models ---")
+    
+    # Load Object Classifier
     classifier = ObjectClassifier()
     if not os.path.exists(args.classifier_path):
         print(f"❌ ERROR: Classifier model not found at '{args.classifier_path}'")
@@ -102,28 +122,15 @@ def main():
         print("❌ ERROR: The loaded classifier is not trained.")
         return
         
-    # Load the Cellpose model
-    if args.finetuned_cellpose_model:
-        # If a path is provided, check if it exists and load the fine-tuned model
-        if not os.path.exists(args.finetuned_cellpose_model):
-            print(f"❌ ERROR: Fine-tuned Cellpose model not found at '{args.finetuned_cellpose_model}'")
-            return
-        print(f"🔬 Loading fine-tuned model from: {args.finetuned_cellpose_model}")
-        cellpose_model = CellposeModel(gpu=True, pretrained_model=args.finetuned_cellpose_model)
-    else:
-        # If no path is provided, load the default model
-        print("🔬 No path provided. Loading the default Cellpose model.")
-        cellpose_model = CellposeModel(gpu=True)
+    # Load Default Cellpose Model (User Syntax)
+    print("⏳ Initializing default Cellpose model...")
+    cellpose_model = CellposeModel(gpu=torch.cuda.is_available())
 
-
-
-    # --- 2. Discover and Match Image Files ---
+    # --- 3. Discover and Match Image Files ---
     print("\n--- Scanning and matching image files ---")
-    # Create a lookup map of {base_key: full_path} for composite images
     composite_map = {get_base_key(p): p for p in glob.glob(os.path.join(args.composite_dir, "*.tif"))}
     cpose_files = glob.glob(os.path.join(args.cpose_input_dir, "*.tif"))
 
-    # Create a list of tasks (matched pairs of file paths)
     tasks = []
     for cpose_path in cpose_files:
         base_key = get_base_key(cpose_path)
@@ -137,11 +144,12 @@ def main():
         print("❌ No matched image pairs found between the two directories.")
         return
 
-    # --- 3. Set up CSV Writer and Process in Parallel ---
+    # --- 4. Set up CSV Writer and Process in Parallel ---
     print(f"\n--- Starting parallel classification for {len(tasks)} images using {MAX_WORKERS} workers ---")
     
+    # Sort label names for consistent header order
     prob_headers = [f'prob_{name}' for name in sorted(LABEL_MAP.values())]
-    headers = ['image_key', 'object_id', 'predicted_label_id', 'predicted_label_name'] + prob_headers
+    headers = ['image_key', 'mask_filename', 'object_id', 'predicted_label_id', 'predicted_label_name'] + prob_headers
     
     with open(args.output_csv_path, 'w', newline='') as f_out:
         writer = csv.DictWriter(f_out, fieldnames=headers)
@@ -149,8 +157,8 @@ def main():
 
         total_objects_processed = 0
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # Submit tasks with unpacked paths
-            futures = [executor.submit(process_files, cp, comp_p, cellpose_model, classifier, writer) for cp, comp_p in tasks]
+            # We now pass args.output_masks_dir to the worker function
+            futures = [executor.submit(process_files, cp, comp_p, args.output_masks_dir, cellpose_model, classifier, writer) for cp, comp_p in tasks]
             
             for future in futures:
                 total_objects_processed += future.result()
@@ -158,6 +166,7 @@ def main():
     print("\n--- Batch classification complete ---")
     print(f"✅ Successfully processed {total_objects_processed} objects.")
     print(f"   Results saved to '{args.output_csv_path}'")
+    print(f"   Masks saved to '{args.output_masks_dir}'")
 
 if __name__ == "__main__":
     main()

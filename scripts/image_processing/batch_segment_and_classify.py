@@ -2,6 +2,7 @@ import os
 import csv
 import argparse
 import threading
+import torch  # Added for GPU check
 from concurrent.futures import ThreadPoolExecutor
 
 ### Clone this repo and set the path: https://github.com/Richard-Beck/imutils ###
@@ -12,39 +13,44 @@ from imutils.image_utils import build_raw_group_map, make_cpose_input, make_comp
 from cellpose.models import CellposeModel
 
 # --- Constants ---
-MAX_WORKERS = 6
+MAX_WORKERS = 6 
 LABEL_MAP = {1: 'alive', 2: 'dead', 3: 'junk'}
 csv_writer_lock = threading.Lock()
 
 def parse_args() -> argparse.Namespace:
     """Parses command-line arguments."""
-    parser = argparse.ArgumentParser(description="Batch classify objects from raw image data.")
+    parser = argparse.ArgumentParser(description="Batch classify objects directly from raw image data.")
     parser.add_argument("--raw_data_dir", required=True, help="Directory containing the raw image files to process.")
     parser.add_argument("--classifier_path", required=True, help="Path to the trained object_classifier.pkl file.")
-    parser.add_argument("--finetuned_cellpose_model", required=True, help="Path to the fine-tuned Cellpose model file.")
+    # Removed --finetuned_cellpose_model as requested
     parser.add_argument("--output_csv_path", required=True, help="Path for the output CSV results file.")
     return parser.parse_args()
 
 def process_image_key(key: str, raw_groups: dict, cellpose_model: CellposeModel, classifier: ObjectClassifier, csv_writer: csv.DictWriter):
     """
     Defines the complete processing pipeline for a single image key,
-    generating images from raw data.
+    generating Float32 images in-memory from raw data.
     """
     try:
         print(f"Processing: {key}")
         
-        # 1. Generate 2-channel image FOR CELLPOSE and get masks
+        # 1. Generate 2-channel Float32 image FOR CELLPOSE
+        # make_cpose_input now returns (2, H, W) float32 [0.0-1.0]
         cpose_input_img = make_cpose_input(key, raw_groups)
+        
+        # Run Cellpose Inference
         masks, _, _ = cellpose_model.eval(cpose_input_img, diameter=None)
 
         if masks.max() == 0:
             print(f"  -> No objects found in {key}. Skipping.")
             return 0
 
-        # 2. Generate 3-channel composite image FOR THE CLASSIFIER
+        # 2. Generate 3-channel Float32 composite image FOR THE CLASSIFIER
+        # make_composite now returns (H, W, 3) float32 [0.0-1.0]
         composite_img_for_classifier = make_composite(key, raw_groups)
         
         # 3. Use the classifier to predict labels for all found objects
+        # The updated classifier expects float32 inputs, which we now provide directly.
         predictions = classifier.predict_with_probabilities(composite_img_for_classifier, masks)
         
         # 4. Structure the results for CSV output
@@ -56,6 +62,7 @@ def process_image_key(key: str, raw_groups: dict, cellpose_model: CellposeModel,
                 'predicted_label_id': result['prediction'],
                 'predicted_label_name': LABEL_MAP.get(result['prediction'], 'unknown')
             }
+            # Add probability columns
             for i, prob in enumerate(result['probabilities']):
                 class_id = i + 1
                 class_name = LABEL_MAP.get(class_id, f"class_{class_id}")
@@ -68,18 +75,21 @@ def process_image_key(key: str, raw_groups: dict, cellpose_model: CellposeModel,
                 csv_writer.writerows(rows_to_write)
         
         return len(rows_to_write)
+
     except Exception as e:
         print(f"🚨 ERROR processing key {key}: {e}")
         return 0
 
 def main():
     """
-    Robust, parallelized batch classification script that generates images from raw data.
+    Robust, parallelized batch classification script.
     """
     args = parse_args()
     
     # --- 1. Initialize Models ---
     print("--- Initializing Models ---")
+    
+    # Load Object Classifier
     if not os.path.exists(args.classifier_path):
         print(f"❌ ERROR: Classifier model not found at '{args.classifier_path}'")
         return
@@ -90,10 +100,9 @@ def main():
         print("❌ ERROR: The loaded classifier is not trained.")
         return
         
-    if not os.path.exists(args.finetuned_cellpose_model):
-        print(f"❌ ERROR: Fine-tuned Cellpose model not found at '{args.finetuned_cellpose_model}'")
-        return
-    cellpose_model = CellposeModel(gpu=True, pretrained_model=args.finetuned_cellpose_model)
+    # Load Default Cellpose Model
+    print("⏳ Initializing default Cellpose model...")
+    cellpose_model = CellposeModel(gpu=torch.cuda.is_available())
 
     # --- 2. Discover and Sort Images ---
     print("\n--- Scanning for raw image groups ---")
@@ -116,6 +125,7 @@ def main():
 
         total_objects_processed = 0
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # We pass the shared 'raw_groups' dictionary to all threads
             futures = [executor.submit(process_image_key, key, raw_groups, cellpose_model, classifier, writer) for key in image_keys]
             
             for future in futures:

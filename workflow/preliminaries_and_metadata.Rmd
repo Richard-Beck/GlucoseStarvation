@@ -195,7 +195,13 @@ df <- cbind(comparison_df,meta)
 df$total_manual <- df$alive_manual+df$dead_manual
 df$total_pred <- df$alive_pred+df$dead_pred
 
-p <- ggplot(df)+
+lut <- unique(df$cellLine)
+names(lut) <- lut
+lut[grepl("MCF",lut)] <- "MCF10A"
+lut[grepl("SUM",lut)] <- "SUM-159"
+df$cellLine <- lut[df$cellLine]
+
+p_count_validation <- ggplot(df)+
   facet_wrap(~cellLine,scales="free")+
   geom_abline()+
   geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
@@ -203,7 +209,7 @@ p <- ggplot(df)+
   geom_point(aes(x=total_manual,y=total_pred,color="total"))+
   scale_x_continuous("manual counts")+
   scale_y_continuous("predicted counts")
-p
+p_count_validation
 
 cor(df$alive_manual,df$alive_pred)
 cor(df$dead_manual,df$dead_pred)
@@ -378,6 +384,57 @@ for (key in image_keys) {
 cat("Done!\n")
 ```
 
+```{r}
+library(ggplot2)
+library(cowplot)
+library(magick)
+
+# 1. Define paths and labels explicitly
+base_dir <- "data/eval/visualization_panels/"
+img_files <- c(
+  "MCF10A_A00-IncucyteRawDataLiveDead-varyGlucose-241015_2N-Ctrl_C7_8_02d16h00m_panel.png",
+  "MDA-MB-231_B00-IncucyteRawDataLiveDead-varyGlucose-250213_231_F7_3_03d00h00m_panel.png",
+  "SNU668_A00-IncucyteRawDataLiveDead-varyGlucose-250324_Snu668_D7_3_01d16h00m_panel.png",
+  "SUM-159_C00-IncucyteRawDataLiveDead-varyGlucose_F3_1_01d16h00m_panel.png"
+)
+img_labels <- c("MCF10A", "MDA-MB-231", "SNU668", "SUM-159")
+
+# 2. Create list of plots with labels BAKED IN (via draw_label)
+# using Map to iterate over files and labels simultaneously
+img_list <- Map(function(f, lbl) {
+  ggdraw() + 
+    draw_image(file.path(base_dir, f)) +
+    # Manually place label in top-left corner of the image
+    draw_label(lbl, x = 0.02, y = 0.95, hjust = 0, vjust = 1, size = 10, fontface = "bold") +
+    # Enforce white background on the specific image panel
+    theme(plot.background = element_rect(fill = "white", color = NA))
+}, img_files, img_labels)
+
+# 3. Create the column of images
+p_images <- plot_grid(
+  plotlist = img_list,
+  ncol = 1
+  # No labels here, they are inside the plots now
+)
+
+# 4. Combine with validation plot
+final_dashboard <- plot_grid(
+  # Ensure your existing validation plot also has a white background
+  p_count_validation + theme(plot.background = element_rect(fill = "white", color = NA)),
+  p_images, 
+  ncol = 2, 
+  labels = c("A", "B"),
+  rel_widths = c(1, 1)
+)
+
+# 5. Final Wrapper to enforce white background on the "gaps" between plots
+# Ideally, we wrap the whole grid in one final ggdraw to paint the canvas white
+final_dashboard_white <- ggdraw(final_dashboard) + 
+  theme(plot.background = element_rect(fill = "white", color = NA))
+
+# 6. Save
+ggsave("figures/data_proccesing.pdf", final_dashboard_white, width = 180, height = 100, units = "mm")
+```
 
 
 ```{r}
@@ -445,6 +502,199 @@ names(plots) <- unique(smm$cellLine)
 plots
 
 ```
+
+```{r}
+library(data.table)
+library(ggplot2)
+
+# 1. Filter
+## not necessarily the actual order, but used to pull out the lower ploidy variant per cell line:
+# Base filtered table used for everything downstream
+smm_f <- smm[glucose == "1" & !grepl("-(ctrl|hras)$", cellLine)]
+
+ploidy_order <- c("2N", "3N", "parental", "4N", "low", "high")
+
+lowest_ploidy <- smm_f[, .(
+  ploidy = ploidy[order(factor(ploidy, levels = ploidy_order))[1]]
+), by = cellLine]
+
+plot_data <- smm_f[lowest_ploidy, on = .(cellLine, ploidy), nomatch = 0]
+
+# 2. Melt and force to data.table
+plot_long <- melt(plot_data, 
+                  id.vars = c("hours","cellLine"), 
+                  measure.vars = c("alive", "dead"), 
+                  variable.name = "state", 
+                  value.name = "count")
+setDT(plot_long)
+
+# 3. Aggregate: Mean and SD
+plot_summary <- plot_long[, .(
+  mean_count = mean(count, na.rm = TRUE),
+  sd_count   = sd(count, na.rm = TRUE)
+), by = .(hours, state,cellLine)]
+
+# map temporal indices -> hours (global; assumes all cell lines share the same time grid)
+hours_grid <- sort(unique(plot_summary$hours))
+vline_hours <- hours_grid[sel_idx[sel_idx >= 1 & sel_idx <= length(hours_grid)]]
+
+
+# 4. Plot with Points and Whiskers
+p_count <- ggplot(plot_summary, aes(x = hours, group = state, color = state)) +
+  # Whiskers (Error Bars)
+  facet_grid(rows=vars(cellLine),scales="free", drop = TRUE)+ 
+  geom_vline(
+    xintercept = vline_hours,
+    linetype = "dashed",
+    color = "grey40",
+    linewidth = 0.4
+  )+
+  geom_errorbar(aes(ymin = mean_count - sd_count, 
+                    ymax = mean_count + sd_count), 
+                width = 5,  # Adjust width of the whiskers as needed
+                position = position_dodge(width = 2)) + # Slight dodge to prevent overlap
+  # Mean Points
+  geom_point(aes(y = mean_count), 
+             size = 2, 
+             position = position_dodge(width = 2)) +
+  # Formatting
+  scale_color_manual(values = c("alive" = "#00BFC4", "dead" = "#F8766D")) +
+  labs(
+    y = "Cell Count",
+    x = "Hours"
+  ) +
+  theme_bw()+theme(legend.position="top")
+```
+```{r}
+library(data.table)
+library(EBImage)
+library(stringr)
+source("scripts/image_utils.R")
+lookup <- make_lookup()
+```
+
+
+```{r}
+library(EBImage)
+library(stringr)
+library(data.table)
+
+# ---- settings ----
+sel_idx <- c(1,7,12,16)   # temporal indices within each cellLine's final_bases
+gap_w   <- 10L            # vertical sliver between frames (pixels)
+row_gap <- 20L            # horizontal whitespace between stacked cellLine strips (pixels)
+crop_top_frac <- 0.5      # keep top 50%
+
+cell_order <- sort(unique(plot_summary$cellLine))
+
+# helper: build one horizontal strip for a given cellLine
+make_cell_strip <- function(cl) {
+  # reuse your earlier candidate logic, but parameterized by cellLine
+  target_meta <- smm[cellLine == cl & glucose == "1"]  # add ploidy filter if you want; see note below
+  stopifnot(nrow(target_meta) > 0)
+
+  sel_exp   <- target_meta$experiment[1]
+  sel_plate <- target_meta$plateID[1]
+
+  candidates <- lookup[
+    grepl(sel_exp, base, fixed = TRUE) &
+    grepl(paste0("_", sel_plate, "_"), base, fixed = TRUE)
+  ]
+  stopifnot(nrow(candidates) > 0)
+
+  pos_pat   <- paste0(sel_plate, "_([0-9]+)_")
+  positions <- unique(str_match(candidates$base, pos_pat)[,2])
+  sel_pos   <- positions[1]
+
+  final_bases <- candidates[grepl(paste0("_", sel_plate, "_", sel_pos, "_"), base, fixed = TRUE)]
+  final_bases <- final_bases[order(base)]
+  final_bases <- final_bases[!duplicated(final_bases$base),]
+
+  # subset by temporal indices (clamp to available frames)
+  idx <- sel_idx[sel_idx >= 1 & sel_idx <= nrow(final_bases)]
+  stopifnot(length(idx) > 0)
+  sel_bases <- final_bases$base[idx]
+
+  # render composites
+  imgs <- lapply(sel_bases, function(b) make_composite(base_name = b, lookup = lookup, displayIm = FALSE))
+
+nx    <- 8L
+ny    <- 8L
+bins  <- 256L
+limit <- 2
+
+imgs <- lapply(imgs, function(im) {
+  for (ch in seq_len(dim(im)[3])) {
+    x <- im[,,ch, drop = FALSE]
+    x <- EBImage::normalize(x)
+    x2 <- EBImage::clahe(x, nx = nx, ny = ny, bins = bins, limit = limit, keep.range = TRUE)
+    im[,,ch] <- x2[,,1]
+  }
+  im
+})
+
+  # crop upper 25% (y) and left 50% (x); EBImage dims are x,y,channel
+imgs <- lapply(imgs, function(im) {
+  W <- dim(im)[1]
+  H <- dim(im)[2]
+  im[
+    1:floor(W * 0.5),          # left 50% (x)
+    1:floor(H * 0.25),         # upper 25% (y)
+    ,
+    drop = FALSE
+  ]
+})
+
+
+  # gap between frames (gap in x, since we concatenate along x=1)
+  gap <- imgs[[1]][1:gap_w, , , drop = FALSE]
+  gap[,,] <- 1
+
+  parts <- c(rbind(imgs, rep(list(gap), length(imgs))))[1:(2*length(imgs)-1)]
+  do.call(EBImage::abind, c(parts, along = 1))  # horizontal strip
+}
+
+# build strips in facet order
+strips <- lapply(cell_order, make_cell_strip)
+
+# optional: make all strips same width by padding right with white
+maxW <- max(vapply(strips, function(im) dim(im)[1], numeric(1)))
+pad_to_width <- function(im, W) {
+  w <- dim(im)[1]; h <- dim(im)[2]; ch <- dim(im)[3]
+  if (w == W) return(im)
+  pad <- EBImage::Image(array(1, dim = c(W - w, h, ch)))
+  EBImage::colorMode(pad) <- EBImage::colorMode(im)
+  EBImage::storage.mode(pad) <- EBImage::storage.mode(im)
+  EBImage::abind(im, pad, along = 1)
+}
+strips <- lapply(strips, pad_to_width, W = maxW)
+
+# row gap between stacked cellLine strips (gap in y because we stack along y=2)
+rowgap <- strips[[1]][, 1:row_gap, , drop = FALSE]  # take a slice to match mode/type
+rowgap[,,] <- 1
+stack_parts <- c(rbind(strips, rep(list(rowgap), length(strips))))[1:(2*length(strips)-1)]
+
+stacked <- do.call(EBImage::abind, c(stack_parts, along = 2))  # vertical stack
+EBImage::display(stacked, method = "raster")
+
+
+```
+
+
+```{r}
+p_images <- ggdraw() + draw_image(stacked, scale = 1)
+bottom_row <- plot_grid(
+  p_count + theme(plot.background = element_rect(fill = "white", color = NA)),
+  p_images,
+  ncol = 2,
+  labels = c("C", "D"),
+  rel_widths = c(1.2, 2)
+)
+
+fig_1 <- plot_grid(final_dashboard,bottom_row,ncol=1,rel_heights = c(1,1.8))
+ggsave("figures/data_proccesing.pdf", fig_1, width = 180, height = 215, units = "mm",dpi=600)
+```
+
 
 Glucose data calibration. There's something "amiss" with three of the data points in the calibration assay (Didem appears to have excluded three points). Excluding them does result in greater confidence in glucose prediction based on the fluorescence - but is that confidence misplaced? More investigation is warranted.
 

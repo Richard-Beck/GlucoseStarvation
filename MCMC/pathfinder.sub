@@ -5,7 +5,7 @@
 
 # --- Resource Requests ---
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=60            # Request 64 cores (1 full A-Node)
+#SBATCH --cpus-per-task=63            # Request 64 cores (1 full A-Node)
 #SBATCH --mem=64G                     # Request 64GB RAM
 #SBATCH --time=12:00:00             # Wall time: 1 day
 #SBATCH --qos=small                   # Default QOS

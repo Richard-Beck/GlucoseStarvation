@@ -18,6 +18,9 @@ functions {
     real na = p[12];
     real nd = p[13];
 
+    // G is passed via p[14] if fixed, or state? 
+    // Wait, G is a state variable y[3].
+    
     real k_home_cap = 4.0;
     real k_home = exp(softcap(log(nu * kp + 1e-12), log(k_home_cap)));
     
@@ -28,12 +31,14 @@ functions {
     real eps_qstar = 1e-6;
     real q_star = (nu * (1.0 - rho)) / (nu + 1.0);
     q_star = fmin(fmax(q_star, eps_qstar), 1.0 - eps_qstar);
+
     real q50gN = q50g_frac * q_star;
     real q50dN = q50d_frac * q_star;
 
     real NL = exp(y[1]);
     real ND = exp(y[2]);
-    real k_smooth_G = 100.0; // CHANGED: Consistent smoothing constant
+    
+    real k_smooth_G = 100.0; 
     real G_raw = y[3];
     real G = log1p_exp(k_smooth_G * G_raw) / k_smooth_G;
     
@@ -41,9 +46,11 @@ functions {
     real qN_raw = y[4];
     real qN_low = log1p_exp(k_smooth_q * qN_raw) / k_smooth_q;
     real qN = 1.0 - (log1p_exp(k_smooth_q * (1.0 - qN_low)) / k_smooth_q);
+
     real drive = log1p_exp(k_smooth_q * (1.0 - qN)) / k_smooth_q;
     real gate  = G / (KG + G + 1e-12);
     real Jin = k_home * gate * drive;
+
     real log_qN = log(qN + 1e-12);
     real reg_growth  = inv_logit(na * (log_qN - log(q50gN + 1e-12)));
     real term_d_hill = inv_logit(nd * (log_qN - log(q50dN + 1e-12)));
@@ -58,20 +65,49 @@ functions {
     real dv = (delta * NL + kd2 * (NL*NL)/theta) / ND;
     real dG = -NL * Jin / sigma_G;
     real dqN = Jin - (alpha_m * kp) - (qN * b) - (alpha_c * b);
+
     return [du, dv, dG, dqN]';
+  }
+
+  // CHANGED: Helper to find steady state q at G=10mM
+  // Simulates the ODE for a sufficient duration with low density.
+  real calc_steady_q(array[] real p) {
+      // Create a dummy state: Low density, Fixed G=10
+      // We'll run it for t=48 which is plenty for q to equilibrate given the fast kinetics
+      vector[4] y_dummy;
+      y_dummy[1] = log(1e-6); // Negligible N
+      y_dummy[2] = log(1e-6);
+      y_dummy[3] = 10.0;      // G = 10mM
+      y_dummy[4] = 0.5;       // Start q somewhere in middle
+
+      // Integration settings
+      array[1] real t_end = {48.0};
+      
+      // Run ODE
+      array[1] vector[4] y_res;
+      y_res = ode_bdf_tol(model_q_ode, y_dummy, 0.0, t_end, 1e-3, 1e-4, 5000, p);
+      
+      // Extract q
+      real q_ss = y_res[1, 4];
+      // Apply the smoothing/clamping logic used in ODE to be safe, though y[4] is the raw state
+      // In the ODE: real qN = 1.0 - (log1p_exp(k_smooth_q * (1.0 - qN_low)) / k_smooth_q);
+      // But y[4] IS the state variable. The ODE outputs dy/dt. 
+      // y[4] is effectively q (raw). 
+      return q_ss;
   }
 
   real partial_sum_lpmf(
       array[] int slice_wells,
       int start, int end,
-      array[] int line_id, array[] int high_p, array[] int exp_id, vector G0_per_well, array[] real t_grid,
+      array[] int line_id, vector ploidy_metric, array[] int exp_id, vector G0_per_well, array[] real t_grid,
       array[] int w_idx_count, array[] int g_idx_count, array[] int N_obs, array[] int D_obs,
       array[] int w_idx_gluc, array[] int g_idx_gluc, array[] real lum_obs, array[] real dilution,
       vector calib_a_fixed, vector calib_b_fixed,
       vector mu_global, vector sigma_line, vector beta_high, matrix z_line,
       vector mu_IC, vector sigma_IC, vector beta_IC, matrix z_IC,
       vector calib_sigma_fixed,
-      real phi_total, real phi_frac
+      real phi_total, real phi_frac,
+      array[] int has_starvation
   ) {
     real log_lik = 0;
     int N_grid = size(t_grid);
@@ -84,11 +120,13 @@ functions {
     for (i in 1:size(slice_wells)) {
       int w = slice_wells[i];
       int l = line_id[w];
-      int h = high_p[w];
+      // CHANGED: Use continuous ploidy metric
+      real p_met = ploidy_metric[w];
 
       array[13] real p_w;
       for (pp in 1:13) {
-        real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * h;
+        // CHANGED: Linear predictor uses ploidy_metric instead of h (0/1)
+        real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * p_met;
         if (pp == 6 || pp == 7 || pp == 10 || pp == 11) {
           p_w[pp] = inv_logit(raw);
         } else if (pp == 12 || pp == 13) {
@@ -100,15 +138,52 @@ functions {
         }
       }
 
-      real G0 = G0_per_well[w];
-      vector[4] y0_w;
-      y0_w[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * h;
-      y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h;
-      y0_w[3] = G0;
-      y0_w[4] = 1.0;
-      array[N_grid] vector[4] y_hat;
-      y_hat = ode_bdf_tol(model_q_ode, y0_w, 0.0, t_eval, 1e-3, 1e-4, 5000, p_w);
+      // Initial Conditions Parameters
+      vector[4] y0_inferred;
+      y0_inferred[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * p_met;
+      y0_inferred[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * p_met;
+      y0_inferred[3] = 0.0; // Placeholder, set below
+      y0_inferred[4] = 0.0; // Placeholder
+
+      // CHANGED: 1. Calculate Steady State q at G=10mM
+      real q_ss = calc_steady_q(p_w);
+
+      vector[4] y_start_main;
       
+      // CHANGED: 2. Handle Starvation Protocol
+      if (has_starvation[w] == 1) {
+          // Simulation Phase 1: Starvation (-6 to 0)
+          // Start with inferred counts, q_ss, and G=0
+          vector[4] y0_starve;
+          y0_starve[1] = y0_inferred[1];
+          y0_starve[2] = y0_inferred[2];
+          y0_starve[3] = 0.0;  // G=0
+          y0_starve[4] = q_ss; 
+          
+          array[1] real t_starve = {0.0}; // Integrate from -6 to 0
+          // Note: Stan ODE 't0' is start, 'ts' is output.
+          // We start at -6.0. Output at 0.0.
+          array[1] vector[4] y_res_starve;
+          y_res_starve = ode_bdf_tol(model_q_ode, y0_starve, -6.0, t_starve, 1e-3, 1e-4, 5000, p_w);
+          
+          // Result becomes start of main phase
+          y_start_main = y_res_starve[1];
+          // RESET Glucose to experimental G0 (it decayed from 0 to 0 in starve phase anyway)
+          y_start_main[3] = G0_per_well[w];
+          
+      } else {
+          // No Starvation (MCF10A)
+          // Start directly at 0 with inferred counts, q_ss, and G=G0
+          y_start_main[1] = y0_inferred[1];
+          y_start_main[2] = y0_inferred[2];
+          y_start_main[3] = G0_per_well[w];
+          y_start_main[4] = q_ss;
+      }
+      
+      // Simulation Phase 2: Main Experiment (0 to End)
+      array[N_grid] vector[4] y_hat;
+      y_hat = ode_bdf_tol(model_q_ode, y_start_main, 0.0, t_eval, 1e-3, 1e-4, 5000, p_w);
+
       for (n in 1:size(w_idx_count)) if (w_idx_count[n] == w) {
         int idx = g_idx_count[n];
         real NL_hat = exp(y_hat[idx, 1]);
@@ -117,7 +192,6 @@ functions {
         real total_hat = NL_hat + ND_hat;
         real p_hat     = NL_hat / (total_hat + 1e-18);
         p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
-
         int total_obs = N_obs[n] + D_obs[n];
 
         log_lik += neg_binomial_2_lpmf(total_obs | total_hat, phi_total);
@@ -129,7 +203,7 @@ functions {
 
       for (n in 1:size(w_idx_gluc)) if (w_idx_gluc[n] == w) {
         int idx = g_idx_gluc[n];
-        real k_smooth_G = 100.0; // CHANGED: Consistent smoothing constant
+        real k_smooth_G = 100.0;
         real G_hat = log1p_exp(k_smooth_G * y_hat[idx, 3]) / k_smooth_G;
         int e = exp_id[w];
         real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
@@ -151,7 +225,11 @@ data {
   int<lower=1> N_grid;
   array[N_grid] real t_grid;
   array[N_wells] int line_id;
-  array[N_wells] int is_high_ploidy;
+  // CHANGED: Replaced categorical flag with continuous metric
+  vector[N_wells] ploidy_metric; 
+  // CHANGED: Added starvation flag
+  array[N_wells] int has_starvation;
+  
   array[N_wells] int exp_id;
   array[N_obs_count] int well_idx_count;
   array[N_obs_count] int grid_idx_count;
@@ -205,7 +283,6 @@ model {
   sigma_IC ~ exponential(1);
   to_vector(z_IC) ~ std_normal();
   beta_IC ~ normal(0, 1);
-  
   phi_total ~ exponential(0.1);
   phi_frac ~ exponential(0.1);
   
@@ -216,14 +293,15 @@ model {
       partial_sum_lpmf,
       seq_wells,
       grainsize,
-      line_id, is_high_ploidy, exp_id, G0_per_well, t_grid,
+      line_id, ploidy_metric, exp_id, G0_per_well, t_grid,
       well_idx_count, grid_idx_count, N_obs, D_obs,
       well_idx_gluc, grid_idx_gluc, lum_obs, dilution,
       calib_a_fixed, calib_b_fixed,
       mu_global, sigma_line, beta_high, z_line,
       mu_IC, sigma_IC, beta_IC, z_IC,
       calib_sigma_fixed,
-      phi_total, phi_frac
+      phi_total, phi_frac,
+      has_starvation
     );
   }
 }
@@ -238,10 +316,11 @@ generated quantities {
     real cap_log_hill = 2.7;
     for (w in 1:N_wells) {
       int l = line_id[w];
-      int h = is_high_ploidy[w];
+      real p_met = ploidy_metric[w]; // CHANGED
+      
       array[13] real p_w;
       for (pp in 1:13) {
-        real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * h;
+        real raw = mu_global[pp] + sigma_line[pp] * z_line[pp, l] + beta_high[pp] * p_met; // CHANGED
         if (pp == 6 || pp == 7 || pp == 10 || pp == 11) {
           p_w[pp] = inv_logit(raw);
         } else if (pp == 12 || pp == 13) {
@@ -253,14 +332,41 @@ generated quantities {
         }
       }
 
-      real G0 = G0_per_well[w];
-      vector[4] y0_w;
-      y0_w[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * h;
-      y0_w[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * h;
-      y0_w[3] = G0;
-      y0_w[4] = 1.0;
+      vector[4] y0_inferred;
+      y0_inferred[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_IC[1] * p_met; // CHANGED
+      y0_inferred[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_IC[2] * p_met; // CHANGED
+      y0_inferred[3] = 0.0;
+      y0_inferred[4] = 0.0;
+
+      // CHANGED: 1. Calculate Steady State q
+      real q_ss = calc_steady_q(p_w);
+
+      vector[4] y_start_main;
+      
+      // CHANGED: 2. Handle Starvation for sim
+      if (has_starvation[w] == 1) {
+          vector[4] y0_starve;
+          y0_starve[1] = y0_inferred[1];
+          y0_starve[2] = y0_inferred[2];
+          y0_starve[3] = 0.0;
+          y0_starve[4] = q_ss; 
+          
+          array[1] real t_starve = {0.0};
+          array[1] vector[4] y_res_starve;
+          y_res_starve = ode_bdf_tol(model_q_ode, y0_starve, -6.0, t_starve, 1e-3, 1e-4, 5000, p_w);
+          
+          y_start_main = y_res_starve[1];
+          y_start_main[3] = G0_per_well[w];
+      } else {
+          y_start_main[1] = y0_inferred[1];
+          y_start_main[2] = y0_inferred[2];
+          y_start_main[3] = G0_per_well[w];
+          y_start_main[4] = q_ss;
+      }
+
       array[N_grid] vector[4] y_hat =
-        ode_bdf_tol(model_q_ode, y0_w, 0.0, t_eval, 1e-3, 1e-4, 5000, p_w);
+        ode_bdf_tol(model_q_ode, y_start_main, 0.0, t_eval, 1e-3, 1e-4, 5000, p_w);
+        
       for (g in 1:N_grid) {
         y_sim[w, g, 1] = exp(y_hat[g, 1]);
         y_sim[w, g, 2] = exp(y_hat[g, 2]);
@@ -278,12 +384,10 @@ generated quantities {
           int g = grid_idx_count[n];
           real NL_hat = y_sim[w, g, 1];
           real ND_hat = y_sim[w, g, 2];
-          
           real total_hat = NL_hat + ND_hat;
           real p_hat     = NL_hat / (total_hat + 1e-18);
           p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
           int total_obs = N_obs[n] + D_obs[n];
-          
           real alpha_p = p_hat * phi_frac;
           real beta_p  = (1.0 - p_hat) * phi_frac;
 
@@ -297,7 +401,7 @@ generated quantities {
           real G_hat = y_sim[w, g, 3];
           real mu = calib_a_fixed[e] * G_hat * dilution[n] + calib_b_fixed[e];
           log_lik += lognormal_lpdf(lum_obs[n] | log(mu + 1e-12), calib_sigma_fixed[e]);
-       }
+        }
     }
   }
 }

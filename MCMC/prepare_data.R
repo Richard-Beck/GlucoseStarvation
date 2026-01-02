@@ -17,12 +17,18 @@ glu_map <- c(
   'SUM-159-fuse.I00-IncucyteRawDataLiveDead-varyGlucose'       = "SUM-159-fuse"
 )
 
+# CHANGED: Updated to numeric values for continuous variable
+# Based on user notes:
+# SUM159: ~2N vs ~4N
+# MCF10A: ~2N vs 4N
+# SNU-668: ~2.6N vs ~5.2N
+# MDA-MB-231: ~3.5N vs ~4.4N
 ploidy_map <- list(
-  'SUM-159-chem' = c("2N"=0, "4N"=1),
-  'SNU668'       = c("high"=1, "low"=0),
-  'MCF10A'       = c("4N"=1, "2N"=0),
-  'MDA-MB-231'   = c("parental"=1, "3N"=0),
-  'SUM-159-fuse' = c("2N"=0, "4N"=1)
+  'SUM-159-chem' = c("2N"=2.0, "4N"=4.0),
+  'SNU668'       = c("high"=5.2, "low"=2.6),
+  'MCF10A'       = c("4N"=4.0, "2N"=2.0),
+  'MDA-MB-231'   = c("parental"=4.4, "3N"=3.5), # Assuming 'parental' is the higher ploidy ~4.4N based on context
+  'SUM-159-fuse' = c("2N"=2.0, "4N"=4.0)
 )
 
 if (!dir.exists("data")) dir.create("data")
@@ -62,13 +68,6 @@ as_corrected_counts <- function(x){
   y
 }
 
-
-# usage:
-# counts <- as_corrected_counts(readRDS("data/counts/uncorrected.Rds"))
-# counts <- as_corrected_counts(readRDS("data/counts/corrected.Rds"))
-
-
-
 cat("Processing Count Data...\n")
 counts_raw <- as_corrected_counts(readRDS("data/counts/uncorrected.Rds"))
 
@@ -77,19 +76,28 @@ counts <- counts_raw %>%
   filter(exp_key %in% names(glu_map)) %>%
   filter(!is.null(glu_map[exp_key]))
 
-counts$is_high_ploidy <- NA_integer_
+# CHANGED: Calculate continuous ploidy metric (Difference from baseline)
+counts$ploidy_val <- NA_real_
+counts$ploidy_metric <- NA_real_
+
 unique_lines <- unique(counts$cellLine)
 for (cline in unique_lines) {
   map <- ploidy_map[[cline]]
   idx <- counts$cellLine == cline
-  counts$is_high_ploidy[idx] <- map[counts$ploidy[idx]]
+  
+  # Assign absolute numeric values
+  counts$ploidy_val[idx] <- map[counts$ploidy[idx]]
+  
+  # Calculate difference from baseline (minimum ploidy for that line)
+  baseline <- min(map)
+  counts$ploidy_metric[idx] <- counts$ploidy_val[idx] - baseline
 }
 
 counts$N_live <- counts$N - counts$D
 
 counts <- counts %>%
   rename(G0 = glucose) %>%
-  select(cellLine, experiment, is_high_ploidy, G0, hours, N_live, D) %>%
+  select(cellLine, experiment, ploidy_metric, G0, hours, N_live, D) %>%
   arrange(cellLine, experiment, G0, hours)
 
 # ==============================================================================
@@ -109,14 +117,31 @@ for (folder in unique_folders) {
   calib_store[[folder]] <- calib_df[, c("G", "Lum", "calib_batch")]
   
   xg <- fread(file.path(path_base, "data.csv"))
-  xg$is_high_ploidy <- ifelse(xg$ploidy == "high", 1, ifelse(xg$ploidy == "low", 0, NA_integer_))
+  
+  # CHANGED: Map ploidy strings to numeric metric in glucose data for consistency
+  # (Though glucose model might not use it directly, useful to have)
+  xg$ploidy_metric <- NA_real_
+  # Iterate lines present in this glucose file
+  for(ln in unique(xg$CellLine)) {
+    if(ln %in% names(ploidy_map)) {
+      map <- ploidy_map[[ln]]
+      baseline <- min(map)
+      # Match string keys
+      # Note: xg$ploidy contains "high"/"low"/"4N" etc.
+      # We need to match carefully.
+      # Create a temporary lookup
+      val_vec <- map[xg$ploidy]
+      xg$ploidy_metric <- val_vec - baseline
+    }
+  }
+  
   xg_long <- reshape2::melt(xg, measure.vars = paste0("R", 1:3), variable.name = "Replicate", value.name = "lum")
   xg_long$hours <- xg_long$Day * 24
   xg_long$calib_batch <- folder
   xg_long$dilution <- 1000 / xg_long$`Dilution Factor`
   
   gluc_store[[folder]] <- xg_long %>%
-    select(CellLine, is_high_ploidy, G0, hours, lum, dilution, calib_batch)
+    select(CellLine, ploidy_metric, G0, hours, lum, dilution, calib_batch)
 }
 
 all_glucose_raw <- do.call(rbind, gluc_store)
@@ -125,15 +150,17 @@ all_calib_raw   <- do.call(rbind, calib_store)
 # ==============================================================================
 # 4. CONSTRUCT STAN STRUCTURE
 # ==============================================================================
+# CHANGED: Group by ploidy_metric instead of is_high_ploidy
 conditions <- counts %>%
-  distinct(cellLine, experiment, is_high_ploidy, G0) %>%
+  distinct(cellLine, experiment, ploidy_metric, G0) %>%
   mutate(well_id = row_number())
 
 N_wells <- nrow(conditions)
 G0_vector <- numeric(N_wells)
 line_ids  <- integer(N_wells)
 exp_ids   <- integer(N_wells)
-high_p    <- integer(N_wells)
+ploidy_vec <- numeric(N_wells) # CHANGED: numeric vector
+has_starvation <- integer(N_wells) # CHANGED: New flag for protocol
 
 u_lines <- unique(conditions$cellLine)
 line_map_int <- setNames(seq_along(u_lines), u_lines)
@@ -152,26 +179,38 @@ for (i in 1:N_wells) {
   cond <- conditions[i, ]
   
   line_ids[i]  <- line_map_int[[cond$cellLine]]
-  high_p[i]    <- cond$is_high_ploidy
+  ploidy_vec[i] <- cond$ploidy_metric
   exp_ids[i]   <- calib_map_int[[glu_map[[paste0(cond$cellLine, ".", cond$experiment)]]]]
   G0_vector[i] <- as.numeric(cond$G0)
   
+  # CHANGED: Set starvation flag. 
+  # Logic: MCF10A = 0 (No starve), All others = 1 (Starve -6 to 0)
+  if (grepl("MCF10A", cond$cellLine)) {
+    has_starvation[i] <- 0
+  } else {
+    has_starvation[i] <- 1
+  }
+  
   sub_c <- counts %>%
     filter(cellLine == cond$cellLine, experiment == cond$experiment,
-           is_high_ploidy == cond$is_high_ploidy, G0 == cond$G0)
+           ploidy_metric == cond$ploidy_metric, G0 == cond$G0)
   sub_c$well_idx <- i
   sub_c$grid_idx <- get_grid_idx(sub_c$hours)
   obs_counts_list[[i]] <- sub_c %>% select(well_idx, grid_idx, N_live, D)
   
+  # For glucose data matching, we might have NAs in ploidy if not mapped perfectly,
+  # but main mapping is done.
   sub_g <- all_glucose_raw %>%
     filter(calib_batch == glu_map[[paste0(cond$cellLine, ".", cond$experiment)]],
-           CellLine == cond$cellLine, G0 == cond$G0) %>%
-    filter(is_high_ploidy == cond$is_high_ploidy | is.na(is_high_ploidy))
+           CellLine == cond$cellLine, G0 == cond$G0)
   
-  if (nrow(sub_g) > 0) {
-    sub_g$well_idx <- i
-    sub_g$grid_idx <- get_grid_idx(sub_g$hours)
-    obs_gluc_list[[i]] <- sub_g %>% select(well_idx, grid_idx, lum, dilution)
+  # Try to match ploidy if available, else take all (often glucose data is pooled or scarce)
+  sub_g_p <- sub_g %>% filter(abs(ploidy_metric - cond$ploidy_metric) < 1e-3 | is.na(ploidy_metric))
+  
+  if (nrow(sub_g_p) > 0) {
+    sub_g_p$well_idx <- i
+    sub_g_p$grid_idx <- get_grid_idx(sub_g_p$hours)
+    obs_gluc_list[[i]] <- sub_g_p %>% select(well_idx, grid_idx, lum, dilution)
   }
 }
 
@@ -181,7 +220,7 @@ long_gluc   <- do.call(rbind, obs_gluc_list)
 all_calib_raw$exp_idx <- calib_map_int[all_calib_raw$calib_batch]
 
 # ==============================================================================
-# 5. CALCULATE DATA-SPECIFIC PRIORS (ICs and Calib)
+# 5. CALCULATE DATA-SPECIFIC PRIORS
 # ==============================================================================
 idx_t0 <- which(long_counts$grid_idx == 1)
 prior_mu_N0 <- mean(log(long_counts$N_live[idx_t0] + 1e-9))
@@ -214,6 +253,7 @@ for (e in 1:N_exps) {
   if (nrow(sub) < 2) {
     a_fix[e] <- 10.0
     b_fix[e] <- 10.0
+    sigma_fix[e] <- 0.5
     next
   }
   
@@ -222,30 +262,29 @@ for (e in 1:N_exps) {
   b0 <- max(1e-6, min(sub$Lum, na.rm = TRUE))
   
   opt <- optim(c(a0, b0), costf, x = sub, method = "Nelder-Mead")
-  a_fix[e] <- max(1e-6, abs(opt$par[1]))
-  b_fix[e] <- max(1e-6, abs(opt$par[2]))
+  a_est <- max(1e-6, abs(opt$par[1]))
+  b_est <- max(1e-6, abs(opt$par[2]))
   
-  # Calculate expected mu based on best fit a/b
+  a_fix[e] <- a_est
+  b_fix[e] <- b_est
+  
   mu_est <- sub$G * a_est + b_est
-  
-  # Calculate sigma of the log-residuals (matching the lognormal likelihood in Stan)
-  # Ensure we only take valid logs
   valid_idx <- mu_est > 0 & sub$Lum > 0
   if (sum(valid_idx) > 2) {
     resid <- log(sub$Lum[valid_idx]) - log(mu_est[valid_idx])
-    # You might want to set a floor (e.g. 0.1) to prevent overfitting to clean calibration data
-    # while the experimental data is noisier.
     sigma_fix[e] <- max(0.1, sd(resid)) 
   } else {
-    sigma_fix[e] <- 0.1 # Default fallback
+    sigma_fix[e] <- 0.1 
   }
 }
 
 # ==============================================================================
 # 6. SAVE
 # ==============================================================================
-# Note: ODE priors (means/sds) are now removed. They will be injected by the runner.
 stan_data <- list(
+  
+  line_map = line_map_int,
+  
   N_wells     = N_wells,
   N_lines     = length(u_lines),
   N_exps      = N_exps,
@@ -257,7 +296,9 @@ stan_data <- list(
   t_grid      = t_grid,
   
   line_id     = line_ids,
-  is_high_ploidy = high_p,
+  ploidy_metric = ploidy_vec, # CHANGED: Continuous variable
+  has_starvation = has_starvation, # CHANGED: Protocol flag
+  
   exp_id      = exp_ids,
   
   well_idx_count = long_counts$well_idx,
@@ -277,13 +318,11 @@ stan_data <- list(
   G0_per_well    = G0_vector,
   grainsize      = 1,
   
-  # Data-Derived IC Priors
   prior_mu_N0_mean = prior_mu_N0,
   prior_mu_N0_sd   = 0.5,
   prior_mu_D0_mean = prior_mu_D0,
   prior_mu_D0_sd   = 1.0,
   
-  # Fixed Calibration
   calib_a_fixed = a_fix,
   calib_b_fixed = b_fix,
   calib_sigma_fixed = sigma_fix

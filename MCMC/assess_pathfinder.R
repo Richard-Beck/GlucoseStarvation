@@ -5,7 +5,7 @@ library(ggplot2)
 library(tidyr)
 library(stringr)
 library(patchwork)
-
+library(deSolve)
 # ==============================================================================
 # 1. SETUP & LOAD
 # ==============================================================================
@@ -168,7 +168,9 @@ obs_counts <- data.frame(
     time     = stan_data$t_grid[stan_data$grid_idx_count],
     value    = stan_data$D_obs,
     type     = "ND"
-  ))
+  )) %>%
+  # NEW: Join exp_id for counts too
+  left_join(meta_df %>% select(well_idx, exp_id), by = "well_idx")
 
 obs_gluc <- data.frame(
   well_idx = stan_data$well_idx_gluc,
@@ -180,12 +182,15 @@ obs_gluc <- data.frame(
   mutate(
     a = stan_data$calib_a_fixed[exp_id],
     b = stan_data$calib_b_fixed[exp_id],
+    # The fix for zeroes is largely handled by your CSV edit (Dilution 1 -> 1000), 
+    # ensuring 'dilution' here is 1.0, not 1000.
     value = pmax(0, (lum - b)/(a*dilution)),
     type  = "G"
   ) %>%
-  select(well_idx, time, value, type)
+  # NEW: Select exp_id to keep it available for plotting
+  select(well_idx, time, value, type, exp_id)
 
-obs_all <- bind_rows(obs_counts, obs_gluc) %>% left_join(meta_df, by = "well_idx")
+obs_all <- bind_rows(obs_counts, obs_gluc) %>% left_join(meta_df, by = c("well_idx", "exp_id"))
 sim_all <- summ_clean %>% left_join(meta_df, by = "well_idx")
 
 # ==============================================================================
@@ -206,22 +211,22 @@ for(lid in unique_lines) {
   d_obs <- obs_all %>% filter(line_id == lid)
   if(nrow(d_sim) == 0) next
   
-  # --- LEFT PANEL: Live/Dead Cells ---
   p1 <- ggplot() +
     geom_ribbon(data = d_sim %>% filter(type != "G"), 
                 aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
     geom_line(data = d_sim %>% filter(type != "G"), 
               aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
+    # MODIFIED: Add shape=factor(exp_id)
     geom_point(data = d_obs %>% filter(type != "G"), 
-               aes(x=time, y=value, color=type, shape=type), size=1.5, alpha=0.7) +
+               aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.7) +
     facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
     scale_y_continuous(labels = scales::comma) + 
     scale_color_manual(values = cols) +
     scale_fill_manual(values = fills) +
-    scale_shape_manual(values = c("NL"=16, "ND"=17)) +
+    # MODIFIED: Add legend label
+    labs(title = paste0("Cell Counts | Line ", lname), x="Time (h)", y="Count", shape="Exp ID") +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0")) +
-    labs(title = paste0("Cell Counts | Line ", lname), x="Time (h)", y="Count")
+    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0"))
   
   # --- RIGHT PANEL: Glucose ---
   p2 <- ggplot() +
@@ -229,15 +234,17 @@ for(lid in unique_lines) {
                 aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
     geom_line(data = d_sim %>% filter(type == "G"), 
               aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
+    # MODIFIED: Add shape=factor(exp_id)
     geom_point(data = d_obs %>% filter(type == "G"), 
-               aes(x=time, y=value, color=type), size=1.5, alpha=0.7) +
+               aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.7) +
     facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
     scale_y_continuous() +
     scale_color_manual(values = cols) +
     scale_fill_manual(values = fills) +
+    # MODIFIED: Add legend label
+    labs(title = paste0("Glucose | Line ", lname), x="Time (h)", y="Conc (mM)", shape="Exp ID") +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0")) +
-    labs(title = paste0("Glucose | Line ", lname), x="Time (h)", y="Conc (mM)")
+    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0"))
   
   combined_plot <- (p1 | p2) + 
     plot_layout(guides = "collect") + 
@@ -253,26 +260,27 @@ for(lid in unique_lines) {
 dev.off()
 
 # ==============================================================================
-# 4. RECONSTRUCT TRANSFORMED PARAMETERS
+# 4. RECONSTRUCT TRANSFORMED PARAMETERS (UPDATED: random ploidy slopes by line)
 # ==============================================================================
 cat("\nReconstructing effective ODE parameters (Transformed)...\n")
-vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high")
+
+# NEW: need sigma_beta + z_beta to form line-specific ploidy slope
+vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high", "sigma_beta", "z_beta")
 draws_df <- as_draws_df(fit$draws(variables = vars_needed, inc_warmup = FALSE))
 
 softcap <- function(x, cap) cap - log1p(exp(cap - x))
 inv_logit <- function(x) 1 / (1 + exp(-x))
 
-# CHANGED: Group by metric instead of binary flag
+# Groups: still per (line, metric) as before
 groups <- tibble(
-  line_id = stan_data$line_id, 
+  line_id = stan_data$line_id,
   line_name = id_map[as.character(stan_data$line_id)],
   metric  = stan_data$ploidy_metric
 ) %>%
-  distinct(line_id,line_name, metric) %>%
+  distinct(line_id, line_name, metric) %>%
   arrange(line_id, metric) %>%
   mutate(
-    # Create label: "Line 1 | Baseline" or "Line 1 | +2.0N"
-    group_lbl = paste0(line_name, " | ", 
+    group_lbl = paste0(line_name, " | ",
                        ifelse(metric < 0.01, "Baseline", paste0("+", round(metric,1), "N")))
   )
 
@@ -282,24 +290,28 @@ n_params <- length(param_names)
 
 cat(sprintf("  Processing %d groups...\n", nrow(groups)))
 
-for(g in 1:nrow(groups)) {
+for (g in 1:nrow(groups)) {
   l <- groups$line_id[g]
-  p_met <- groups$metric[g] # Continuous value
+  p_met <- groups$metric[g]
   lbl <- groups$group_lbl[g]
   
   p_mat <- matrix(NA_real_, nrow = N_draws, ncol = n_params)
   colnames(p_mat) <- param_names
   
-  for(pp in 1:n_params) {
-    mu    <- draws_df[[paste0("mu_global[", pp, "]")]]
-    sigma <- draws_df[[paste0("sigma_line[", pp, "]")]]
-    z     <- draws_df[[paste0("z_line[", pp, ",", l, "]")]]
-    beta  <- draws_df[[paste0("beta_high[", pp, "]")]]
+  for (pp in 1:n_params) {
+    mu        <- draws_df[[paste0("mu_global[", pp, "]")]]
+    sigma     <- draws_df[[paste0("sigma_line[", pp, "]")]]
+    z         <- draws_df[[paste0("z_line[", pp, ",", l, "]")]]
+    beta      <- draws_df[[paste0("beta_high[", pp, "]")]]
     
-    # CHANGED: Linear predictor uses p_met instead of h
-    raw <- mu + sigma * z + beta * p_met
+    # NEW: random ploidy slope deviation by line
+    sigma_b   <- draws_df[[paste0("sigma_beta[", pp, "]")]]
+    z_b       <- draws_df[[paste0("z_beta[", pp, ",", l, "]")]]
     
-    # Transform back to constrained scale
+    beta_eff  <- beta + sigma_b * z_b
+    raw       <- mu + sigma * z + beta_eff * p_met
+    
+    # Transform back to constrained scale (same as before)
     if (MODEL_NAME == "model_B") {
       cap_main <- 40.0; cap_hill <- 6.0
       if (pp %in% c(6, 8)) {
@@ -323,8 +335,9 @@ for(g in 1:nrow(groups)) {
   
   df_g <- as.data.frame(p_mat)
   df_g$group <- lbl
-  df_g$chain <- if(".chain" %in% names(draws_df)) as.factor(draws_df$.chain) else as.factor(1)
-  reconstructed_list[[g]] <- pivot_longer(df_g, cols = all_of(param_names), names_to = "param", values_to = "value")
+  df_g$chain <- if (".chain" %in% names(draws_df)) as.factor(draws_df$.chain) else as.factor(1)
+  reconstructed_list[[g]] <- pivot_longer(df_g, cols = all_of(param_names),
+                                          names_to = "param", values_to = "value")
 }
 
 reconstructed_df <- bind_rows(reconstructed_list)
@@ -347,64 +360,140 @@ p_trans <- ggplot(reconstructed_df, aes(x = value)) +
   ) +
   labs(
     title = paste0("Posterior Parameter Distributions (Transformed) - ", MODEL_NAME),
-    subtitle = "Effective parameters per cell line (incorporating ploidy offset)",
+    subtitle = "Effective parameters per cell line (incorporating line-specific ploidy slope)",
     x = "Value (Log Scale)", y = "Count"
   )
 print(p_trans)
 dev.off()
 
-# ==============================================================================
-# 5. PLOIDY EFFECT (beta_high) ANALYSIS
-# ==============================================================================
-cat("\nAnalyzing Continuous Ploidy Effects...\n")
 
+# ==============================================================================
+# 5. PLOIDY EFFECT ANALYSIS (UPDATED: global + line-specific slopes + heterogeneity)
+# ==============================================================================
+cat("\nAnalyzing Continuous Ploidy Effects (global + line-specific)...\n")
+
+# --- A) Global slope (same object as before): beta_high[pp] ---
 draws_beta <- fit$draws("beta_high", inc_warmup = FALSE)
 beta_df <- as_draws_df(draws_beta) %>%
-  pivot_longer(cols = starts_with("beta_high"), names_to = "param_idx", values_to = "value")
+  pivot_longer(cols = starts_with("beta_high"), names_to = "param_idx", values_to = "value") %>%
+  mutate(
+    idx = as.integer(str_extract(param_idx, "[0-9]+")),
+    param_name = factor(param_names[idx], levels = param_names),
+    kind = "Global slope (beta_high)"
+  )
 
-beta_df$idx <- as.integer(str_extract(beta_df$param_idx, "[0-9]+"))
-beta_df$param_name <- factor(param_names[beta_df$idx], levels = param_names)
+# --- B) Heterogeneity across lines: sigma_beta[pp] ---
+draws_sigb <- fit$draws("sigma_beta", inc_warmup = FALSE)
+sigb_df <- as_draws_df(draws_sigb) %>%
+  pivot_longer(cols = starts_with("sigma_beta"), names_to = "param_idx", values_to = "value") %>%
+  mutate(
+    idx = as.integer(str_extract(param_idx, "[0-9]+")),
+    param_name = factor(param_names[idx], levels = param_names),
+    kind = "Slope heterogeneity (sigma_beta)"
+  )
 
-pdf("results/ploidy_effect_posterior.pdf", width = 12, height = 8)
+# --- C) Line-specific effective slopes: beta_eff[pp,l] = beta_high[pp] + sigma_beta[pp]*z_beta[pp,l] ---
+# Pull beta_high, sigma_beta, z_beta into one df; compute beta_eff for every (pp,l)
+draws_bhz <- as_draws_df(fit$draws(c("beta_high", "sigma_beta", "z_beta"), inc_warmup = FALSE))
 
-# CHANGED: Interpret beta as "Change per unit ploidy"
-p_beta_raw <- ggplot(beta_df, aes(x = value, fill = stat(x > 0))) +
+beta_eff_list <- vector("list", length = n_params * stan_data$N_lines)
+k <- 1
+for (pp in 1:n_params) {
+  bh <- draws_bhz[[paste0("beta_high[", pp, "]")]]
+  sb <- draws_bhz[[paste0("sigma_beta[", pp, "]")]]
+  for (l in 1:stan_data$N_lines) {
+    zb <- draws_bhz[[paste0("z_beta[", pp, ",", l, "]")]]
+    beta_eff_list[[k]] <- tibble(
+      idx = pp,
+      line_id = l,
+      line_name = id_map[as.character(l)],
+      value = bh + sb * zb
+    )
+    k <- k + 1
+  }
+}
+beta_eff_df <- bind_rows(beta_eff_list) %>%
+  mutate(
+    param_name = factor(param_names[idx], levels = param_names),
+    kind = "Line-specific slope (beta_eff)"
+  )
+
+pdf("results/ploidy_effect_posterior.pdf", width = 14, height = 10)
+
+# Global slope histograms (as before)
+p_beta_global <- ggplot(beta_df, aes(x = value, fill = stat(x > 0))) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
-  geom_histogram(bins = 60, alpha = 0.7, color = "white", size = 0.1) +
+  geom_histogram(bins = 60, alpha = 0.7, color = "white", linewidth = 0.1) +
   facet_wrap(~ param_name, scales = "free") +
   scale_fill_manual(values = c("TRUE"="#E41A1C", "FALSE"="#377EB8"), guide="none") +
   theme_bw() +
-  labs(title = paste0("Ploidy Effect (Beta Coefficient) - ", MODEL_NAME),
-       subtitle = "Change in linear predictor per unit increase in Ploidy Metric\nRed (>0) = Increases with ploidy; Blue (<0) = Decreases with ploidy",
-       x = "Beta Value", y = "Density")
-print(p_beta_raw)
+  labs(
+    title = paste0("Ploidy Effect (Global Slope) - ", MODEL_NAME),
+    subtitle = "beta_high: change in linear predictor per unit increase in Ploidy Metric",
+    x = "beta_high", y = "Count"
+  )
+print(p_beta_global)
 
-# Fold Change per Unit
-fc_df <- beta_df %>% mutate(fold_change = exp(value))
-p_fc <- ggplot(fc_df, aes(x = fold_change)) +
-  geom_vline(xintercept = 1, linetype = "dashed") +
-  geom_density(fill = "gray40", alpha = 0.5) +
+# Line-specific slope densities (by line, faceted by parameter)
+p_beta_eff <- ggplot(beta_eff_df, aes(x = value, color = line_name)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_density() +
   facet_wrap(~ param_name, scales = "free") +
-  scale_x_log10(breaks = c(0.1, 0.5, 1, 2, 10), labels = c("0.1x", "0.5x", "1x", "2x", "10x")) +
   theme_bw() +
-  labs(title = "Implied Multiplier per Unit of Ploidy", 
-       subtitle = "How much the parameter scales for every +1.0N difference in ploidy",
-       x = "Multiplier (per unit N)", y = "Density")
+  theme(legend.position = "bottom") +
+  labs(
+    title = paste0("Ploidy Effect by Line (beta_eff) - ", MODEL_NAME),
+    subtitle = "beta_eff = beta_high + sigma_beta * z_beta[ , line]",
+    x = "beta_eff (per unit N)", y = "Density", color = "Cell line"
+  )
+print(p_beta_eff)
+
+# Heterogeneity (sigma_beta) per parameter
+p_sigb <- ggplot(sigb_df, aes(x = value)) +
+  geom_histogram(bins = 50, fill = "gray50", alpha = 0.7, color = "white", linewidth = 0.1) +
+  facet_wrap(~ param_name, scales = "free") +
+  theme_bw() +
+  labs(
+    title = paste0("Across-line heterogeneity of ploidy effect (sigma_beta) - ", MODEL_NAME),
+    subtitle = "Larger sigma_beta means ploidy slope varies more across lines",
+    x = "sigma_beta", y = "Count"
+  )
+print(p_sigb)
+
+# Fold-change interpretation: global and line-specific (exp(slope)) – optional but consistent with your old plot
+fc_global <- beta_df %>% mutate(mult = exp(value), label = "Global")
+fc_eff <- beta_eff_df %>% mutate(mult = exp(value), label = "Line-specific")
+
+p_fc <- ggplot(bind_rows(
+  fc_global %>% select(mult, param_name, label),
+  fc_eff %>% select(mult, param_name, label)
+), aes(x = mult, fill = label)) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ param_name, scales = "free") +
+  scale_x_log10(breaks = c(0.1, 0.5, 1, 2, 10), labels = c("0.1x","0.5x","1x","2x","10x")) +
+  theme_bw() +
+  labs(
+    title = "Implied Multiplier per Unit of Ploidy (exp(slope))",
+    subtitle = "Shown for global beta_high and line-specific beta_eff",
+    x = "Multiplier (per unit N)", y = "Density", fill = ""
+  )
 print(p_fc)
+
 dev.off()
 
+
 # ==============================================================================
-# 6. ALL RAW PARAMETERS (mu, sigma, beta)
+# 6. ALL RAW PARAMETERS (UPDATED: include sigma_beta; optional include z_beta)
 # ==============================================================================
 cat("\nGenerating Comprehensive Raw Parameter Plots (results/all_raw_parameters.pdf)...\n")
 
-vars_raw <- c("mu_global", "beta_high", "sigma_line")
+# Keep this manageable: include mu_global, beta_high, sigma_line, sigma_beta
+vars_raw <- c("mu_global", "beta_high", "sigma_line", "sigma_beta")
 draws_all_raw <- fit$draws(vars_raw, inc_warmup = FALSE)
 all_raw_df <- as_draws_df(draws_all_raw) %>%
   pivot_longer(cols = everything(), names_to = "full_name", values_to = "value") %>%
-  filter(!full_name %in% c(".chain", ".iteration", ".draw"))
-
-all_raw_df <- all_raw_df %>%
+  filter(!full_name %in% c(".chain", ".iteration", ".draw")) %>%
   mutate(
     type = str_extract(full_name, "^[a-z_]+"),
     idx_s = str_extract(full_name, "[0-9]+"),
@@ -418,32 +507,63 @@ p_all <- ggplot(all_raw_df, aes(x = value, fill = type)) +
   facet_wrap(~ param_name, scales = "free") +
   scale_fill_brewer(palette = "Dark2") +
   theme_bw() +
-  labs(title = paste0("All Hierarchical Components (Raw) - ", MODEL_NAME), x = "Raw Value", y = "Count")
+  labs(title = paste0("Raw Hierarchical Components (incl. sigma_beta) - ", MODEL_NAME),
+       x = "Raw Value", y = "Count")
 print(p_all)
 dev.off()
 
 cat("\n>>> Assessment Complete.\n")
 
+
 # ==============================================================================
-# 7. DIAGNOSTICS
+# 7. DIAGNOSTICS (UPDATED: quick checks for sigma_beta as well)
 # ==============================================================================
 cat("\nGenerating Diagnostics...\n")
 
+# Trace-style scatter for mu_global (same as before)
 draws_trace <- fit$draws("mu_global", inc_warmup = FALSE)
 trace_df <- as_draws_df(draws_trace) %>%
-  mutate(.draw = 1:n()) %>% 
-  pivot_longer(cols = starts_with("mu_global"), names_to = "param_idx", values_to = "value")
-
-trace_df$idx <- as.integer(str_extract(trace_df$param_idx, "[0-9]+"))
-trace_df$param_name <- factor(param_names[trace_df$idx], levels = param_names)
+  mutate(.draw = 1:n()) %>%
+  pivot_longer(cols = starts_with("mu_global"), names_to = "param_idx", values_to = "value") %>%
+  mutate(
+    idx = as.integer(str_extract(param_idx, "[0-9]+")),
+    param_name = factor(param_names[idx], levels = param_names)
+  )
 
 pdf("results/pseudo_trace_check.pdf", width = 12, height = 8)
 p_trace <- ggplot(trace_df, aes(x = .draw, y = value)) +
   geom_point(alpha = 0.4, size = 0.8, color = "#2c3e50") +
   facet_wrap(~ param_name, scales = "free_y") +
   theme_bw() +
-  labs(title = "Pseudo-Trace of Pathfinder Draws", x = "Draw Index", y = "Raw Parameter Value")
+  labs(title = "Pseudo-Trace of Pathfinder Draws (mu_global)", x = "Draw Index", y = "Raw Value")
 print(p_trace)
+dev.off()
+
+# NEW: distribution check for sigma_beta
+draws_lp <- fit$draws(c("lp__", "sigma_beta"), inc_warmup = FALSE)
+lp_df <- as_draws_df(draws_lp)
+
+pdf("results/diagnostic_lp_check.pdf", width = 12, height = 5)
+p_lp1 <- ggplot(lp_df, aes(x = lp__)) +
+  geom_histogram(bins = 50, fill = "purple", alpha = 0.7, color = "black") +
+  theme_bw() +
+  labs(title = "Log-Probability (lp__) Distribution", x = "lp__", y = "Count")
+print(p_lp1)
+
+sigb_long <- lp_df %>%
+  select(starts_with("sigma_beta")) %>%
+  pivot_longer(cols = everything(), names_to = "param_idx", values_to = "value") %>%
+  mutate(
+    idx = as.integer(str_extract(param_idx, "[0-9]+")),
+    param_name = factor(param_names[idx], levels = param_names)
+  )
+
+p_lp2 <- ggplot(sigb_long, aes(x = value)) +
+  geom_histogram(bins = 50, fill = "gray40", alpha = 0.7, color = "white", linewidth = 0.1) +
+  facet_wrap(~ param_name, scales = "free") +
+  theme_bw() +
+  labs(title = "sigma_beta Distributions (Pathfinder draws)", x = "sigma_beta", y = "Count")
+print(p_lp2)
 dev.off()
 
 codes <- fit$return_codes()
@@ -451,21 +571,6 @@ n_fail <- sum(codes != 0)
 cat(sprintf("  Total Paths Run: %d\n", length(codes)))
 cat(sprintf("  Failed (Crashed): %d\n", n_fail))
 
-draws_lp <- fit$draws("lp__", inc_warmup = FALSE)
-lp_df <- as_draws_df(draws_lp)
-pdf("results/diagnostic_lp_check.pdf", width = 8, height = 6)
-p_lp <- ggplot(lp_df, aes(x = lp__)) +
-  geom_histogram(bins = 50, fill = "purple", alpha = 0.7, color = "black") +
-  theme_bw() +
-  labs(title = "Log-Probability (lp__) Distribution", x = "Log Probability", y = "Count of Draws")
-print(p_lp)
-dev.off()
-
-
-library(deSolve)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
 
 # ==============================================================================
 # 8. PHYSIOLOGICAL PROFILING (Robust Math Fix)
@@ -794,10 +899,10 @@ if(length(step_results) > 0) {
   # Plot
   p_step <- ggplot(df_step, aes(x = time, y = value, color = Status, linetype = Line_ID)) +
     geom_line(linewidth = 1.0) +
-    facet_wrap(metric~Line_ID, scales = "free_y", ncol = 5, labeller = as_labeller(metric_labs)) +
+    facet_wrap(metric~Line_ID, scales = "free_y", ncol = 5) +
     scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
     theme_bw() +
-    scale_x_log10()+
+    #scale_x_log10()+
     labs(
       title = "Response to Glucose Drop (10mM -> 0mM)",
       subtitle = "Immediate physiological adaptation",

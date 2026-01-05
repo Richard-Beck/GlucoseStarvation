@@ -13,7 +13,7 @@ glu_map <- c(
   'MDA-MB-231.B00-IncucyteRawDataLiveDead-varyGlucose-250213'  = "MCF10A.MDA-MB-231",
   'SNU668.A00-IncucyteRawDataLiveDead-varyGlucose-250324'      = "SUM-159-chem.SNU668",
   'SUM-159-chem.M00b-IncucyteRawDataLiveDead-varyGlucose'      = "SUM-159-chem.SNU668",
-  'SUM-159-fuse.C00-IncucyteRawDataLiveDead-varyGlucose'       = NULL,
+  'SUM-159-fuse.C00-IncucyteRawDataLiveDead-varyGlucose'       = "SUM-159-fuse-gluccell",
   'SUM-159-fuse.I00-IncucyteRawDataLiveDead-varyGlucose'       = "SUM-159-fuse"
 )
 
@@ -101,7 +101,7 @@ counts <- counts %>%
   arrange(cellLine, experiment, G0, hours)
 
 # ==============================================================================
-# 3. LOAD GLUCOSE DATA
+# 3. LOAD GLUCOSE DATA (Robust "LO" and NA handling)
 # ==============================================================================
 cat("Processing Glucose Data...\n")
 
@@ -112,41 +112,75 @@ gluc_store  <- list()
 for (folder in unique_folders) {
   path_base <- file.path("data/glucose/processed", folder)
   
+  # 1. Load Calibration
   calib_df <- fread(file.path(path_base, "calibration.csv"))
   calib_df$calib_batch <- folder
   calib_store[[folder]] <- calib_df[, c("G", "Lum", "calib_batch")]
   
+  # 2. Load Data
   xg <- fread(file.path(path_base, "data.csv"))
   
-  # CHANGED: Map ploidy strings to numeric metric in glucose data for consistency
-  # (Though glucose model might not use it directly, useful to have)
-  xg$ploidy_metric <- NA_real_
-  # Iterate lines present in this glucose file
-  for(ln in unique(xg$CellLine)) {
-    if(ln %in% names(ploidy_map)) {
-      map <- ploidy_map[[ln]]
-      baseline <- min(map)
-      # Match string keys
-      # Note: xg$ploidy contains "high"/"low"/"4N" etc.
-      # We need to match carefully.
-      # Create a temporary lookup
-      val_vec <- map[xg$ploidy]
-      xg$ploidy_metric <- val_vec - baseline
+  # Identify valid replicate columns (R1:4 or R1:3 depending on file)
+  measure_cols <- intersect(paste0("R", 1:4), names(xg))
+  
+  LOD_value <- 20.0 
+  xg_flags  <- xg # Copy for censorship flags
+  
+  # Clean "LO" and NAs
+  for(col in measure_cols) {
+    # Check for specific strings/NAs
+    is_lo <- xg[[col]] == "LO"
+    is_missing <- xg[[col]] == "" | is.na(xg[[col]]) | xg[[col]] == "NA"
+    
+    if(is.character(xg[[col]])) {
+      xg[[col]][is_lo] <- as.character(LOD_value)
+      xg[[col]] <- as.numeric(xg[[col]])
+      
+      # Flag: 1=Censored(LO), 0=Observed, NA=Missing
+      xg_flags[[col]] <- ifelse(is_lo, 1, 0)
+      xg_flags[[col]][is_missing] <- NA
+    } else {
+      xg_flags[[col]] <- 0
+      xg_flags[[col]][is_missing] <- NA
     }
   }
   
-  xg_long <- reshape2::melt(xg, measure.vars = paste0("R", 1:3), variable.name = "Replicate", value.name = "lum")
+  # Map ploidy strings to numeric metric (Continuous)
+  xg$ploidy_metric <- NA_real_
+  for(ln in unique(xg$CellLine)) {
+    if(ln %in% names(ploidy_map)) {
+      map <- ploidy_map[[ln]]
+      base_val <- min(map)
+      vals <- map[xg$ploidy[xg$CellLine == ln]]
+      xg$ploidy_metric[xg$CellLine == ln] <- vals - base_val
+    }
+  }
+  
+  # Melt Values and Flags
+  xg_long <- reshape2::melt(xg, measure.vars = measure_cols, variable.name = "Replicate", value.name = "lum")
+  xg_flags_long <- reshape2::melt(xg_flags, measure.vars = measure_cols, variable.name = "Replicate", value.name = "is_censored")
+  
+  xg_long$is_censored <- xg_flags_long$is_censored
+  
+  # Drop rows where data was missing (NA)
+  xg_long <- xg_long %>% filter(!is.na(lum))
+  
   xg_long$hours <- xg_long$Day * 24
   xg_long$calib_batch <- folder
-  xg_long$dilution <- 1000 / xg_long$`Dilution Factor`
+  
+  # Fix dilution: 1 means undiluted (1.0), otherwise use 1000/X legacy logic
+  xg_long$dilution <- ifelse(xg_long$`Dilution Factor` == 1, 
+                             1.0, 
+                             1000 / xg_long$`Dilution Factor`)
   
   gluc_store[[folder]] <- xg_long %>%
-    select(CellLine, ploidy_metric, G0, hours, lum, dilution, calib_batch)
+    select(CellLine, ploidy_metric, G0, hours, lum, dilution, calib_batch, is_censored)
 }
 
 all_glucose_raw <- do.call(rbind, gluc_store)
-all_calib_raw   <- do.call(rbind, calib_store)
+if(any(is.na(all_glucose_raw$lum))) stop("Error: NAs remaining in glucose luminescence data.")
 
+all_calib_raw   <- do.call(rbind, calib_store)
 # ==============================================================================
 # 4. CONSTRUCT STAN STRUCTURE
 # ==============================================================================
@@ -210,7 +244,7 @@ for (i in 1:N_wells) {
   if (nrow(sub_g_p) > 0) {
     sub_g_p$well_idx <- i
     sub_g_p$grid_idx <- get_grid_idx(sub_g_p$hours)
-    obs_gluc_list[[i]] <- sub_g_p %>% select(well_idx, grid_idx, lum, dilution)
+    obs_gluc_list[[i]] <- sub_g_p %>% select(well_idx, grid_idx, lum, dilution, is_censored)
   }
 }
 
@@ -310,6 +344,7 @@ stan_data <- list(
   grid_idx_gluc  = long_gluc$grid_idx,
   lum_obs        = long_gluc$lum,
   dilution       = long_gluc$dilution,
+  is_censored    = as.integer(long_gluc$is_censored),
   
   calib_exp_idx  = all_calib_raw$exp_idx,
   calib_G        = all_calib_raw$G,

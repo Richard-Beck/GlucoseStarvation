@@ -17,8 +17,9 @@ functions {
     real v1    = p[9];  // Physical v1
     real v2    = p[10]; // Physical v2
     
-    real NL = exp(y[1]);
-    real ND = exp(y[2]);
+    // [CHANGE 1] Read states directly (Real Space)
+    real NL = y[1]; 
+    real ND = y[2];
     
     real k_smooth = 100.0;
     real G = log1p_exp(k_smooth * y[3]) / k_smooth;
@@ -28,8 +29,14 @@ functions {
     real term_d = inv_logit(nd * (log_G - log(g50d)));
     real inhD   = 1.0 - term_d;
     
-    real du_dt = kp * (1.0 - NL/theta) * actA - kd * inhD - kd2 * NL/theta;
-    real dv_dt = (kd * NL * inhD + kd2 * (NL * NL) / theta) / ND;
+    // [CHANGE 2] Derivatives in Real Space
+    // du_dt = N * (Growth_Rate - Death_Rate)
+    real specific_growth = kp * (1.0 - NL/theta) * actA - kd * inhD - kd2 * NL/theta;
+    real du_dt = specific_growth * NL; 
+    
+    // dv_dt = Influx of Dead Cells (No division by ND)
+    real dv_dt = kd * NL * inhD + kd2 * (NL * NL) / theta;
+    
     real dG_dt = -NL * (v1 * actA + v2 * term_d) / 2.0;
     
     vector[3] dydt;
@@ -122,22 +129,23 @@ functions {
       vector[3] y_start_main;
 
       // 4. Starvation Protocol
-      //    Note: We pass p_ode (physical params) to the solver
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
-        y0_starve[1] = y0_inferred[1];
-        y0_starve[2] = y0_inferred[2];
+        // [CHANGE 3] Convert Log-IC to Real-IC for Solver
+        y0_starve[1] = exp(y0_inferred[1]); 
+        y0_starve[2] = exp(y0_inferred[2]);
         y0_starve[3] = 0.0; 
 
         array[1] real t_starve = {0.0};
         array[1] vector[3] y_res_starve;
         y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 5000, p_ode);
 
-        y_start_main = y_res_starve[1];
-        y_start_main[3] = G0_per_well[w]; 
+        y_start_main = y_res_starve[1]; // Result is already in real space
+        y_start_main[3] = G0_per_well[w];
       } else {
-        y_start_main[1] = y0_inferred[1];
-        y_start_main[2] = y0_inferred[2];
+        // [CHANGE 4] Convert Log-IC to Real-IC for Solver
+        y_start_main[1] = exp(y0_inferred[1]);
+        y_start_main[2] = exp(y0_inferred[2]);
         y_start_main[3] = G0_per_well[w];
       }
 
@@ -157,8 +165,8 @@ functions {
       for (n in 1:size(w_idx_count)) {
         if (w_idx_count[n] == w) {
           int idx = g_idx_count[n];
-          real NL_hat = exp(y_hat[idx, 1]);
-          real ND_hat = exp(y_hat[idx, 2]);
+          real NL_hat = fmax(y_hat[idx, 1], 1e-12); 
+          real ND_hat = fmax(y_hat[idx, 2], 1e-12);
           real total_hat = NL_hat + ND_hat;
           real p_hat     = NL_hat / (total_hat + 1e-18);
           p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
@@ -276,8 +284,8 @@ parameters {
   vector<lower=0>[2] sigma_beta_IC;
   matrix[2, N_lines] z_beta_IC;
 
-  real<lower=0> phi_total;
-  real<lower=0> phi_frac;
+  real<lower=1e-4> phi_total;
+  real<lower=1e-4> phi_frac;
 }
 
 transformed parameters {
@@ -299,7 +307,7 @@ model {
 
   mu_IC[1] ~ normal(prior_mu_N0_mean, prior_mu_N0_sd);
   mu_IC[2] ~ normal(prior_mu_D0_mean, prior_mu_D0_sd);
-  sigma_IC ~ exponential(1);
+  sigma_IC ~ exponential(0.5);
   to_vector(z_IC) ~ std_normal();
   beta_IC ~ normal(0, 1);
 
@@ -413,19 +421,22 @@ generated quantities {
       // D. Starvation Protocol
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
-        y0_starve[1] = y0_inferred[1];
-        y0_starve[2] = y0_inferred[2];
+        // [CHANGE 6] Log -> Real
+        y0_starve[1] = exp(y0_inferred[1]);
+        y0_starve[2] = exp(y0_inferred[2]);
         y0_starve[3] = 0.0;
 
         array[1] real t_starve = {0.0};
         array[1] vector[3] y_res_starve;
+        // Increase max_steps slightly for safety
         y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 50000, p_ode);
 
         y_start_main = y_res_starve[1];
         y_start_main[3] = G0_per_well[w];
       } else {
-        y_start_main[1] = y0_inferred[1];
-        y_start_main[2] = y0_inferred[2];
+        // [CHANGE 7] Log -> Real
+        y_start_main[1] = exp(y0_inferred[1]);
+        y_start_main[2] = exp(y0_inferred[2]);
         y_start_main[3] = G0_per_well[w];
       }
       
@@ -440,10 +451,12 @@ generated quantities {
         y_hat = ode_bdf_tol(model_b_ode, y_start_main, 0.0, t_eval, 1e-4, 1e-5, 50000, p_ode);
       }
         
-      // F. Store Results (applying smoothing to G)
+      // F. Store Results
       for (g in 1:N_grid) {
-        real NL_hat = exp(y_hat[g, 1]);
-        real ND_hat = exp(y_hat[g, 2]);
+        // [CHANGE 8] No exp(), just read straight values
+        real NL_hat = fmax(y_hat[g, 1], 1e-12);
+        real ND_hat = fmax(y_hat[g, 2], 1e-12);
+        
         real k_smooth = 100.0; 
         real G_hat = log1p_exp(k_smooth * y_hat[g, 3]) / k_smooth;
         

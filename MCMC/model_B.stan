@@ -3,8 +3,8 @@ functions {
     return cap - log1p_exp(cap - x);
   }
   
-  real soft_lower(real x, real lower) {
-    return lower + log1p_exp(x - lower);
+  real soft_lower(real x, real lowerb) {
+    return lowerb + log1p_exp(x - lowerb);
   }
 
   // The ODE function stays "Physical" (receives v1, v2, g50d)

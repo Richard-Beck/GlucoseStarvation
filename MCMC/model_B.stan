@@ -2,6 +2,10 @@ functions {
   real softcap(real x, real cap) {
     return cap - log1p_exp(cap - x);
   }
+  
+  real soft_lower(real x, real lower) {
+    return lower + log1p_exp(x - lower);
+  }
 
   // The ODE function stays "Physical" (receives v1, v2, g50d)
   // We calculate these from Yield/Gamma/m before calling this.
@@ -162,7 +166,7 @@ functions {
 
         array[1] real t_starve = {0.0};
         array[1] vector[3] y_res_starve;
-        y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 5000, p_ode);
+        y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 50000, p_ode);
 
         y_start_main = y_res_starve[1];
         y_start_main[3] = G0_per_well[w];
@@ -181,7 +185,7 @@ functions {
         // Fill with zeros if ICs are not finite
         for (g in 1:N_grid) y_hat[g] = rep_vector(1e-6, 3);
       } else {
-        y_hat = ode_bdf_tol(model_b_ode, y_start_main, 0.0, t_eval, 1e-4, 1e-5, 5000, p_ode);
+        y_hat = ode_bdf_tol(model_b_ode, y_start_main, 0.0, t_eval, 1e-4, 1e-5, 50000, p_ode);
       }
 
 
@@ -192,7 +196,7 @@ functions {
           real ND_hat = fmax(y_hat[idx, 2], 1e-12);
           real total_hat = NL_hat + ND_hat;
           real p_hat     = NL_hat / (total_hat + 1e-18);
-          p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6);
+          p_hat = softcap(soft_lower(p_hat, 1e-6), 1.0 - 1e-6);
           int total_obs = N_obs[n] + D_obs[n];
 
           log_lik += neg_binomial_2_lpmf(total_obs | total_hat, phi_total);
@@ -300,7 +304,7 @@ parameters {
   matrix[10, N_lines] z_beta;
 
   vector[2] mu_IC_raw;
-  vector<lower=0>[2] sigma_IC;
+  vector<lower=0, upper=5>[2] sigma_IC;
   vector[2] beta_IC;
   matrix[2, N_lines] z_IC;
 
@@ -508,7 +512,7 @@ generated quantities {
           
           real total_hat = NL_hat + ND_hat;
           real p_hat     = NL_hat / (total_hat + 1e-18);
-          p_hat = fmin(fmax(p_hat, 1e-6), 1.0 - 1e-6); // Clamp prob
+          p_hat = softcap(soft_lower(p_hat, 1e-6), 1.0 - 1e-6);
           
           int total_obs = N_obs[n] + D_obs[n];
           

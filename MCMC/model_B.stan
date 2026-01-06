@@ -125,6 +125,24 @@ functions {
       y0_inferred[1] = mu_IC[1] + sigma_IC[1] * z_IC[1, l] + beta_eff_IC1 * p_met;
       y0_inferred[2] = mu_IC[2] + sigma_IC[2] * z_IC[2, l] + beta_eff_IC2 * p_met;
       y0_inferred[3] = 0.0; 
+      
+      // [DEBUG] Trap NaN or Inf values
+      if (is_nan(y0_inferred[1]) || is_inf(y0_inferred[1]) ||
+          is_nan(y0_inferred[2]) || is_inf(y0_inferred[2]) ||
+          is_nan(p_ode[1])) {
+          
+          print("CRASH REPORT: Well ", w, " (Line ", l, ")");
+          print("  y0_inferred: ", y0_inferred);
+          print("  COMPONENTS:");
+          print("    mu_IC: ", mu_IC);
+          print("    sigma_IC: ", sigma_IC);
+          print("    z_IC[l]: ", col(z_IC, l));
+          print("    beta_IC: ", beta_IC);
+          print("    p_met: ", p_met);
+          print("  ODE PARAMS:");
+          print("    theta (p_ode[1]): ", p_ode[1]);
+          print("    p_meta[1] (raw theta): ", p_meta[1]);
+      }
 
       vector[3] y_start_main;
 
@@ -133,8 +151,8 @@ functions {
       // p_ode[1] is theta. We allow IC to be at most ~2.7x theta (log space +1).
       // This prevents 1,000,000x overshoot which creates infinite gradients.
       real log_theta_cap = log(p_ode[1]) + 1.0;
-      real safe_IC_N = fmin(y0_inferred[1], log_theta_cap);
-      real safe_IC_D = fmin(y0_inferred[2], log_theta_cap);
+      real safe_IC_N = softcap(y0_inferred[1], log_theta_cap);
+      real safe_IC_D = softcap(y0_inferred[2], log_theta_cap);
 
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
@@ -281,7 +299,7 @@ parameters {
   vector<lower=0>[10] sigma_beta;
   matrix[10, N_lines] z_beta;
 
-  vector[2] mu_IC;
+  vector[2] mu_IC_raw;
   vector<lower=0>[2] sigma_IC;
   vector[2] beta_IC;
   matrix[2, N_lines] z_IC;
@@ -299,6 +317,9 @@ transformed parameters {
     mu_global[pp] =
       log_lower[pp] + (log_upper[pp] - log_lower[pp]) * inv_logit(mu_global_raw[pp]);
   }
+  vector[2] mu_IC;
+  mu_IC[1] = prior_mu_N0_mean + mu_IC_raw[1] * prior_mu_N0_sd;
+  mu_IC[2] = prior_mu_D0_mean + mu_IC_raw[2] * prior_mu_D0_sd;
 }
 
 model {
@@ -310,9 +331,8 @@ model {
   sigma_beta ~ exponential(1);
   to_vector(z_beta) ~ std_normal();
 
-  mu_IC[1] ~ normal(prior_mu_N0_mean, prior_mu_N0_sd);
-  mu_IC[2] ~ normal(prior_mu_D0_mean, prior_mu_D0_sd);
-  sigma_IC ~ normal(0, 0.5);
+  mu_IC_raw ~ std_normal();
+  sigma_IC ~ exponential(1);
   to_vector(z_IC) ~ std_normal();
   beta_IC ~ normal(0, 1);
 
@@ -426,9 +446,9 @@ generated quantities {
       // D. Starvation Protocol
       // [FIX] Apply same clamping to simulation
       real log_theta_cap = log(p_ode[1]) + 1.0;
-      real safe_IC_N = fmin(y0_inferred[1], log_theta_cap);
-      real safe_IC_D = fmin(y0_inferred[2], log_theta_cap);
-
+      real safe_IC_N = softcap(y0_inferred[1], log_theta_cap);
+      real safe_IC_D = softcap(y0_inferred[2], log_theta_cap);
+      
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
         y0_starve[1] = exp(safe_IC_N);

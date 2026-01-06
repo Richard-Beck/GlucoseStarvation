@@ -129,23 +129,28 @@ functions {
       vector[3] y_start_main;
 
       // 4. Starvation Protocol
+      // [FIX] Clamp to log(theta) + buffer.
+      // p_ode[1] is theta. We allow IC to be at most ~2.7x theta (log space +1).
+      // This prevents 1,000,000x overshoot which creates infinite gradients.
+      real log_theta_cap = log(p_ode[1]) + 1.0;
+      real safe_IC_N = fmin(y0_inferred[1], log_theta_cap);
+      real safe_IC_D = fmin(y0_inferred[2], log_theta_cap);
+
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
-        // [CHANGE 3] Convert Log-IC to Real-IC for Solver
-        y0_starve[1] = exp(y0_inferred[1]); 
-        y0_starve[2] = exp(y0_inferred[2]);
+        y0_starve[1] = exp(safe_IC_N); 
+        y0_starve[2] = exp(safe_IC_D); 
         y0_starve[3] = 0.0; 
 
         array[1] real t_starve = {0.0};
         array[1] vector[3] y_res_starve;
         y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 5000, p_ode);
 
-        y_start_main = y_res_starve[1]; // Result is already in real space
+        y_start_main = y_res_starve[1];
         y_start_main[3] = G0_per_well[w];
       } else {
-        // [CHANGE 4] Convert Log-IC to Real-IC for Solver
-        y_start_main[1] = exp(y0_inferred[1]);
-        y_start_main[2] = exp(y0_inferred[2]);
+        y_start_main[1] = exp(safe_IC_N);
+        y_start_main[2] = exp(safe_IC_D);
         y_start_main[3] = G0_per_well[w];
       }
 
@@ -307,7 +312,7 @@ model {
 
   mu_IC[1] ~ normal(prior_mu_N0_mean, prior_mu_N0_sd);
   mu_IC[2] ~ normal(prior_mu_D0_mean, prior_mu_D0_sd);
-  sigma_IC ~ exponential(0.5);
+  sigma_IC ~ normal(0, 0.5);
   to_vector(z_IC) ~ std_normal();
   beta_IC ~ normal(0, 1);
 
@@ -419,24 +424,26 @@ generated quantities {
 
 
       // D. Starvation Protocol
+      // [FIX] Apply same clamping to simulation
+      real log_theta_cap = log(p_ode[1]) + 1.0;
+      real safe_IC_N = fmin(y0_inferred[1], log_theta_cap);
+      real safe_IC_D = fmin(y0_inferred[2], log_theta_cap);
+
       if (has_starvation[w] == 1) {
         vector[3] y0_starve;
-        // [CHANGE 6] Log -> Real
-        y0_starve[1] = exp(y0_inferred[1]);
-        y0_starve[2] = exp(y0_inferred[2]);
+        y0_starve[1] = exp(safe_IC_N);
+        y0_starve[2] = exp(safe_IC_D);
         y0_starve[3] = 0.0;
 
         array[1] real t_starve = {0.0};
         array[1] vector[3] y_res_starve;
-        // Increase max_steps slightly for safety
         y_res_starve = ode_bdf_tol(model_b_ode, y0_starve, -6.0, t_starve, 1e-4, 1e-5, 50000, p_ode);
 
         y_start_main = y_res_starve[1];
         y_start_main[3] = G0_per_well[w];
       } else {
-        // [CHANGE 7] Log -> Real
-        y_start_main[1] = exp(y0_inferred[1]);
-        y_start_main[2] = exp(y0_inferred[2]);
+        y_start_main[1] = exp(safe_IC_N);
+        y_start_main[2] = exp(safe_IC_D);
         y_start_main[3] = G0_per_well[w];
       }
       

@@ -18,12 +18,16 @@ if (MODEL_NAME == "model_B") {
   max_N <- max(stan_data$N_obs, na.rm = TRUE)
   config$prior_means[1] <- log(max_N * 1.5)
   config$prior_sds[1]   <- 0.5
+  stan_data$lower_b <- config$lower
+  stan_data$upper_b <- config$upper
+  stan_data$N_params <- length(config$lower)
 }
 
 stan_data$prior_ode_mean <- config$prior_means
 stan_data$prior_ode_sd   <- config$prior_sds
 stan_data$mode           <- 0 
 stan_data$calc_sim       <- CALC_SIM
+
 
 # 2. COMPILE
 stan_file <- paste0("MCMC/", MODEL_NAME, ".stan")
@@ -99,7 +103,7 @@ fit_pf <- mod$pathfinder(
 #  init = init_fun,
   seed = 123,
   num_threads = 60,
-  num_paths = 1800
+  num_paths = 6
 )
 
 # 5. SAVE

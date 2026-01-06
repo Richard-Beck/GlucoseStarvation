@@ -10,7 +10,7 @@ library(deSolve)
 # 1. SETUP & LOAD
 # ==============================================================================
 args <- commandArgs(trailingOnly = TRUE)
-MODEL_NAME <- if (length(args) >= 1) args[1] else "model_q"
+MODEL_NAME <- if (length(args) >= 1) args[1] else "model_B"
 
 # Files
 res_file  <- file.path("results", paste0("pathfinder_", MODEL_NAME, ".Rds"))
@@ -576,347 +576,464 @@ cat(sprintf("  Failed (Crashed): %d\n", n_fail))
 # 8. PHYSIOLOGICAL PROFILING (Robust Math Fix)
 # ==============================================================================
 
-# ------------------------------------------------------------------------------
-# A. Robust Math Helpers
-# ------------------------------------------------------------------------------
-
-# Safe log1p_exp: log(1 + exp(x))
-# If x is large (> 50), log(1 + exp(x)) approx x.
-# This prevents exp(700) -> Inf crashes.
-log1p_exp_r <- function(x) {
-  if (is.na(x)) return(NA)
-  if (x > 50) return(x) 
-  log1p(exp(x))
-}
-
-softcap_r <- function(x, cap) {
-  if (is.na(x)) return(NA)
-  if (x > cap) return(cap) 
-  # cap - log(1 + exp(cap - x))
-  # Use our robust helper here too for safety
-  cap - log1p_exp_r(cap - x)
-}
-
-inv_logit_r <- function(x) {
-  if (is.na(x)) return(NA)
-  if (x > 100) return(1.0)
-  if (x < -100) return(0.0)
-  1 / (1 + exp(-x))
-}
-
-# ------------------------------------------------------------------------------
-# B. ODE Derivative Function
-# ------------------------------------------------------------------------------
-ode_derivs <- function(t, y, p) {
-  # 1. Unpack
-  theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
-  nu      <- p[5]; rho     <- p[6]; r       <- p[7]
-  sigma_G <- p[8]; KG      <- p[9]
-  q50g_f  <- p[10]; q50d_f  <- p[11]
-  na      <- p[12]; nd      <- p[13]
+if(MODEL_NAME=="model_q"){
+  # ------------------------------------------------------------------------------
+  # A. Robust Math Helpers
+  # ------------------------------------------------------------------------------
   
-  fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
+  # Safe log1p_exp: log(1 + exp(x))
+  # If x is large (> 50), log(1 + exp(x)) approx x.
+  # This prevents exp(700) -> Inf crashes.
+  log1p_exp_r <- function(x) {
+    if (is.na(x)) return(NA)
+    if (x > 50) return(x) 
+    log1p(exp(x))
+  }
   
-  # 2. State
-  logNL   <- y[1]
-  logND   <- y[2]
-  G_state <- y[3]
-  q_raw   <- y[4]
+  softcap_r <- function(x, cap) {
+    if (is.na(x)) return(NA)
+    if (x > cap) return(cap) 
+    # cap - log(1 + exp(cap - x))
+    # Use our robust helper here too for safety
+    cap - log1p_exp_r(cap - x)
+  }
   
-  G_use <- if (!is.na(fixed_G)) fixed_G else G_state
+  inv_logit_r <- function(x) {
+    if (is.na(x)) return(NA)
+    if (x > 100) return(1.0)
+    if (x < -100) return(0.0)
+    1 / (1 + exp(-x))
+  }
   
-  # 3. Calculations
-  NL <- exp(logNL)
-  
-  k_home_cap <- 4.0
-  k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
-  
-  s <- nu * rho
-  alpha_c <- s * r
-  alpha_m <- s * (1.0 - r)
-  
-  eps_qstar <- 1e-6
-  q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
-  q_star <- min(max(q_star, eps_qstar), 1.0 - eps_qstar)
-  
-  q50gN <- q50g_f * q_star
-  q50dN <- q50d_f * q_star
-  
-  # --- FIX: ROBUST G SMOOTHING ---
-  k_smooth_G <- 100.0
-  # G_smooth = log(1 + exp(100*G)) / 100
-  # Uses robust log1p_exp_r to avoid overflow when G > 7.1
-  G_smooth <- log1p_exp_r(k_smooth_G * G_use) / k_smooth_G
-  
-  # --- FIX: ROBUST Q SMOOTHING ---
-  k_smooth_q <- 50.0
-  qN_low <- log1p_exp_r(k_smooth_q * q_raw) / k_smooth_q
-  # For the second term, we do: 1.0 - (log1p_exp(...))
-  term_high <- log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q
-  qN <- 1.0 - term_high
-  
-  # Fluxes
-  drive_term <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
-  gate  <- G_smooth / (KG + G_smooth + 1e-12)
-  Jin   <- k_home * gate * drive_term
-  
-  # Regulation
-  log_qN <- log(qN + 1e-12)
-  reg_growth  <- inv_logit_r(na * (log_qN - log(q50gN + 1e-12)))
-  term_d_hill <- inv_logit_r(nd * (log_qN - log(q50dN + 1e-12)))
-  
-  mu    <- kp * reg_growth
-  delta <- kd * (1.0 - term_d_hill)
-  
-  b <- mu * (1.0 - NL/theta)
-  
-  # Derivatives
-  du <- b - delta 
-  dv <- delta * exp(logNL - logND)
-  
-  dG <- if (!is.na(fixed_G)) 0 else -NL * Jin / sigma_G
-  
-  dq_raw <- Jin - (alpha_m * kp) - (qN * b) - (alpha_c * b)
-  
-  list(c(du, dv, dG, dq_raw))
-}
-
-# ------------------------------------------------------------------------------
-# C. Post-Processing Helper (Updated with Robust Math)
-# ------------------------------------------------------------------------------
-compute_derived_rates <- function(out_matrix, p) {
-  theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
-  nu      <- p[5]; rho     <- p[6]; r       <- p[7]
-  sigma_G <- p[8]; KG      <- p[9]
-  q50g_f  <- p[10]; q50d_f  <- p[11]
-  na      <- p[12]; nd      <- p[13]
-  
-  fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
-  
-  n <- nrow(out_matrix)
-  mu_vec <- numeric(n); delta_vec <- numeric(n); qN_vec <- numeric(n); cons_vec <- numeric(n)
-  
-  k_home_cap <- 4.0
-  k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
-  
-  q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
-  q_star <- min(max(q_star, 1e-6), 1.0 - 1e-6)
-  
-  q50gN <- q50g_f * q_star
-  q50dN <- q50d_f * q_star
-  
-  k_smooth_G <- 100.0
-  k_smooth_q <- 50.0
-  
-  for(i in 1:n) {
-    logNL <- out_matrix[i, "logNL"]
-    G_state <- out_matrix[i, "G"]
-    q_raw <- out_matrix[i, "q_raw"]
+  # ------------------------------------------------------------------------------
+  # B. ODE Derivative Function
+  # ------------------------------------------------------------------------------
+  ode_derivs <- function(t, y, p) {
+    # 1. Unpack
+    theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
+    nu      <- p[5]; rho     <- p[6]; r       <- p[7]
+    sigma_G <- p[8]; KG      <- p[9]
+    q50g_f  <- p[10]; q50d_f  <- p[11]
+    na      <- p[12]; nd      <- p[13]
+    
+    fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
+    
+    # 2. State
+    logNL   <- y[1]
+    logND   <- y[2]
+    G_state <- y[3]
+    q_raw   <- y[4]
     
     G_use <- if (!is.na(fixed_G)) fixed_G else G_state
     
-    # Robust smoothing
+    # 3. Calculations
+    NL <- exp(logNL)
+    
+    k_home_cap <- 4.0
+    k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
+    
+    s <- nu * rho
+    alpha_c <- s * r
+    alpha_m <- s * (1.0 - r)
+    
+    eps_qstar <- 1e-6
+    q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
+    q_star <- min(max(q_star, eps_qstar), 1.0 - eps_qstar)
+    
+    q50gN <- q50g_f * q_star
+    q50dN <- q50d_f * q_star
+    
+    # --- FIX: ROBUST G SMOOTHING ---
+    k_smooth_G <- 100.0
+    # G_smooth = log(1 + exp(100*G)) / 100
+    # Uses robust log1p_exp_r to avoid overflow when G > 7.1
     G_smooth <- log1p_exp_r(k_smooth_G * G_use) / k_smooth_G
     
+    # --- FIX: ROBUST Q SMOOTHING ---
+    k_smooth_q <- 50.0
     qN_low <- log1p_exp_r(k_smooth_q * q_raw) / k_smooth_q
-    qN <- 1.0 - (log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q)
+    # For the second term, we do: 1.0 - (log1p_exp(...))
+    term_high <- log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q
+    qN <- 1.0 - term_high
     
-    drive <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
+    # Fluxes
+    drive_term <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
     gate  <- G_smooth / (KG + G_smooth + 1e-12)
-    Jin   <- k_home * gate * drive
+    Jin   <- k_home * gate * drive_term
     
+    # Regulation
     log_qN <- log(qN + 1e-12)
     reg_growth  <- inv_logit_r(na * (log_qN - log(q50gN + 1e-12)))
     term_d_hill <- inv_logit_r(nd * (log_qN - log(q50dN + 1e-12)))
     
-    mu_vec[i]    <- kp * reg_growth
-    delta_vec[i] <- kd * (1.0 - term_d_hill)
-    qN_vec[i]    <- qN
-    cons_vec[i]  <- Jin / sigma_G
+    mu    <- kp * reg_growth
+    delta <- kd * (1.0 - term_d_hill)
+    
+    b <- mu * (1.0 - NL/theta)
+    
+    # Derivatives
+    du <- b - delta 
+    dv <- delta * exp(logNL - logND)
+    
+    dG <- if (!is.na(fixed_G)) 0 else -NL * Jin / sigma_G
+    
+    dq_raw <- Jin - (alpha_m * kp) - (qN * b) - (alpha_c * b)
+    
+    list(c(du, dv, dG, dq_raw))
   }
   
-  return(data.frame(
-    time = out_matrix[, "time"],
-    mu = mu_vec,
-    delta = delta_vec,
-    q = qN_vec,
-    consumption = cons_vec
-  ))
-}
-
-# The rest of the plotting logic (E and F) remains exactly the same as the previous block.
-# Re-run sections D, E, and F with these updated functions defined.
-
-# ------------------------------------------------------------------------------
-# D. Parameter Preparation
-# ------------------------------------------------------------------------------
-param_wide <- reconstructed_df %>%
-  group_by(group, param) %>%
-  summarise(val = median(value, na.rm=TRUE), .groups = "drop") %>%
-  pivot_wider(names_from = param, values_from = val)
-
-get_p_vec <- function(row_idx, df, p_names) {
-  vec <- unlist(df[row_idx, p_names])
-  return(as.numeric(vec))
-}
-
-# ------------------------------------------------------------------------------
-# E. Plot 1: Steady State Glucose Consumption
-# ------------------------------------------------------------------------------
-cat("Calculating Steady State Curves (Separated Logic)...\n")
-g_grid <- seq(0, 15, length.out = 50) 
-ss_results <- list()
-
-for(i in 1:nrow(param_wide)) {
-  grp_name <- param_wide$group[i]
-  p_vec <- get_p_vec(i, param_wide, param_names)
-  if(any(is.na(p_vec))) next
-  
-  cons_vec <- numeric(length(g_grid))
-  q_vec    <- numeric(length(g_grid))
-  
-  for(j in seq_along(g_grid)) {
-    g_val <- g_grid[j]
-    p_run <- c(p_vec, 1.0); names(p_run) <- c(param_names, "fixed_G_val")
-    p_run["fixed_G_val"] <- g_val
+  # ------------------------------------------------------------------------------
+  # C. Post-Processing Helper (Updated with Robust Math)
+  # ------------------------------------------------------------------------------
+  compute_derived_rates <- function(out_matrix, p) {
+    theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
+    nu      <- p[5]; rho     <- p[6]; r       <- p[7]
+    sigma_G <- p[8]; KG      <- p[9]
+    q50g_f  <- p[10]; q50d_f  <- p[11]
+    na      <- p[12]; nd      <- p[13]
     
-    y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = g_val, q_raw = 0.5)
+    fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
+    
+    n <- nrow(out_matrix)
+    mu_vec <- numeric(n); delta_vec <- numeric(n); qN_vec <- numeric(n); cons_vec <- numeric(n)
+    
+    k_home_cap <- 4.0
+    k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
+    
+    q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
+    q_star <- min(max(q_star, 1e-6), 1.0 - 1e-6)
+    
+    q50gN <- q50g_f * q_star
+    q50dN <- q50d_f * q_star
+    
+    k_smooth_G <- 100.0
+    k_smooth_q <- 50.0
+    
+    for(i in 1:n) {
+      logNL <- out_matrix[i, "logNL"]
+      G_state <- out_matrix[i, "G"]
+      q_raw <- out_matrix[i, "q_raw"]
+      
+      G_use <- if (!is.na(fixed_G)) fixed_G else G_state
+      
+      # Robust smoothing
+      G_smooth <- log1p_exp_r(k_smooth_G * G_use) / k_smooth_G
+      
+      qN_low <- log1p_exp_r(k_smooth_q * q_raw) / k_smooth_q
+      qN <- 1.0 - (log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q)
+      
+      drive <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
+      gate  <- G_smooth / (KG + G_smooth + 1e-12)
+      Jin   <- k_home * gate * drive
+      
+      log_qN <- log(qN + 1e-12)
+      reg_growth  <- inv_logit_r(na * (log_qN - log(q50gN + 1e-12)))
+      term_d_hill <- inv_logit_r(nd * (log_qN - log(q50dN + 1e-12)))
+      
+      mu_vec[i]    <- kp * reg_growth
+      delta_vec[i] <- kd * (1.0 - term_d_hill)
+      qN_vec[i]    <- qN
+      cons_vec[i]  <- Jin / sigma_G
+    }
+    
+    return(data.frame(
+      time = out_matrix[, "time"],
+      mu = mu_vec,
+      delta = delta_vec,
+      q = qN_vec,
+      consumption = cons_vec
+    ))
+  }
+  
+  # The rest of the plotting logic (E and F) remains exactly the same as the previous block.
+  # Re-run sections D, E, and F with these updated functions defined.
+  
+  # ------------------------------------------------------------------------------
+  # D. Parameter Preparation
+  # ------------------------------------------------------------------------------
+  param_wide <- reconstructed_df %>%
+    group_by(group, param) %>%
+    summarise(val = median(value, na.rm=TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = param, values_from = val)
+  
+  get_p_vec <- function(row_idx, df, p_names) {
+    vec <- unlist(df[row_idx, p_names])
+    return(as.numeric(vec))
+  }
+  
+  # ------------------------------------------------------------------------------
+  # E. Plot 1: Steady State Glucose Consumption
+  # ------------------------------------------------------------------------------
+  cat("Calculating Steady State Curves (Separated Logic)...\n")
+  g_grid <- seq(0, 15, length.out = 50) 
+  ss_results <- list()
+  
+  for(i in 1:nrow(param_wide)) {
+    grp_name <- param_wide$group[i]
+    p_vec <- get_p_vec(i, param_wide, param_names)
+    if(any(is.na(p_vec))) next
+    
+    cons_vec <- numeric(length(g_grid))
+    q_vec    <- numeric(length(g_grid))
+    
+    for(j in seq_along(g_grid)) {
+      g_val <- g_grid[j]
+      p_run <- c(p_vec, 1.0); names(p_run) <- c(param_names, "fixed_G_val")
+      p_run["fixed_G_val"] <- g_val
+      
+      y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = g_val, q_raw = 0.5)
+      
+      # 1. Solve ODE
+      out <- suppressWarnings(
+        ode(y = y0, times = c(0, 100), func = ode_derivs, parms = p_run, method = "lsoda")
+      )
+      
+      # 2. Compute Rates on the output
+      rates_df <- compute_derived_rates(out, p_run)
+      
+      # 3. Take final row
+      final_rates <- rates_df[nrow(rates_df), ]
+      
+      cons_vec[j] <- final_rates$consumption
+      q_vec[j]    <- final_rates$q
+    }
+    
+    ss_results[[length(ss_results)+1]] <- data.frame(
+      group = grp_name,
+      Glucose = g_grid,
+      Consumption = cons_vec,
+      q_ss = q_vec
+    )
+  }
+  
+  
+  # ------------------------------------------------------------------------------
+  # F. Plot 2: Step Drop Response
+  # ------------------------------------------------------------------------------
+  cat("Calculating Step Drop Dynamics (Separated Logic)...\n")
+  step_results <- list()
+  
+  for(i in 1:nrow(param_wide)) {
+    print(i)
+    grp_name <- param_wide$group[i]
+    p_vec <- get_p_vec(i, param_wide, param_names)
+    if(any(is.na(p_vec))) next
+    
+    # --- Phase 1: Warmup at 10mM ---
+    p_phase1 <- c(p_vec, 10.0); names(p_phase1) <- c(param_names, "fixed_G_val")
+    y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = 10.0, q_raw = 0.5)
+    
+    out_warmup <- suppressWarnings(
+      ode(y = y0, times = seq(0,48,.1), func = ode_derivs, parms = p_phase1, method = "lsoda")
+    )
+    state_warmup <- out_warmup[nrow(out_warmup), -1] # Exclude time column
+    
+    # --- Phase 2: Drop to 0mM ---
+    state_drop <- state_warmup
+    state_drop["G"] <- 0.0
+    
+    p_phase2 <- c(p_vec, 0.0); names(p_phase2) <- c(param_names, "fixed_G_val")
+    times_drop <- seq(0, 48, by = 0.1)
     
     # 1. Solve ODE
-    out <- suppressWarnings(
-      ode(y = y0, times = c(0, 100), func = ode_derivs, parms = p_run, method = "lsoda")
+    out_drop <- suppressWarnings(
+      ode(y = state_drop, times = times_drop, func = ode_derivs, parms = p_phase2, method = "lsoda")
     )
     
-    # 2. Compute Rates on the output
-    rates_df <- compute_derived_rates(out, p_run)
+    # 2. Compute Rates
+    rates_df <- compute_derived_rates(out_drop, p_phase2)
+    rates_df$group <- grp_name
     
-    # 3. Take final row
-    final_rates <- rates_df[nrow(rates_df), ]
-    
-    cons_vec[j] <- final_rates$consumption
-    q_vec[j]    <- final_rates$q
+    step_results[[length(step_results)+1]] <- rates_df
   }
   
-  ss_results[[length(ss_results)+1]] <- data.frame(
-    group = grp_name,
-    Glucose = g_grid,
-    Consumption = cons_vec,
-    q_ss = q_vec
-  )
+  # ==============================================================================
+  # G. Updated Visualization (2 Colors + Linetypes)
+  # ==============================================================================
+  library(stringr)
+  
+  # 1. Process Steady State Data
+  # ------------------------------------------------------------------------------
+  if(length(ss_results) > 0) {
+    df_ss <- bind_rows(ss_results) %>%
+      mutate(
+        # Extract "Line X"
+        Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
+        # Determine Status
+        Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
+      )
+    
+    # Plot
+    p_ss <- ggplot(df_ss, aes(x = Glucose, y = Consumption, color = Status, linetype = Line_ID)) +
+      geom_line(linewidth = 1.0) +
+      scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
+      theme_bw() +
+      labs(
+        title = "Per Capita Glucose Consumption (Steady State)",
+        subtitle = "Consumption = Jin / sigma_G",
+        x = "Extracellular Glucose (mM)",
+        y = "Consumption Rate (mM/cell/h)",
+        color = "Ploidy Status",
+        linetype = "Cell Line"
+      )
+    print(p_ss)
+  }
+  
+  # 2. Process Step Drop Data (Mu and Delta Only)
+  # ------------------------------------------------------------------------------
+  if(length(step_results) > 0) {
+    df_step <- bind_rows(step_results) %>%
+      mutate(
+        Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
+        Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
+      ) %>%
+      pivot_longer(cols = c("mu", "delta", "q"), names_to = "metric", values_to = "value") %>%
+      # FILTER: Remove 'q'
+      filter(metric %in% c("mu", "delta"))
+    
+    # Define clean labels for the facets
+    metric_labs <- c(
+      "mu" = "Growth Rate (mu)", 
+      "delta" = "Death Rate (delta)"
+    )
+    
+    # Plot
+    p_step <- ggplot(df_step, aes(x = time, y = value, color = Status, linetype = Line_ID)) +
+      geom_line(linewidth = 1.0) +
+      facet_wrap(metric~Line_ID, scales = "free_y", ncol = 5) +
+      scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
+      theme_bw() +
+      #scale_x_log10()+
+      labs(
+        title = "Response to Glucose Drop (10mM -> 0mM)",
+        subtitle = "Immediate physiological adaptation",
+        x = "Time since Drop (h)",
+        y = "Rate (1/h)",
+        color = "Ploidy Status",
+        linetype = "Cell Line"
+      )
+    print(p_step)
+  }
+  
+  # Save Steady State Consumption Plot
+  ggsave("results/physio_steady_state_uptake.pdf", plot = p_ss, width = 8, height = 6)
+  
+  # Save Step Drop Response Plot
+  ggsave("results/physio_starvation_step_drop.pdf", plot = p_step, width = 10, height = 8)
+  cat(">>> Physiological plots generated.\n")
 }
 
-
-# ------------------------------------------------------------------------------
-# F. Plot 2: Step Drop Response
-# ------------------------------------------------------------------------------
-cat("Calculating Step Drop Dynamics (Separated Logic)...\n")
-step_results <- list()
-
-for(i in 1:nrow(param_wide)) {
-  print(i)
-  grp_name <- param_wide$group[i]
-  p_vec <- get_p_vec(i, param_wide, param_names)
-  if(any(is.na(p_vec))) next
+if(MODEL_NAME=="model_B"){
+  # ==============================================================================
+  # 8. HILL FUNCTION PROFILING (Model B Specific)
+  # ==============================================================================
+  cat("\nGenerating Model B Physiological Response Curves (Hill Functions)...\n")
   
-  # --- Phase 1: Warmup at 10mM ---
-  p_phase1 <- c(p_vec, 10.0); names(p_phase1) <- c(param_names, "fixed_G_val")
-  y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = 10.0, q_raw = 0.5)
+  # 1. Prepare Parameters (Median of Posterior)
+  #    (Assumes reconstructed_df from Section 4 exists and contains model B param names)
+  param_wide <- reconstructed_df %>%
+    group_by(group, param) %>%
+    summarise(val = median(value, na.rm=TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = param, values_from = val)
   
-  out_warmup <- suppressWarnings(
-    ode(y = y0, times = seq(0,48,.1), func = ode_derivs, parms = p_phase1, method = "lsoda")
-  )
-  state_warmup <- out_warmup[nrow(out_warmup), -1] # Exclude time column
+  # 2. Define Response Function Helper (Updated for Decoupled Parameterization)
+  calc_model_b_responses <- function(p_vec, G_seq) {
+    # Extract Base Parameters
+    kp   <- p_vec[["kp"]]
+    kd   <- p_vec[["kd"]]
+    g50a <- p_vec[["g50a"]]
+    na   <- p_vec[["na"]]
+    nd   <- p_vec[["nd"]]
+    
+    # Extract Meta-Parameters (gamma, yield, m)
+    # Note: If running on old model_B without these, this will return NA/Error.
+    gamma <- p_vec[["gamma"]]
+    yield <- p_vec[["yield"]]
+    m     <- p_vec[["m"]]
+    
+    # Convert to Physical Parameters
+    g50d <- g50a * gamma   # Death threshold relative to growth
+    v1   <- kp / yield     # Consumption during growth
+    v2   <- m              # Maintenance consumption
+    
+    # Robust Inverse Logit
+    inv_logit <- function(x) 1 / (1 + exp(-x))
+    
+    # Calculate Logic
+    log_G <- log(G_seq + 1e-9)
+    
+    # Function 1: Growth Activation (actA)
+    # High G -> High actA -> High Growth
+    actA <- inv_logit(na * (log_G - log(g50a)))
+    
+    # Function 2: Survival/Termination of Death (term_d)
+    # High G -> High term_d -> Low Death (inhD = 1 - term_d)
+    term_d <- inv_logit(nd * (log_G - log(g50d)))
+    
+    # Function 3: Glucose Uptake Rate (Flux)
+    # Rate ~ (v1*actA + v2*term_d) / 2
+    uptake <- (v1 * actA + v2 * term_d) / 2.0
+    
+    data.frame(
+      Glucose = G_seq,
+      actA    = kp * actA,         # Scaled to actual growth rate (1/h)
+      term_d  = kd * (1 - term_d), # Scaled to actual death rate (1/h) [Note: Label is term_d, value is death rate]
+      net     = kp * actA - kd * (1 - term_d),
+      uptake  = uptake
+    )
+  }
   
-  # --- Phase 2: Drop to 0mM ---
-  state_drop <- state_warmup
-  state_drop["G"] <- 0.0
+  # 3. Generate Data across Glucose Grid
+  G_seq <- exp(seq(log(0.001), log(25), length.out = 200))
+  plot_data_list <- list()
   
-  p_phase2 <- c(p_vec, 0.0); names(p_phase2) <- c(param_names, "fixed_G_val")
-  times_drop <- seq(0, 48, by = 0.1)
+  for(i in 1:nrow(param_wide)) {
+    grp <- param_wide$group[i]
+    
+    # Convert row to named vector for the helper
+    p_vec <- unlist(param_wide[i, -1]) 
+    
+    df_res <- calc_model_b_responses(p_vec, G_seq)
+    df_res$group <- grp
+    plot_data_list[[i]] <- df_res
+  }
   
-  # 1. Solve ODE
-  out_drop <- suppressWarnings(
-    ode(y = state_drop, times = times_drop, func = ode_derivs, parms = p_phase2, method = "lsoda")
-  )
-  
-  # 2. Compute Rates
-  rates_df <- compute_derived_rates(out_drop, p_phase2)
-  rates_df$group <- grp_name
-  
-  step_results[[length(step_results)+1]] <- rates_df
-}
-
-# ==============================================================================
-# G. Updated Visualization (2 Colors + Linetypes)
-# ==============================================================================
-library(stringr)
-
-# 1. Process Steady State Data
-# ------------------------------------------------------------------------------
-if(length(ss_results) > 0) {
-  df_ss <- bind_rows(ss_results) %>%
+  # Note: I added 'net' to cols just in case you want to see it, though your original plot code didn't use it.
+  hill_df <- bind_rows(plot_data_list) %>%
+    pivot_longer(cols = c("actA", "term_d", "uptake", "net"), names_to = "Metric", values_to = "Value") %>%
     mutate(
-      # Extract "Line X"
       Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
-      # Determine Status
-      Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
+      Status  = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline"),
+      # Create readable labels for the plot facets
+      Metric_Label = case_when(
+        Metric == "actA"   ~ "Growth Rate (kp * actA)",
+        Metric == "term_d" ~ "Death Rate (kd * inhD)",
+        Metric == "uptake" ~ "Glucose Uptake Rate (V_in)",
+        Metric == "net"    ~ "Net Growth Rate (Growth - Death)",
+        TRUE ~ Metric
+      )
     )
   
-  # Plot
-  p_ss <- ggplot(df_ss, aes(x = Glucose, y = Consumption, color = Status, linetype = Line_ID)) +
-    geom_line(linewidth = 1.0) +
+  # 4. Plot and Save
+  # Filtered out 'net' for the main plot to match your original layout, remove filter to see net growth.
+  p_hill <- ggplot(hill_df %>% filter(Metric != "net"), aes(x = Glucose, y = Value, color = Status, linetype = Line_ID)) +
+    geom_line(linewidth = 1.2) +
+    facet_grid(rows=vars(Metric_Label), cols=vars(Line_ID), scales = "free") +
+    scale_x_log10(breaks = c(0.01, 0.1, 1, 10), labels = scales::comma) +
     scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
     theme_bw() +
     labs(
-      title = "Per Capita Glucose Consumption (Steady State)",
-      subtitle = "Consumption = Jin / sigma_G",
-      x = "Extracellular Glucose (mM)",
-      y = "Consumption Rate (mM/cell/h)",
+      title = "Model B Physiological Functions",
+      subtitle = "Learned steady-state response curves (Posterior Median)",
+      x = "Glucose (mM) [Log Scale]",
+      y = "Rate (1/h) or Flux (mmol/cell/h)",
       color = "Ploidy Status",
       linetype = "Cell Line"
-    )
-  print(p_ss)
+    ) +
+    theme(legend.position = "bottom")
+  
+  print(p_hill)
+  ggsave("results/model_B_hill_functions.pdf", plot = p_hill, width = 12, height = 6)
+  cat(">>> Saved Hill function plot to 'results/model_B_hill_functions.pdf'.\n")
 }
 
-# 2. Process Step Drop Data (Mu and Delta Only)
-# ------------------------------------------------------------------------------
-if(length(step_results) > 0) {
-  df_step <- bind_rows(step_results) %>%
-    mutate(
-      Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
-      Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
-    ) %>%
-    pivot_longer(cols = c("mu", "delta", "q"), names_to = "metric", values_to = "value") %>%
-    # FILTER: Remove 'q'
-    filter(metric %in% c("mu", "delta"))
-  
-  # Define clean labels for the facets
-  metric_labs <- c(
-    "mu" = "Growth Rate (mu)", 
-    "delta" = "Death Rate (delta)"
-  )
-  
-  # Plot
-  p_step <- ggplot(df_step, aes(x = time, y = value, color = Status, linetype = Line_ID)) +
-    geom_line(linewidth = 1.0) +
-    facet_wrap(metric~Line_ID, scales = "free_y", ncol = 5) +
-    scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
-    theme_bw() +
-    #scale_x_log10()+
-    labs(
-      title = "Response to Glucose Drop (10mM -> 0mM)",
-      subtitle = "Immediate physiological adaptation",
-      x = "Time since Drop (h)",
-      y = "Rate (1/h)",
-      color = "Ploidy Status",
-      linetype = "Cell Line"
-    )
-  print(p_step)
-}
-
-# Save Steady State Consumption Plot
-ggsave("results/physio_steady_state_uptake.pdf", plot = p_ss, width = 8, height = 6)
-
-# Save Step Drop Response Plot
-ggsave("results/physio_starvation_step_drop.pdf", plot = p_step, width = 10, height = 8)
-cat(">>> Physiological plots generated.\n")

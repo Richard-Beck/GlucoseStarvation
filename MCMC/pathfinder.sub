@@ -5,9 +5,9 @@
 
 # --- Resource Requests ---
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=63            # Request 64 cores (1 full A-Node)
+#SBATCH --cpus-per-task=60            # Request 64 cores (1 full A-Node)
 #SBATCH --mem=64G                     # Request 64GB RAM
-#SBATCH --time=12:00:00             # Wall time: 1 day
+#SBATCH --time=04:00:00             # Wall time: 1 day
 #SBATCH --qos=small                   # Default QOS
 
 # --- Container Configuration ---
@@ -29,4 +29,4 @@ echo "Allocated cores: $SLURM_JOB_CPUS_PER_NODE"
 echo "Using Container: $CONTAINER_URI"
 
 # Run Rscript inside the container
-apptainer exec $BINDS $CONTAINER_URI Rscript MCMC/run_pathfinder.R model_q
+apptainer exec $BINDS $CONTAINER_URI Rscript MCMC/run_pathfinder.R model_B

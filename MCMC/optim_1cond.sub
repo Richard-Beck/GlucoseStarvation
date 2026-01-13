@@ -31,8 +31,8 @@ cellLine="${cellLines[$line_idx]}"
 ploidy="${ploidies[$plo_idx]}"
 
 MODEL_NAME="model_B1cond"
-NUM_PATHS=5000
-N_CORES=32    
+NUM_PATHS=1000
+N_CORES=32  
 CALC_SIM=1         # consider 0 if you don't need y_sim during PF
 
 echo "Starting task $SLURM_ARRAY_TASK_ID on $(hostname)"

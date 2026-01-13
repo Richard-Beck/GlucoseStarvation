@@ -13,13 +13,17 @@ functions {
     real theta = p[1];
     real kp    = p[2];
     real kd    = p[3];
-    real kd2   = p[4];//0;
+    real kd2   = p[4];
     real g50a  = p[5];
     real na    = p[6];
     real g50d  = p[7];
     real nd    = p[8];
     real v1    = p[9];
     real v2    = p[10];
+    
+    // control glucose uptake independent of birth/death
+    real g50g = p[11]; 
+    real ng = p[12];
     
     real NL = y[1];
     real ND = y[2];
@@ -30,12 +34,14 @@ functions {
     
     real actA   = inv_logit(na * (log_G - log(g50a)));
     real term_d = inv_logit(nd * (log_G - log(g50d)));
+    real term_g = inv_logit(ng * (log_G - log(g50g))); // invented term. I could also have subbed nd... this is hacky!
     real inhD   = 1.0 - term_d;
     
     real specific_growth = kp * (1.0 - NL/theta) * actA - kd * inhD - kd2 * NL/theta;
     real du_dt = specific_growth * NL; 
     real dv_dt = kd * NL * inhD + kd2 * (NL * NL) / theta;
-    real dG_dt = -NL * (v1 * actA + v2 * term_d) / 2.0;
+    // real dG_dt = -NL * (v1 * actA + v2 * term_d) / 2.0; prior version
+    real dG_dt = -NL * (v1 * actA + v2 * term_g) / 2.0;
     
     return [du_dt, dv_dt, dG_dt]';
   }
@@ -44,7 +50,7 @@ functions {
   // Converts the raw constrained parameters to the physical ODE scales
   // Handles the logic for p[7] and p[9] dependencies
   array[] real get_p_ode(vector p_phys) {
-    array[10] real p;
+    array[12] real p;
     p[1] = p_phys[1]; // theta
     p[2] = p_phys[2]; // kp
     p[3] = p_phys[3]; // kd
@@ -52,9 +58,11 @@ functions {
     p[5] = p_phys[5]; // g50a
     p[6] = p_phys[6]; // na
     p[8] = p_phys[8]; // nd
-    p[7]  = p[5] * p_phys[7]; // p[7] is a multiplier in inputs, converted to abs here
-    p[9]  = p[2] / p_phys[9]; // p[9] is yield inverse
+    p[7]  = p_phys[5] * p_phys[7]; // p[7] is a multiplier in inputs, converted to abs here
+    p[9]  = p_phys[2] / p_phys[9]; // p[9] is yield inverse
     p[10] = p_phys[10];       
+    p[11] = p_phys[7] * p_phys[11];
+    p[12] = p_phys[12];
     return p;
   }
 
@@ -200,8 +208,8 @@ data {
   real prior_mu_D0_mean;
   real prior_mu_D0_sd;
 
-  vector[10] prior_ode_mean;
-  vector[10] prior_ode_sd;
+  vector[12] prior_ode_mean;
+  vector[12] prior_ode_sd;
   
   vector<lower=0>[N_exps] calib_a_fixed;
   vector<lower=0>[N_exps] calib_b_fixed;

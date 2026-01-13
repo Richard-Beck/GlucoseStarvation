@@ -36,10 +36,12 @@ x <- lapply(1:nrow(conds),function(i){
 proc_lp <- function(xi){
   lp <- xi$lp
   lp <- lp[order(lp,decreasing = F)]
-  data.frame(rank=1:length(lp),lp_diff=pmin(100,max(lp)-lp),cellLine=xi$cellLine,ploidy=xi$ploidy)
+  data.frame(rank=1:length(lp),lp=lp,lp_diff=pmin(100,max(lp)-lp),cellLine=xi$cellLine,ploidy=xi$ploidy)
 }
 
-sapply(x,'[[',"mean_ok")
+mean_OK <- sapply(x,'[[',"mean_ok")
+
+x <- x[mean_OK>0]
 
 df_lp <- do.call(rbind,lapply(x,proc_lp))
 
@@ -48,10 +50,20 @@ p <- ggplot(df_lp,aes(x=rank,y=lp_diff,color=ploidy))+
   geom_point()
 p
 
+p <- ggplot(df_lp,aes(x=rank,y=lp,color=ploidy))+
+  facet_wrap(ploidy~cellLine,scales="free",ncol=5)+
+  geom_point()
+p
+
+bests <- aggregate(list(lp=df_lp$lp),by=list(cellLine=df_lp$cellLine,ploidy=df_lp$ploidy),max)
+bests
+sum(bests$lp) ## best so far: -84992.77
 ```
 
+
+
 ```{r}
-plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, cell_line, ploidy, cond_label = "Condition") {
+plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, pars, cell_line, ploidy, cond_label = "Condition") {
   suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(ggplot2); library(tibble); library(patchwork) })
   
   idx_df <- tibble(variable = colnames(y_sim_draws_mat)) %>%
@@ -93,14 +105,28 @@ plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, cell_line, ploidy, c
   obs_df <- bind_rows(obs_counts, obs_gluc)
   sims_df <- sims_df %>% left_join(meta %>% select(well_idx, Condition, G0_lbl, exp_id), by = "well_idx")
   
+  # use best (first) row; change to median if you prefer
+  g50a <- exp(as.numeric(pars[1, "logp[5]"]))
+  g50d <- g50a * exp(as.numeric(pars[1, "logp[7]"]))  # gamma multiplier in your Stan mapping
+  g50g <- g50a * exp(as.numeric(pars[1, "logp[11]"]))  # g50g multiplier  <-- NEW
+  hline_df <- tidyr::expand_grid(
+    Condition = unique(meta$Condition),
+    G0_lbl    = levels(meta$G0_lbl)
+  )
+
+  
   p_counts <- ggplot() +
-    geom_line(data = sims_df %>% filter(type != "G"), aes(time, value, group = interaction(draw, well_idx, type), color = type), linewidth = 0.4, alpha = 0.15) +
-    geom_point(data = obs_df %>% filter(type != "G"), aes(time, value, shape = factor(exp_id), color = type), size = 1.8, alpha = 0.6) +
+    geom_line(data = sims_df %>% filter(type != "G"), aes(time, value, group = interaction(draw, well_idx, type), color = type)) +
+    geom_point(data = obs_df %>% filter(type != "G"), aes(time, value, shape = factor(exp_id), color = type)) +
     facet_grid(G0_lbl ~ Condition, scales = "free") + theme_bw() + labs(title = "Counts", shape = "Exp")
   
   p_gluc <- ggplot() +
-    geom_line(data = sims_df %>% filter(type == "G"), aes(time, value, group = interaction(draw, well_idx), color = type), linewidth = 0.4, alpha = 0.15) +
-    geom_point(data = obs_df %>% filter(type == "G"), aes(time, value, shape = factor(exp_id), color = type), size = 1.8, alpha = 0.6) +
+    geom_hline(data = hline_df, aes(yintercept = g50a,color="growth"), linewidth = 0.5, alpha = 0.8) +
+    geom_hline(data = hline_df, aes(yintercept = g50d,color="death"), linewidth = 0.5, alpha = 0.8) +
+    geom_hline(data = hline_df, aes(yintercept = g50g, color = "uptake"), linewidth = 0.5, alpha = 0.8) + # <-- NEW
+    geom_line(data = sims_df %>% filter(type == "G"), aes(time, value, group = interaction(draw, well_idx))) +
+    geom_point(data = obs_df %>% filter(type == "G"), aes(time, value, shape = factor(exp_id))) +
+    scale_y_log10()+
     facet_grid(G0_lbl ~ Condition, scales = "free") + theme_bw() + labs(title = "Glucose", shape = "Exp")
   
   (p_counts | p_gluc) + plot_annotation(title = paste0(cell_line, " ", ploidy, ": PPC (all draws)"))
@@ -125,8 +151,8 @@ plot_xi_pars_in_bounds <- function(xi, lp_thresh = 10) {
     mutate(Param = factor(Param, levels = rev(param_names)))
   
   ggplot(df, aes(x = logp, y = Param)) +
-    geom_segment(aes(x = log_lower, xend = log_upper, yend = Param), linewidth = 1.2, alpha = 0.4) +
-    geom_point(position = position_jitter(height = 0.15, width = 0), alpha = 0.6, size = 1.6) +
+    geom_segment(aes(x = log_lower, xend = log_upper, yend = Param,color="red")) +
+    geom_point(position = position_jitter(height = 0.35, width = 0)) +
     theme_bw() +
     labs(
       title = paste0(xi$cellLine, " ", xi$ploidy, ": logp within ", lp_thresh, " of best"),
@@ -197,6 +223,7 @@ run_xi_ppc <- function(xi, mod, n = 6, cond_label = "Condition") {
   p <- plot_ppc_from_draws(
     draws,
     stan_data = xi$data,
+    pars=pars,
     cell_line = xi$cellLine,
     ploidy    = xi$ploidy,
     cond_label = cond_label
@@ -211,9 +238,9 @@ MODEL_NAME="model_B1cond"
 stan_file <- paste0("MCMC/", MODEL_NAME, ".stan")
 #mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE),force_recompile=T)
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
-plts <- lapply(x,function(xi) run_xi_ppc(xi,mod = mod,n=1))
+plts <- lapply(x,function(xi) run_xi_ppc(xi,mod = mod,n=1)$plot)
 
-lapply(x,plot_xi_pars_in_bounds)
+bps <- lapply(x,plot_xi_pars_in_bounds)
 
 ```
 

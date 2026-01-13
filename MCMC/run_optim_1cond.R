@@ -5,7 +5,7 @@ library(jsonlite)
 
 args <- commandArgs(trailingOnly = TRUE)
 MODEL_NAME <- if (length(args) >= 1) args[1] else "model_B1cond"
-cellLine <- if (length(args) >= 2) args[2] else "MCF10A"
+cellLine <- if (length(args) >= 2) args[2] else "MDA-MB-231"
 ploidy <- if (length(args) >= 3) args[3] else "lo"
 NUM_PATHS <- if (length(args) >= 4) as.integer(args[4]) else 4
 N_CORES <- if (length(args) >= 5) as.integer(args[5]) else 4
@@ -186,7 +186,6 @@ run_opt <- function(NUM_THREADS,stan_data,init=2,algorithm="bfgs"){
   list(retcode = rc, pars = pars, lp = lp)
   
 }
-
 
 library(parallel)
 

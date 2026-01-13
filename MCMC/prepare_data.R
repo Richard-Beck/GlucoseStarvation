@@ -146,15 +146,28 @@ for (folder in unique_folders) {
   }
   
   # Map ploidy strings to numeric metric (Continuous)
+  # Map glucose ploidy: low/high -> numeric, NA stays NA (pooled later)
   xg$ploidy_metric <- NA_real_
-  for(ln in unique(xg$CellLine)) {
-    if(ln %in% names(ploidy_map)) {
-      map <- ploidy_map[[ln]]
-      base_val <- min(map)
-      vals <- map[xg$ploidy[xg$CellLine == ln]]
-      xg$ploidy_metric[xg$CellLine == ln] <- vals - base_val
-    }
+  
+  for (ln in unique(xg$CellLine)) {
+    if (!(ln %in% names(ploidy_map))) next
+    
+    map <- ploidy_map[[ln]]
+    base_val <- min(map)
+    lo_val   <- min(map)
+    hi_val   <- max(map)
+    
+    idx <- which(xg$CellLine == ln)
+    ply <- xg$ploidy[idx]
+    
+    vals <- rep(NA_real_, length(ply))
+    vals[ply == "low"]  <- lo_val
+    vals[ply == "high"] <- hi_val
+    
+    xg$ploidy_metric[idx] <- vals - base_val
   }
+  
+  
   
   # Melt Values and Flags
   xg_long <- reshape2::melt(xg, measure.vars = measure_cols, variable.name = "Replicate", value.name = "lum")

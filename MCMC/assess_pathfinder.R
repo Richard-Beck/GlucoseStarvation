@@ -5,1035 +5,321 @@ library(ggplot2)
 library(tidyr)
 library(stringr)
 library(patchwork)
-library(deSolve)
+
 # ==============================================================================
-# 1. SETUP & LOAD
+# 1. SETUP
 # ==============================================================================
 args <- commandArgs(trailingOnly = TRUE)
-MODEL_NAME <- if (length(args) >= 1) args[1] else "model_B"
+TARGET_LINE <- if (length(args) >= 1) args[1] else "MCF10A"
+MODEL_NAME  <- "model_B1cond"
 
-# Files
-res_file  <- file.path("results", paste0("pathfinder_", MODEL_NAME, ".Rds"))
+# Input/Output Paths
+base_dir  <- file.path("data", "pathfinder_1cond", MODEL_NAME, TARGET_LINE)
 data_file <- "data/stan_ready_data.Rds" 
-json_file <- file.path("MCMC", paste0(MODEL_NAME, ".json"))
+out_dir   <- base_dir 
 
-if (!file.exists(res_file)) stop("Result file not found: ", res_file)
-if (!file.exists(data_file)) stop("Data file not found: ", data_file)
-if (!file.exists(json_file)) stop("JSON config not found: ", json_file)
+cat(sprintf(">>> Generating Comparison Plots for Line: %s\n", TARGET_LINE))
 
-cat(sprintf(">>> Loading Pathfinder Results for: %s\n", MODEL_NAME))
-fit <- readRDS(res_file)
+# Load Master Data
+if (!file.exists(data_file)) stop("Master data file not found.")
 stan_data <- readRDS(data_file)
-id_map <- setNames(names(stan_data$line_map), stan_data$line_map)
-config <- jsonlite::read_json(json_file, simplifyVector = TRUE)
-param_names <- config$param_names
+
+# Parameter Names in p_phys order (Input Parameterization)
+# 1=theta, 2=kp, 3=kd, 4=kd2, 5=g50a, 6=na, 7=gamma, 8=nd, 9=yield, 10=m
+param_names <- c("theta", "kp", "kd", "kd2", "g50a", "na", "gamma", "nd", "yield", "m")
 
 # ==============================================================================
-# 2. DATA PREPARATION FOR PPC (Posterior Predictive Intervals)
+# 2. HELPER: INDICES & TRANSFORMS
 # ==============================================================================
-cat("\nExtracting y_sim and noise parameters...\n")
 
-# 1. Extract Latent Trajectories (Draws x Variables)
-mu_mat <- fit$draws("y_sim", inc_warmup = FALSE, format = "matrix") 
-var_names <- colnames(mu_mat)
-
-# 2. Extract Noise Parameters (Draws)
-phi_draws <- fit$draws(c("phi_total", "phi_frac"), inc_warmup = FALSE, format = "df")
-phi_total_vec <- phi_draws$phi_total
-phi_frac_vec  <- phi_draws$phi_frac
-
-# 3. Helper: Map Dilution to Well
-dil_by_well <- rep(NA_real_, stan_data$N_wells)
-for (w in 1:stan_data$N_wells) {
-  ii <- which(stan_data$well_idx_gluc == w)
-  if (length(ii) > 0) {
-    u <- unique(stan_data$dilution[ii])
-    dil_by_well[w] <- u[1] 
+# A. Robust Data Subsetter (Returns GLOBAL indices for observations)
+get_global_indices <- function(m_data, t_line, t_ploidy) {
+  line_idx <- m_data$line_map[[t_line]]
+  
+  # Find all wells for this line
+  wells_in_line <- which(m_data$line_id == line_idx)
+  
+  # Determine specific ploidy value
+  p_vals <- m_data$ploidy_metric[wells_in_line]
+  u_p    <- sort(unique(p_vals))
+  
+  if(length(u_p) == 1) {
+    target_p <- u_p[1]
   } else {
-    dil_by_well[w] <- 1.0 
+    target_p <- if(t_ploidy == "hi") max(u_p) else min(u_p)
+  }
+  
+  # Return global indices
+  which(m_data$line_id == line_idx & m_data$ploidy_metric == target_p)
+}
+
+# B. Parameter Transformer (Raw Unconstrained -> Physical)
+transform_params <- function(draws_mat, lower_vec, upper_vec) {
+  lb <- log(as.numeric(lower_vec))
+  ub <- log(as.numeric(upper_vec))
+  
+  n_d <- nrow(draws_mat)
+  n_p <- ncol(draws_mat)
+  
+  phys <- matrix(NA, nrow=n_d, ncol=n_p)
+  
+  for(j in 1:n_p) {
+    inv_logit_x <- 1 / (1 + exp(-draws_mat[,j]))
+    phys[,j] <- exp(lb[j] + (ub[j] - lb[j]) * inv_logit_x)
+  }
+  return(phys)
+}
+
+# ==============================================================================
+# 3. EXTRACTION LOOP (HI & LO)
+# ==============================================================================
+conditions <- c("hi", "lo")
+labels     <- c("High Ploidy", "Low Ploidy")
+
+res_sims   <- list()
+res_params <- list()
+
+for(i in 1:2) {
+  cond <- conditions[i]
+  lbl  <- labels[i]
+  fpath <- file.path(base_dir, cond, paste0("pathfinder_", MODEL_NAME, ".Rds"))
+  
+  if(!file.exists(fpath)) {
+    cat(sprintf("!!! Missing fit file for %s. Skipping.\n", cond))
+    next
+  }
+  
+  cat(sprintf("... Processing %s ...\n", cond))
+  fit <- readRDS(fpath)
+  
+  # --- 1. Extract & Transform Parameters ---
+  N_p <- length(stan_data$lower_b)
+  p_raw <- fit$draws("p_raw", format="matrix")[, 1:N_p, drop=FALSE]
+  
+  p_phys_mat <- transform_params(p_raw, stan_data$lower_b, stan_data$upper_b)
+  colnames(p_phys_mat) <- param_names[1:N_p]
+  
+  df_p <- as.data.frame(p_phys_mat)
+  df_p$Condition <- lbl
+  res_params[[i]] <- df_p
+  
+  # --- 2. Extract Simulations (Robust String Parsing) ---
+  if("y_sim" %in% fit$metadata()$stan_variables) {
+    
+    # Extract as flat matrix [draws x variables]
+    mu_mat <- fit$draws("y_sim", inc_warmup = FALSE, format = "matrix")
+    var_names <- colnames(mu_mat)
+    
+    cat("    Calculating quantiles for", length(var_names), "variables...\n")
+    
+    # Calculate quantiles column-wise (returns 3 x n_vars matrix)
+    stats <- apply(mu_mat, 2, quantile, probs = c(0.05, 0.5, 0.95))
+    
+    # Create Index Map from names (e.g., "y_sim[1,10,2]")
+    idx_df <- tibble(variable = var_names) %>%
+      mutate(clean = gsub("y_sim\\[|\\]", "", variable)) %>%
+      separate(clean, c("w_local", "t_idx", "s_idx"), sep = ",", convert = TRUE)
+    
+    # Map Global Indices
+    global_idx_map <- get_global_indices(stan_data, TARGET_LINE, cond)
+    
+    # Combine
+    sim_df <- idx_df %>%
+      mutate(
+        lo     = stats[1, ],
+        median = stats[2, ],
+        hi     = stats[3, ],
+        
+        # Map indices
+        well_idx = global_idx_map[w_local],
+        time     = stan_data$t_grid[t_idx],
+        type     = case_when(s_idx==1 ~ "NL", s_idx==2 ~ "ND", s_idx==3 ~ "G", TRUE ~ "Other"),
+        Condition = lbl
+      ) %>%
+      filter(type %in% c("NL", "ND", "G")) %>%
+      select(well_idx, time, type, lo, median, hi, Condition)
+    
+    res_sims[[i]] <- sim_df
+    
+  } else {
+    cat("    (No y_sim found in fit object)\n")
   }
 }
 
-# 4. Parse Indices
-idx_df <- tibble(variable = var_names) %>%
-  mutate(clean = gsub("y_sim\\[|\\]", "", variable)) %>%
-  separate(clean, c("w","t","s"), sep = ",", convert = TRUE) %>%
-  mutate(
-    well_idx = w,
-    time     = stan_data$t_grid[t],
-    type     = case_when(s==1 ~ "NL", s==2 ~ "ND", s==3 ~ "G", TRUE ~ "Other"),
-    col_idx  = 1:n()
-  ) %>%
-  filter(type %in% c("NL","ND","G"))
+all_params <- bind_rows(res_params)
+all_sims   <- bind_rows(res_sims)
 
-cat("Simulating posterior predictive replicates (Total/Fraction Model)...\n")
+if(nrow(all_params) == 0) stop("No data loaded.")
 
-q_summ <- function(x) {
-  c(median = quantile(x, 0.5, names=F), lo = quantile(x, 0.05, names=F), hi = quantile(x, 0.95, names=F))
-}
+# ==============================================================================
+# 4. PREPARE OBSERVED DATA
+# ==============================================================================
+# Get global indices for ALL wells in this line
+line_idx_glob <- stan_data$line_map[[TARGET_LINE]]
+all_wells <- which(stan_data$line_id == line_idx_glob)
 
-res_list <- list()
+# Create Condition Map
+cond_map <- rep(NA, stan_data$N_wells)
+cond_map[get_global_indices(stan_data, TARGET_LINE, "hi")] <- "High Ploidy"
+cond_map[get_global_indices(stan_data, TARGET_LINE, "lo")] <- "Low Ploidy"
 
-# --- Separate Indices for Pairing ---
-idx_NL <- idx_df %>% filter(type == "NL")
-idx_ND <- idx_df %>% filter(type == "ND")
-idx_G  <- idx_df %>% filter(type == "G")
+# Obs: Metadata
+obs_meta <- data.frame(
+  well_idx = all_wells,
+  G0       = stan_data$G0_per_well[all_wells],
+  exp_id   = stan_data$exp_id[all_wells],
+  Condition = cond_map[all_wells]
+) %>% 
+  filter(!is.na(Condition)) %>%
+  mutate(G0_lbl = factor(paste0(G0, " mM"), levels=paste0(sort(unique(G0)), " mM")))
 
-idx_pairs <- inner_join(idx_NL, idx_ND, by = c("well_idx", "time"), suffix = c("_NL", "_ND"))
-
-# --- A. Simulate Counts (NL + ND) ---
-for (i in 1:nrow(idx_pairs)) {
-  c_nl <- idx_pairs$col_idx_NL[i]
-  c_nd <- idx_pairs$col_idx_ND[i]
-  
-  mu_nl_vec <- pmax(0, as.numeric(mu_mat[, c_nl]))
-  mu_nd_vec <- pmax(0, as.numeric(mu_mat[, c_nd]))
-  
-  mu_tot <- mu_nl_vec + mu_nd_vec
-  p_hat  <- mu_nl_vec / (mu_tot + 1e-12)
-  p_hat  <- pmax(1e-6, pmin(1 - 1e-6, p_hat))
-  
-  rep_tot <- rnbinom(n = length(mu_tot), size = phi_total_vec, mu = mu_tot)
-  
-  alpha <- p_hat * phi_frac_vec
-  beta  <- (1 - p_hat) * phi_frac_vec
-  
-  p_star <- rbeta(n = length(mu_tot), shape1 = alpha, shape2 = beta)
-  rep_nl <- rbinom(n = length(mu_tot), size = rep_tot, prob = p_star)
-  rep_nd <- rep_tot - rep_nl
-  
-  qs_nl <- q_summ(rep_nl)
-  qs_nd <- q_summ(rep_nd)
-  
-  res_list[[length(res_list) + 1]] <- data.frame(
-    well_idx = idx_pairs$well_idx[i], time = idx_pairs$time[i], type = "NL",
-    median = qs_nl[1], lo = qs_nl[2], hi = qs_nl[3]
-  )
-  res_list[[length(res_list) + 1]] <- data.frame(
-    well_idx = idx_pairs$well_idx[i], time = idx_pairs$time[i], type = "ND",
-    median = qs_nd[1], lo = qs_nd[2], hi = qs_nd[3]
-  )
-}
-
-# --- B. Simulate Glucose ---
-for (i in 1:nrow(idx_G)) {
-  c_g <- idx_G$col_idx[i]
-  mu_g <- pmax(0, as.numeric(mu_mat[, c_g]))
-  
-  w <- idx_G$well_idx[i]
-  e <- stan_data$exp_id[w]
-  d <- dil_by_well[w]
-  
-  a <- stan_data$calib_a_fixed[e]
-  b <- stan_data$calib_b_fixed[e]
-  sig <- stan_data$calib_sigma_fixed[e] 
-  
-  mu_lum <- a * mu_g * d + b
-  yrep_lum <- exp(rnorm(n = length(mu_g), mean = log(mu_lum + 1e-12), sd = sig))
-  yrep <- pmax(0, (yrep_lum - b) / (a * d))
-  
-  qs <- q_summ(yrep)
-  res_list[[length(res_list) + 1]] <- data.frame(
-    well_idx = w, time = idx_G$time[i], type = "G",
-    median = qs[1], lo = qs[2], hi = qs[3]
-  )
-}
-
-cat("Formatting Simulation Data...\n")
-summ_clean <- bind_rows(res_list)
-
-# CHANGED: Metadata Map now uses ploidy_metric
-meta_df <- data.frame(
-  well_idx = 1:stan_data$N_wells,
-  line_id  = stan_data$line_id,
-  line_name = id_map[as.character(stan_data$line_id)],
-  metric   = stan_data$ploidy_metric, # New continuous variable
-  G0       = stan_data$G0_per_well,
-  exp_id   = stan_data$exp_id
-)
-
-# Create synthetic labels for visualization: 0 is Baseline, >0 is High
-meta_df$ploidy_lbl <- ifelse(meta_df$metric > 0.01, "High Ploidy", "Baseline Ploidy")
-meta_df$G0_lbl     <- factor(paste0(meta_df$G0, " mM"), levels = paste0(sort(unique(meta_df$G0)), " mM"))
-
-# Observed Data
-obs_counts <- data.frame(
+# Obs: Counts (NL, ND)
+df_counts <- data.frame(
   well_idx = stan_data$well_idx_count,
   time     = stan_data$t_grid[stan_data$grid_idx_count],
-  value    = stan_data$N_obs,
-  type     = "NL"
+  NL       = stan_data$N_obs,
+  ND       = stan_data$D_obs
 ) %>%
-  bind_rows(data.frame(
-    well_idx = stan_data$well_idx_count,
-    time     = stan_data$t_grid[stan_data$grid_idx_count],
-    value    = stan_data$D_obs,
-    type     = "ND"
-  )) %>%
-  # NEW: Join exp_id for counts too
-  left_join(meta_df %>% select(well_idx, exp_id), by = "well_idx")
+  filter(well_idx %in% obs_meta$well_idx) %>%
+  pivot_longer(cols=c("NL","ND"), names_to="type", values_to="value")
 
-obs_gluc <- data.frame(
+# Obs: Glucose
+df_gluc <- data.frame(
   well_idx = stan_data$well_idx_gluc,
   time     = stan_data$t_grid[stan_data$grid_idx_gluc],
   lum      = stan_data$lum_obs,
-  dilution = stan_data$dilution
+  dil      = stan_data$dilution
 ) %>%
-  left_join(meta_df %>% select(well_idx, exp_id), by = "well_idx") %>%
+  filter(well_idx %in% obs_meta$well_idx) %>%
+  left_join(obs_meta %>% select(well_idx, exp_id), by="well_idx") %>%
   mutate(
     a = stan_data$calib_a_fixed[exp_id],
     b = stan_data$calib_b_fixed[exp_id],
-    # The fix for zeroes is largely handled by your CSV edit (Dilution 1 -> 1000), 
-    # ensuring 'dilution' here is 1.0, not 1000.
-    value = pmax(0, (lum - b)/(a*dilution)),
+    value = pmax(0, (lum - b)/(a*dil)),
     type  = "G"
   ) %>%
-  # NEW: Select exp_id to keep it available for plotting
-  select(well_idx, time, value, type, exp_id)
+  select(well_idx, time, value, type)
 
-obs_all <- bind_rows(obs_counts, obs_gluc) %>% left_join(meta_df, by = c("well_idx", "exp_id"))
-sim_all <- summ_clean %>% left_join(meta_df, by = "well_idx")
+obs_all <- bind_rows(df_counts, df_gluc) %>%
+  left_join(obs_meta, by="well_idx")
+
+# Join Metadata to Sims
+all_sims <- all_sims %>%
+  left_join(obs_meta %>% select(well_idx, G0_lbl, exp_id), by="well_idx")
+
 
 # ==============================================================================
-# 3. GENERATE PPC PLOTS
+# 5. PLOT GENERATION
 # ==============================================================================
-if (!dir.exists("results")) dir.create("results")
-cat("Generating PPC Plots (results/final_ppc_check.pdf)...\n")
 
-pdf("results/final_ppc_check.pdf", width = 16, height = 12)
+# --- Plot 1: PPC (Trajectories) ---
+cat("Generating PPC Plot...\n")
+pdf(file.path(out_dir, "comparison_ppc.pdf"), width=16, height=12)
 
-unique_lines <- sort(unique(meta_df$line_id))
-cols  <- c("NL" = "#009E73", "ND" = "#D55E00", "G" = "#0072B2")
-fills <- c("NL" = "#009E73", "ND" = "#D55E00", "G" = "#0072B2")
+cols <- c("NL"="#009E73", "ND"="#D55E00", "G"="#0072B2")
+fills <- c("NL"="#009E73", "ND"="#D55E00", "G"="#0072B2")
 
-for(lid in unique_lines) {
-  lname <- id_map[as.character(lid)]
-  d_sim <- sim_all %>% filter(line_id == lid)
-  d_obs <- obs_all %>% filter(line_id == lid)
-  if(nrow(d_sim) == 0) next
-  
-  p1 <- ggplot() +
-    geom_ribbon(data = d_sim %>% filter(type != "G"), 
-                aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
-    geom_line(data = d_sim %>% filter(type != "G"), 
-              aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
-    # MODIFIED: Add shape=factor(exp_id)
-    geom_point(data = d_obs %>% filter(type != "G"), 
-               aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.7) +
-    facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
-    scale_y_continuous(labels = scales::comma) + 
-    scale_color_manual(values = cols) +
-    scale_fill_manual(values = fills) +
-    # MODIFIED: Add legend label
-    labs(title = paste0("Cell Counts | Line ", lname), x="Time (h)", y="Count", shape="Exp ID") +
+# Cell Counts
+p1 <- ggplot() +
+  geom_ribbon(data=all_sims %>% filter(type!="G"), 
+              aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
+  geom_line(data=all_sims %>% filter(type!="G"), 
+            aes(x=time, y=median, color=type, group=interaction(well_idx, type)), size=0.8) +
+  geom_point(data=obs_all %>% filter(type!="G"), 
+             aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.6) +
+  facet_grid(G0_lbl ~ Condition) +
+  scale_color_manual(values=cols) + scale_fill_manual(values=fills) +
+  labs(title=paste0(TARGET_LINE, ": Cell Counts"), shape="Exp") + theme_bw() +
+  theme(legend.position="bottom")
+
+# Glucose
+p2 <- ggplot() +
+  geom_ribbon(data=all_sims %>% filter(type=="G"), 
+              aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
+  geom_line(data=all_sims %>% filter(type=="G"), 
+            aes(x=time, y=median, color=type, group=interaction(well_idx, type)), size=0.8) +
+  geom_point(data=obs_all %>% filter(type=="G"), 
+             aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.6) +
+  facet_grid(G0_lbl ~ Condition) +
+  scale_color_manual(values=cols) + scale_fill_manual(values=fills) +
+  labs(title=paste0(TARGET_LINE, ": Glucose"), shape="Exp") + theme_bw() +
+  theme(legend.position="bottom")
+
+print(p1 | p2)
+dev.off()
+
+
+# --- Plot 2: Parameter Densities ---
+cat("Generating Parameter Plot...\n")
+pdf(file.path(out_dir, "comparison_params.pdf"), width=12, height=8)
+
+long_p <- all_params %>%
+  pivot_longer(cols=-Condition, names_to="Param", values_to="Val")
+
+print(
+  ggplot(long_p, aes(x=Val, fill=Condition)) +
+    geom_density(alpha=0.5) +
+    facet_wrap(~Param, scales="free") +
+    scale_fill_manual(values=c("Low Ploidy"="#377EB8", "High Ploidy"="#E41A1C")) +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0"))
+    labs(title=paste0("Parameter Comparison: ", TARGET_LINE))
+)
+dev.off()
+
+
+# --- Plot 3: Hill Functions (Physiology) ---
+cat("Generating Physiology Plot...\n")
+pdf(file.path(out_dir, "comparison_hill.pdf"), width=10, height=6)
+
+# Helper to calc rate curves
+calc_hill <- function(df_median, G_seq) {
+  # Map variables
+  kp   <- df_median$kp
+  kd   <- df_median$kd
+  g50a <- df_median$g50a
+  na   <- df_median$na
+  nd   <- df_median$nd
+  g50d <- g50a * df_median$gamma # derived
   
-  # --- RIGHT PANEL: Glucose ---
-  p2 <- ggplot() +
-    geom_ribbon(data = d_sim %>% filter(type == "G"), 
-                aes(x=time, ymin=lo, ymax=hi, fill=type, group=interaction(well_idx, type)), alpha=0.2) +
-    geom_line(data = d_sim %>% filter(type == "G"), 
-              aes(x=time, y=median, color=type, group=interaction(well_idx, type)), linewidth=0.8) +
-    # MODIFIED: Add shape=factor(exp_id)
-    geom_point(data = d_obs %>% filter(type == "G"), 
-               aes(x=time, y=value, color=type, shape=factor(exp_id)), size=2, alpha=0.7) +
-    facet_grid(G0_lbl ~ ploidy_lbl, scales = "free") +
-    scale_y_continuous() +
-    scale_color_manual(values = cols) +
-    scale_fill_manual(values = fills) +
-    # MODIFIED: Add legend label
-    labs(title = paste0("Glucose | Line ", lname), x="Time (h)", y="Conc (mM)", shape="Exp ID") +
+  log_G <- log(G_seq + 1e-9)
+  
+  actA   <- 1 / (1 + exp(-na * (log_G - log(g50a))))
+  term_d <- 1 / (1 + exp(-nd * (log_G - log(g50d))))
+  inhD   <- 1 - term_d
+  
+  data.frame(
+    G = G_seq,
+    Growth = kp * actA,
+    Death  = kd * inhD
+  )
+}
+
+# Calculate Medians
+medians <- all_params %>%
+  group_by(Condition) %>%
+  summarise(across(everything(), median))
+
+G_range <- exp(seq(log(0.01), log(25), length.out=100))
+hill_list <- list()
+
+for(i in 1:nrow(medians)) {
+  res <- calc_hill(medians[i,], G_range)
+  res$Condition <- medians$Condition[i]
+  hill_list[[i]] <- res
+}
+
+hill_df <- bind_rows(hill_list) %>%
+  pivot_longer(cols=c("Growth","Death"), names_to="RateType", values_to="Rate")
+
+print(
+  ggplot(hill_df, aes(x=G, y=Rate, color=Condition)) +
+    geom_line(linewidth=1.2) +
+    facet_wrap(~RateType, scales="free") +
+    scale_x_log10() +
+    scale_color_manual(values=c("Low Ploidy"="#377EB8", "High Ploidy"="#E41A1C")) +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill="#f0f0f0"))
-  
-  combined_plot <- (p1 | p2) + 
-    plot_layout(guides = "collect") + 
-    plot_annotation(
-      title = paste0("Posterior Check: Cell Line ", lid, " (", MODEL_NAME, ")"),
-      subtitle = "Shaded regions represent 90% Posterior Predictive Intervals",
-      theme = theme(plot.title = element_text(size = 16, face = "bold"))
-    )
-  
-  print(combined_plot)
-  cat("  Plot generated for Line", lid, "\n")
-}
+    labs(title=paste0("Physiological Functions: ", TARGET_LINE), x="Glucose (mM)", y="Rate (1/h)")
+)
 dev.off()
 
-# ==============================================================================
-# 4. RECONSTRUCT TRANSFORMED PARAMETERS (UPDATED: random ploidy slopes by line)
-# ==============================================================================
-cat("\nReconstructing effective ODE parameters (Transformed)...\n")
-
-# NEW: need sigma_beta + z_beta to form line-specific ploidy slope
-vars_needed <- c("mu_global", "sigma_line", "z_line", "beta_high", "sigma_beta", "z_beta")
-draws_df <- as_draws_df(fit$draws(variables = vars_needed, inc_warmup = FALSE))
-
-softcap <- function(x, cap) cap - log1p(exp(cap - x))
-inv_logit <- function(x) 1 / (1 + exp(-x))
-
-# Groups: still per (line, metric) as before
-groups <- tibble(
-  line_id = stan_data$line_id,
-  line_name = id_map[as.character(stan_data$line_id)],
-  metric  = stan_data$ploidy_metric
-) %>%
-  distinct(line_id, line_name, metric) %>%
-  arrange(line_id, metric) %>%
-  mutate(
-    group_lbl = paste0(line_name, " | ",
-                       ifelse(metric < 0.01, "Baseline", paste0("+", round(metric,1), "N")))
-  )
-
-reconstructed_list <- list()
-N_draws <- nrow(draws_df)
-n_params <- length(param_names)
-
-cat(sprintf("  Processing %d groups...\n", nrow(groups)))
-
-for (g in 1:nrow(groups)) {
-  l <- groups$line_id[g]
-  p_met <- groups$metric[g]
-  lbl <- groups$group_lbl[g]
-  
-  p_mat <- matrix(NA_real_, nrow = N_draws, ncol = n_params)
-  colnames(p_mat) <- param_names
-  
-  for (pp in 1:n_params) {
-    mu        <- draws_df[[paste0("mu_global[", pp, "]")]]
-    sigma     <- draws_df[[paste0("sigma_line[", pp, "]")]]
-    z         <- draws_df[[paste0("z_line[", pp, ",", l, "]")]]
-    beta      <- draws_df[[paste0("beta_high[", pp, "]")]]
-    
-    # NEW: random ploidy slope deviation by line
-    sigma_b   <- draws_df[[paste0("sigma_beta[", pp, "]")]]
-    z_b       <- draws_df[[paste0("z_beta[", pp, ",", l, "]")]]
-    
-    beta_eff  <- beta + sigma_b * z_b
-    raw       <- mu + sigma * z + beta_eff * p_met
-    
-    # Transform back to constrained scale (same as before)
-    if (MODEL_NAME == "model_B") {
-      cap_main <- 40.0; cap_hill <- 6.0
-      if (pp %in% c(6, 8)) {
-        p_mat[, pp] <- 1.0 + exp(softcap(raw, cap_hill))
-      } else {
-        p_mat[, pp] <- exp(softcap(raw, cap_main))
-      }
-    } else if (MODEL_NAME == "model_q") {
-      cap_main <- 15.0; cap_hill <- 2.7
-      if (pp %in% c(6, 7, 10, 11)) {
-        p_mat[, pp] <- inv_logit(raw)
-      } else if (pp %in% c(12, 13)) {
-        p_mat[, pp] <- exp(softcap(raw, cap_hill))
-      } else if (pp == 1) {
-        p_mat[, pp] <- exp(raw)
-      } else {
-        p_mat[, pp] <- exp(softcap(raw, cap_main))
-      }
-    }
-  }
-  
-  df_g <- as.data.frame(p_mat)
-  df_g$group <- lbl
-  df_g$chain <- if (".chain" %in% names(draws_df)) as.factor(draws_df$.chain) else as.factor(1)
-  reconstructed_list[[g]] <- pivot_longer(df_g, cols = all_of(param_names),
-                                          names_to = "param", values_to = "value")
-}
-
-reconstructed_df <- bind_rows(reconstructed_list)
-reconstructed_df$group <- factor(reconstructed_df$group, levels = groups$group_lbl)
-reconstructed_df$param <- factor(reconstructed_df$param, levels = param_names)
-
-cat("Generating Transformed Parameter Plot (results/final_posterior_parameters.pdf)...\n")
-plot_height <- max(8, length(unique(reconstructed_df$group)) * 2.5)
-
-pdf("results/final_posterior_parameters.pdf", width = 20, height = plot_height)
-p_trans <- ggplot(reconstructed_df, aes(x = value)) +
-  geom_histogram(bins = 50, fill = "#377EB8", alpha = 0.6, color = NA) +
-  facet_grid(group ~ param, scales = "free") +
-  scale_x_log10() +
-  theme_bw() +
-  theme(
-    strip.text.y = element_text(angle = 0, face = "bold", size = 9),
-    strip.text.x = element_text(face = "bold", size = 10),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
-  ) +
-  labs(
-    title = paste0("Posterior Parameter Distributions (Transformed) - ", MODEL_NAME),
-    subtitle = "Effective parameters per cell line (incorporating line-specific ploidy slope)",
-    x = "Value (Log Scale)", y = "Count"
-  )
-print(p_trans)
-dev.off()
-
-
-# ==============================================================================
-# 5. PLOIDY EFFECT ANALYSIS (UPDATED: global + line-specific slopes + heterogeneity)
-# ==============================================================================
-cat("\nAnalyzing Continuous Ploidy Effects (global + line-specific)...\n")
-
-# --- A) Global slope (same object as before): beta_high[pp] ---
-draws_beta <- fit$draws("beta_high", inc_warmup = FALSE)
-beta_df <- as_draws_df(draws_beta) %>%
-  pivot_longer(cols = starts_with("beta_high"), names_to = "param_idx", values_to = "value") %>%
-  mutate(
-    idx = as.integer(str_extract(param_idx, "[0-9]+")),
-    param_name = factor(param_names[idx], levels = param_names),
-    kind = "Global slope (beta_high)"
-  )
-
-# --- B) Heterogeneity across lines: sigma_beta[pp] ---
-draws_sigb <- fit$draws("sigma_beta", inc_warmup = FALSE)
-sigb_df <- as_draws_df(draws_sigb) %>%
-  pivot_longer(cols = starts_with("sigma_beta"), names_to = "param_idx", values_to = "value") %>%
-  mutate(
-    idx = as.integer(str_extract(param_idx, "[0-9]+")),
-    param_name = factor(param_names[idx], levels = param_names),
-    kind = "Slope heterogeneity (sigma_beta)"
-  )
-
-# --- C) Line-specific effective slopes: beta_eff[pp,l] = beta_high[pp] + sigma_beta[pp]*z_beta[pp,l] ---
-# Pull beta_high, sigma_beta, z_beta into one df; compute beta_eff for every (pp,l)
-draws_bhz <- as_draws_df(fit$draws(c("beta_high", "sigma_beta", "z_beta"), inc_warmup = FALSE))
-
-beta_eff_list <- vector("list", length = n_params * stan_data$N_lines)
-k <- 1
-for (pp in 1:n_params) {
-  bh <- draws_bhz[[paste0("beta_high[", pp, "]")]]
-  sb <- draws_bhz[[paste0("sigma_beta[", pp, "]")]]
-  for (l in 1:stan_data$N_lines) {
-    zb <- draws_bhz[[paste0("z_beta[", pp, ",", l, "]")]]
-    beta_eff_list[[k]] <- tibble(
-      idx = pp,
-      line_id = l,
-      line_name = id_map[as.character(l)],
-      value = bh + sb * zb
-    )
-    k <- k + 1
-  }
-}
-beta_eff_df <- bind_rows(beta_eff_list) %>%
-  mutate(
-    param_name = factor(param_names[idx], levels = param_names),
-    kind = "Line-specific slope (beta_eff)"
-  )
-
-pdf("results/ploidy_effect_posterior.pdf", width = 14, height = 10)
-
-# Global slope histograms (as before)
-p_beta_global <- ggplot(beta_df, aes(x = value, fill = stat(x > 0))) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
-  geom_histogram(bins = 60, alpha = 0.7, color = "white", linewidth = 0.1) +
-  facet_wrap(~ param_name, scales = "free") +
-  scale_fill_manual(values = c("TRUE"="#E41A1C", "FALSE"="#377EB8"), guide="none") +
-  theme_bw() +
-  labs(
-    title = paste0("Ploidy Effect (Global Slope) - ", MODEL_NAME),
-    subtitle = "beta_high: change in linear predictor per unit increase in Ploidy Metric",
-    x = "beta_high", y = "Count"
-  )
-print(p_beta_global)
-
-# Line-specific slope densities (by line, faceted by parameter)
-p_beta_eff <- ggplot(beta_eff_df, aes(x = value, color = line_name)) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  geom_density() +
-  facet_wrap(~ param_name, scales = "free") +
-  theme_bw() +
-  theme(legend.position = "bottom") +
-  labs(
-    title = paste0("Ploidy Effect by Line (beta_eff) - ", MODEL_NAME),
-    subtitle = "beta_eff = beta_high + sigma_beta * z_beta[ , line]",
-    x = "beta_eff (per unit N)", y = "Density", color = "Cell line"
-  )
-print(p_beta_eff)
-
-# Heterogeneity (sigma_beta) per parameter
-p_sigb <- ggplot(sigb_df, aes(x = value)) +
-  geom_histogram(bins = 50, fill = "gray50", alpha = 0.7, color = "white", linewidth = 0.1) +
-  facet_wrap(~ param_name, scales = "free") +
-  theme_bw() +
-  labs(
-    title = paste0("Across-line heterogeneity of ploidy effect (sigma_beta) - ", MODEL_NAME),
-    subtitle = "Larger sigma_beta means ploidy slope varies more across lines",
-    x = "sigma_beta", y = "Count"
-  )
-print(p_sigb)
-
-# Fold-change interpretation: global and line-specific (exp(slope)) – optional but consistent with your old plot
-fc_global <- beta_df %>% mutate(mult = exp(value), label = "Global")
-fc_eff <- beta_eff_df %>% mutate(mult = exp(value), label = "Line-specific")
-
-p_fc <- ggplot(bind_rows(
-  fc_global %>% select(mult, param_name, label),
-  fc_eff %>% select(mult, param_name, label)
-), aes(x = mult, fill = label)) +
-  geom_vline(xintercept = 1, linetype = "dashed") +
-  geom_density(alpha = 0.5) +
-  facet_wrap(~ param_name, scales = "free") +
-  scale_x_log10(breaks = c(0.1, 0.5, 1, 2, 10), labels = c("0.1x","0.5x","1x","2x","10x")) +
-  theme_bw() +
-  labs(
-    title = "Implied Multiplier per Unit of Ploidy (exp(slope))",
-    subtitle = "Shown for global beta_high and line-specific beta_eff",
-    x = "Multiplier (per unit N)", y = "Density", fill = ""
-  )
-print(p_fc)
-
-dev.off()
-
-
-# ==============================================================================
-# 6. ALL RAW PARAMETERS (UPDATED: include sigma_beta; optional include z_beta)
-# ==============================================================================
-cat("\nGenerating Comprehensive Raw Parameter Plots (results/all_raw_parameters.pdf)...\n")
-
-# Keep this manageable: include mu_global, beta_high, sigma_line, sigma_beta
-vars_raw <- c("mu_global", "beta_high", "sigma_line", "sigma_beta")
-draws_all_raw <- fit$draws(vars_raw, inc_warmup = FALSE)
-all_raw_df <- as_draws_df(draws_all_raw) %>%
-  pivot_longer(cols = everything(), names_to = "full_name", values_to = "value") %>%
-  filter(!full_name %in% c(".chain", ".iteration", ".draw")) %>%
-  mutate(
-    type = str_extract(full_name, "^[a-z_]+"),
-    idx_s = str_extract(full_name, "[0-9]+"),
-    idx = as.integer(idx_s),
-    param_name = factor(param_names[idx], levels = param_names)
-  )
-
-pdf("results/all_raw_parameters.pdf", width = 14, height = 10)
-p_all <- ggplot(all_raw_df, aes(x = value, fill = type)) +
-  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
-  facet_wrap(~ param_name, scales = "free") +
-  scale_fill_brewer(palette = "Dark2") +
-  theme_bw() +
-  labs(title = paste0("Raw Hierarchical Components (incl. sigma_beta) - ", MODEL_NAME),
-       x = "Raw Value", y = "Count")
-print(p_all)
-dev.off()
-
-cat("\n>>> Assessment Complete.\n")
-
-
-# ==============================================================================
-# 7. DIAGNOSTICS (UPDATED: quick checks for sigma_beta as well)
-# ==============================================================================
-cat("\nGenerating Diagnostics...\n")
-
-# Trace-style scatter for mu_global (same as before)
-draws_trace <- fit$draws("mu_global", inc_warmup = FALSE)
-trace_df <- as_draws_df(draws_trace) %>%
-  mutate(.draw = 1:n()) %>%
-  pivot_longer(cols = starts_with("mu_global"), names_to = "param_idx", values_to = "value") %>%
-  mutate(
-    idx = as.integer(str_extract(param_idx, "[0-9]+")),
-    param_name = factor(param_names[idx], levels = param_names)
-  )
-
-pdf("results/pseudo_trace_check.pdf", width = 12, height = 8)
-p_trace <- ggplot(trace_df, aes(x = .draw, y = value)) +
-  geom_point(alpha = 0.4, size = 0.8, color = "#2c3e50") +
-  facet_wrap(~ param_name, scales = "free_y") +
-  theme_bw() +
-  labs(title = "Pseudo-Trace of Pathfinder Draws (mu_global)", x = "Draw Index", y = "Raw Value")
-print(p_trace)
-dev.off()
-
-# NEW: distribution check for sigma_beta
-draws_lp <- fit$draws(c("lp__", "sigma_beta"), inc_warmup = FALSE)
-lp_df <- as_draws_df(draws_lp)
-
-pdf("results/diagnostic_lp_check.pdf", width = 12, height = 5)
-p_lp1 <- ggplot(lp_df, aes(x = lp__)) +
-  geom_histogram(bins = 50, fill = "purple", alpha = 0.7, color = "black") +
-  theme_bw() +
-  labs(title = "Log-Probability (lp__) Distribution", x = "lp__", y = "Count")
-print(p_lp1)
-
-sigb_long <- lp_df %>%
-  select(starts_with("sigma_beta")) %>%
-  pivot_longer(cols = everything(), names_to = "param_idx", values_to = "value") %>%
-  mutate(
-    idx = as.integer(str_extract(param_idx, "[0-9]+")),
-    param_name = factor(param_names[idx], levels = param_names)
-  )
-
-p_lp2 <- ggplot(sigb_long, aes(x = value)) +
-  geom_histogram(bins = 50, fill = "gray40", alpha = 0.7, color = "white", linewidth = 0.1) +
-  facet_wrap(~ param_name, scales = "free") +
-  theme_bw() +
-  labs(title = "sigma_beta Distributions (Pathfinder draws)", x = "sigma_beta", y = "Count")
-print(p_lp2)
-dev.off()
-
-codes <- fit$return_codes()
-n_fail <- sum(codes != 0)
-cat(sprintf("  Total Paths Run: %d\n", length(codes)))
-cat(sprintf("  Failed (Crashed): %d\n", n_fail))
-
-
-# ==============================================================================
-# 8. PHYSIOLOGICAL PROFILING (Robust Math Fix)
-# ==============================================================================
-
-if(MODEL_NAME=="model_q"){
-  # ------------------------------------------------------------------------------
-  # A. Robust Math Helpers
-  # ------------------------------------------------------------------------------
-  
-  # Safe log1p_exp: log(1 + exp(x))
-  # If x is large (> 50), log(1 + exp(x)) approx x.
-  # This prevents exp(700) -> Inf crashes.
-  log1p_exp_r <- function(x) {
-    if (is.na(x)) return(NA)
-    if (x > 50) return(x) 
-    log1p(exp(x))
-  }
-  
-  softcap_r <- function(x, cap) {
-    if (is.na(x)) return(NA)
-    if (x > cap) return(cap) 
-    # cap - log(1 + exp(cap - x))
-    # Use our robust helper here too for safety
-    cap - log1p_exp_r(cap - x)
-  }
-  
-  inv_logit_r <- function(x) {
-    if (is.na(x)) return(NA)
-    if (x > 100) return(1.0)
-    if (x < -100) return(0.0)
-    1 / (1 + exp(-x))
-  }
-  
-  # ------------------------------------------------------------------------------
-  # B. ODE Derivative Function
-  # ------------------------------------------------------------------------------
-  ode_derivs <- function(t, y, p) {
-    # 1. Unpack
-    theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
-    nu      <- p[5]; rho     <- p[6]; r       <- p[7]
-    sigma_G <- p[8]; KG      <- p[9]
-    q50g_f  <- p[10]; q50d_f  <- p[11]
-    na      <- p[12]; nd      <- p[13]
-    
-    fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
-    
-    # 2. State
-    logNL   <- y[1]
-    logND   <- y[2]
-    G_state <- y[3]
-    q_raw   <- y[4]
-    
-    G_use <- if (!is.na(fixed_G)) fixed_G else G_state
-    
-    # 3. Calculations
-    NL <- exp(logNL)
-    
-    k_home_cap <- 4.0
-    k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
-    
-    s <- nu * rho
-    alpha_c <- s * r
-    alpha_m <- s * (1.0 - r)
-    
-    eps_qstar <- 1e-6
-    q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
-    q_star <- min(max(q_star, eps_qstar), 1.0 - eps_qstar)
-    
-    q50gN <- q50g_f * q_star
-    q50dN <- q50d_f * q_star
-    
-    # --- FIX: ROBUST G SMOOTHING ---
-    k_smooth_G <- 100.0
-    # G_smooth = log(1 + exp(100*G)) / 100
-    # Uses robust log1p_exp_r to avoid overflow when G > 7.1
-    G_smooth <- log1p_exp_r(k_smooth_G * G_use) / k_smooth_G
-    
-    # --- FIX: ROBUST Q SMOOTHING ---
-    k_smooth_q <- 50.0
-    qN_low <- log1p_exp_r(k_smooth_q * q_raw) / k_smooth_q
-    # For the second term, we do: 1.0 - (log1p_exp(...))
-    term_high <- log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q
-    qN <- 1.0 - term_high
-    
-    # Fluxes
-    drive_term <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
-    gate  <- G_smooth / (KG + G_smooth + 1e-12)
-    Jin   <- k_home * gate * drive_term
-    
-    # Regulation
-    log_qN <- log(qN + 1e-12)
-    reg_growth  <- inv_logit_r(na * (log_qN - log(q50gN + 1e-12)))
-    term_d_hill <- inv_logit_r(nd * (log_qN - log(q50dN + 1e-12)))
-    
-    mu    <- kp * reg_growth
-    delta <- kd * (1.0 - term_d_hill)
-    
-    b <- mu * (1.0 - NL/theta)
-    
-    # Derivatives
-    du <- b - delta 
-    dv <- delta * exp(logNL - logND)
-    
-    dG <- if (!is.na(fixed_G)) 0 else -NL * Jin / sigma_G
-    
-    dq_raw <- Jin - (alpha_m * kp) - (qN * b) - (alpha_c * b)
-    
-    list(c(du, dv, dG, dq_raw))
-  }
-  
-  # ------------------------------------------------------------------------------
-  # C. Post-Processing Helper (Updated with Robust Math)
-  # ------------------------------------------------------------------------------
-  compute_derived_rates <- function(out_matrix, p) {
-    theta   <- p[1]; kp      <- p[2]; kd      <- p[3]
-    nu      <- p[5]; rho     <- p[6]; r       <- p[7]
-    sigma_G <- p[8]; KG      <- p[9]
-    q50g_f  <- p[10]; q50d_f  <- p[11]
-    na      <- p[12]; nd      <- p[13]
-    
-    fixed_G <- if ("fixed_G_val" %in% names(p)) p["fixed_G_val"] else NA
-    
-    n <- nrow(out_matrix)
-    mu_vec <- numeric(n); delta_vec <- numeric(n); qN_vec <- numeric(n); cons_vec <- numeric(n)
-    
-    k_home_cap <- 4.0
-    k_home <- exp(softcap_r(log(nu * kp + 1e-12), log(k_home_cap)))
-    
-    q_star <- (nu * (1.0 - rho)) / (nu + 1.0)
-    q_star <- min(max(q_star, 1e-6), 1.0 - 1e-6)
-    
-    q50gN <- q50g_f * q_star
-    q50dN <- q50d_f * q_star
-    
-    k_smooth_G <- 100.0
-    k_smooth_q <- 50.0
-    
-    for(i in 1:n) {
-      logNL <- out_matrix[i, "logNL"]
-      G_state <- out_matrix[i, "G"]
-      q_raw <- out_matrix[i, "q_raw"]
-      
-      G_use <- if (!is.na(fixed_G)) fixed_G else G_state
-      
-      # Robust smoothing
-      G_smooth <- log1p_exp_r(k_smooth_G * G_use) / k_smooth_G
-      
-      qN_low <- log1p_exp_r(k_smooth_q * q_raw) / k_smooth_q
-      qN <- 1.0 - (log1p_exp_r(k_smooth_q * (1.0 - qN_low)) / k_smooth_q)
-      
-      drive <- log1p_exp_r(k_smooth_q * (1.0 - qN)) / k_smooth_q
-      gate  <- G_smooth / (KG + G_smooth + 1e-12)
-      Jin   <- k_home * gate * drive
-      
-      log_qN <- log(qN + 1e-12)
-      reg_growth  <- inv_logit_r(na * (log_qN - log(q50gN + 1e-12)))
-      term_d_hill <- inv_logit_r(nd * (log_qN - log(q50dN + 1e-12)))
-      
-      mu_vec[i]    <- kp * reg_growth
-      delta_vec[i] <- kd * (1.0 - term_d_hill)
-      qN_vec[i]    <- qN
-      cons_vec[i]  <- Jin / sigma_G
-    }
-    
-    return(data.frame(
-      time = out_matrix[, "time"],
-      mu = mu_vec,
-      delta = delta_vec,
-      q = qN_vec,
-      consumption = cons_vec
-    ))
-  }
-  
-  # The rest of the plotting logic (E and F) remains exactly the same as the previous block.
-  # Re-run sections D, E, and F with these updated functions defined.
-  
-  # ------------------------------------------------------------------------------
-  # D. Parameter Preparation
-  # ------------------------------------------------------------------------------
-  param_wide <- reconstructed_df %>%
-    group_by(group, param) %>%
-    summarise(val = median(value, na.rm=TRUE), .groups = "drop") %>%
-    pivot_wider(names_from = param, values_from = val)
-  
-  get_p_vec <- function(row_idx, df, p_names) {
-    vec <- unlist(df[row_idx, p_names])
-    return(as.numeric(vec))
-  }
-  
-  # ------------------------------------------------------------------------------
-  # E. Plot 1: Steady State Glucose Consumption
-  # ------------------------------------------------------------------------------
-  cat("Calculating Steady State Curves (Separated Logic)...\n")
-  g_grid <- seq(0, 15, length.out = 50) 
-  ss_results <- list()
-  
-  for(i in 1:nrow(param_wide)) {
-    grp_name <- param_wide$group[i]
-    p_vec <- get_p_vec(i, param_wide, param_names)
-    if(any(is.na(p_vec))) next
-    
-    cons_vec <- numeric(length(g_grid))
-    q_vec    <- numeric(length(g_grid))
-    
-    for(j in seq_along(g_grid)) {
-      g_val <- g_grid[j]
-      p_run <- c(p_vec, 1.0); names(p_run) <- c(param_names, "fixed_G_val")
-      p_run["fixed_G_val"] <- g_val
-      
-      y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = g_val, q_raw = 0.5)
-      
-      # 1. Solve ODE
-      out <- suppressWarnings(
-        ode(y = y0, times = c(0, 100), func = ode_derivs, parms = p_run, method = "lsoda")
-      )
-      
-      # 2. Compute Rates on the output
-      rates_df <- compute_derived_rates(out, p_run)
-      
-      # 3. Take final row
-      final_rates <- rates_df[nrow(rates_df), ]
-      
-      cons_vec[j] <- final_rates$consumption
-      q_vec[j]    <- final_rates$q
-    }
-    
-    ss_results[[length(ss_results)+1]] <- data.frame(
-      group = grp_name,
-      Glucose = g_grid,
-      Consumption = cons_vec,
-      q_ss = q_vec
-    )
-  }
-  
-  
-  # ------------------------------------------------------------------------------
-  # F. Plot 2: Step Drop Response
-  # ------------------------------------------------------------------------------
-  cat("Calculating Step Drop Dynamics (Separated Logic)...\n")
-  step_results <- list()
-  
-  for(i in 1:nrow(param_wide)) {
-    print(i)
-    grp_name <- param_wide$group[i]
-    p_vec <- get_p_vec(i, param_wide, param_names)
-    if(any(is.na(p_vec))) next
-    
-    # --- Phase 1: Warmup at 10mM ---
-    p_phase1 <- c(p_vec, 10.0); names(p_phase1) <- c(param_names, "fixed_G_val")
-    y0 <- c(logNL = log(1e-6), logND = log(1e-6), G = 10.0, q_raw = 0.5)
-    
-    out_warmup <- suppressWarnings(
-      ode(y = y0, times = seq(0,48,.1), func = ode_derivs, parms = p_phase1, method = "lsoda")
-    )
-    state_warmup <- out_warmup[nrow(out_warmup), -1] # Exclude time column
-    
-    # --- Phase 2: Drop to 0mM ---
-    state_drop <- state_warmup
-    state_drop["G"] <- 0.0
-    
-    p_phase2 <- c(p_vec, 0.0); names(p_phase2) <- c(param_names, "fixed_G_val")
-    times_drop <- seq(0, 48, by = 0.1)
-    
-    # 1. Solve ODE
-    out_drop <- suppressWarnings(
-      ode(y = state_drop, times = times_drop, func = ode_derivs, parms = p_phase2, method = "lsoda")
-    )
-    
-    # 2. Compute Rates
-    rates_df <- compute_derived_rates(out_drop, p_phase2)
-    rates_df$group <- grp_name
-    
-    step_results[[length(step_results)+1]] <- rates_df
-  }
-  
-  # ==============================================================================
-  # G. Updated Visualization (2 Colors + Linetypes)
-  # ==============================================================================
-  library(stringr)
-  
-  # 1. Process Steady State Data
-  # ------------------------------------------------------------------------------
-  if(length(ss_results) > 0) {
-    df_ss <- bind_rows(ss_results) %>%
-      mutate(
-        # Extract "Line X"
-        Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
-        # Determine Status
-        Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
-      )
-    
-    # Plot
-    p_ss <- ggplot(df_ss, aes(x = Glucose, y = Consumption, color = Status, linetype = Line_ID)) +
-      geom_line(linewidth = 1.0) +
-      scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
-      theme_bw() +
-      labs(
-        title = "Per Capita Glucose Consumption (Steady State)",
-        subtitle = "Consumption = Jin / sigma_G",
-        x = "Extracellular Glucose (mM)",
-        y = "Consumption Rate (mM/cell/h)",
-        color = "Ploidy Status",
-        linetype = "Cell Line"
-      )
-    print(p_ss)
-  }
-  
-  # 2. Process Step Drop Data (Mu and Delta Only)
-  # ------------------------------------------------------------------------------
-  if(length(step_results) > 0) {
-    df_step <- bind_rows(step_results) %>%
-      mutate(
-        Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
-        Status = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline")
-      ) %>%
-      pivot_longer(cols = c("mu", "delta", "q"), names_to = "metric", values_to = "value") %>%
-      # FILTER: Remove 'q'
-      filter(metric %in% c("mu", "delta"))
-    
-    # Define clean labels for the facets
-    metric_labs <- c(
-      "mu" = "Growth Rate (mu)", 
-      "delta" = "Death Rate (delta)"
-    )
-    
-    # Plot
-    p_step <- ggplot(df_step, aes(x = time, y = value, color = Status, linetype = Line_ID)) +
-      geom_line(linewidth = 1.0) +
-      facet_wrap(metric~Line_ID, scales = "free_y", ncol = 5) +
-      scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
-      theme_bw() +
-      #scale_x_log10()+
-      labs(
-        title = "Response to Glucose Drop (10mM -> 0mM)",
-        subtitle = "Immediate physiological adaptation",
-        x = "Time since Drop (h)",
-        y = "Rate (1/h)",
-        color = "Ploidy Status",
-        linetype = "Cell Line"
-      )
-    print(p_step)
-  }
-  
-  # Save Steady State Consumption Plot
-  ggsave("results/physio_steady_state_uptake.pdf", plot = p_ss, width = 8, height = 6)
-  
-  # Save Step Drop Response Plot
-  ggsave("results/physio_starvation_step_drop.pdf", plot = p_step, width = 10, height = 8)
-  cat(">>> Physiological plots generated.\n")
-}
-
-if(MODEL_NAME=="model_B"){
-  # ==============================================================================
-  # 8. HILL FUNCTION PROFILING (Model B Specific)
-  # ==============================================================================
-  cat("\nGenerating Model B Physiological Response Curves (Hill Functions)...\n")
-  
-  # 1. Prepare Parameters (Median of Posterior)
-  #    (Assumes reconstructed_df from Section 4 exists and contains model B param names)
-  param_wide <- reconstructed_df %>%
-    group_by(group, param) %>%
-    summarise(val = median(value, na.rm=TRUE), .groups = "drop") %>%
-    pivot_wider(names_from = param, values_from = val)
-  
-  # 2. Define Response Function Helper (Updated for Decoupled Parameterization)
-  calc_model_b_responses <- function(p_vec, G_seq) {
-    # Extract Base Parameters
-    kp   <- p_vec[["kp"]]
-    kd   <- p_vec[["kd"]]
-    g50a <- p_vec[["g50a"]]
-    na   <- p_vec[["na"]]
-    nd   <- p_vec[["nd"]]
-    
-    # Extract Meta-Parameters (gamma, yield, m)
-    # Note: If running on old model_B without these, this will return NA/Error.
-    gamma <- p_vec[["gamma"]]
-    yield <- p_vec[["yield"]]
-    m     <- p_vec[["m"]]
-    
-    # Convert to Physical Parameters
-    g50d <- g50a * gamma   # Death threshold relative to growth
-    v1   <- kp / yield     # Consumption during growth
-    v2   <- m              # Maintenance consumption
-    
-    # Robust Inverse Logit
-    inv_logit <- function(x) 1 / (1 + exp(-x))
-    
-    # Calculate Logic
-    log_G <- log(G_seq + 1e-9)
-    
-    # Function 1: Growth Activation (actA)
-    # High G -> High actA -> High Growth
-    actA <- inv_logit(na * (log_G - log(g50a)))
-    
-    # Function 2: Survival/Termination of Death (term_d)
-    # High G -> High term_d -> Low Death (inhD = 1 - term_d)
-    term_d <- inv_logit(nd * (log_G - log(g50d)))
-    
-    # Function 3: Glucose Uptake Rate (Flux)
-    # Rate ~ (v1*actA + v2*term_d) / 2
-    uptake <- (v1 * actA + v2 * term_d) / 2.0
-    
-    data.frame(
-      Glucose = G_seq,
-      actA    = kp * actA,         # Scaled to actual growth rate (1/h)
-      term_d  = kd * (1 - term_d), # Scaled to actual death rate (1/h) [Note: Label is term_d, value is death rate]
-      net     = kp * actA - kd * (1 - term_d),
-      uptake  = uptake
-    )
-  }
-  
-  # 3. Generate Data across Glucose Grid
-  G_seq <- exp(seq(log(0.001), log(25), length.out = 200))
-  plot_data_list <- list()
-  
-  for(i in 1:nrow(param_wide)) {
-    grp <- param_wide$group[i]
-    
-    # Convert row to named vector for the helper
-    p_vec <- unlist(param_wide[i, -1]) 
-    
-    df_res <- calc_model_b_responses(p_vec, G_seq)
-    df_res$group <- grp
-    plot_data_list[[i]] <- df_res
-  }
-  
-  # Note: I added 'net' to cols just in case you want to see it, though your original plot code didn't use it.
-  hill_df <- bind_rows(plot_data_list) %>%
-    pivot_longer(cols = c("actA", "term_d", "uptake", "net"), names_to = "Metric", values_to = "Value") %>%
-    mutate(
-      Line_ID = str_split_fixed(group, " \\| ", 2)[,1],
-      Status  = ifelse(str_detect(group, "Baseline"), "Baseline", "Above Baseline"),
-      # Create readable labels for the plot facets
-      Metric_Label = case_when(
-        Metric == "actA"   ~ "Growth Rate (kp * actA)",
-        Metric == "term_d" ~ "Death Rate (kd * inhD)",
-        Metric == "uptake" ~ "Glucose Uptake Rate (V_in)",
-        Metric == "net"    ~ "Net Growth Rate (Growth - Death)",
-        TRUE ~ Metric
-      )
-    )
-  
-  # 4. Plot and Save
-  # Filtered out 'net' for the main plot to match your original layout, remove filter to see net growth.
-  p_hill <- ggplot(hill_df %>% filter(Metric != "net"), aes(x = Glucose, y = Value, color = Status, linetype = Line_ID)) +
-    geom_line(linewidth = 1.2) +
-    facet_grid(rows=vars(Metric_Label), cols=vars(Line_ID), scales = "free") +
-    scale_x_log10(breaks = c(0.01, 0.1, 1, 10), labels = scales::comma) +
-    scale_color_manual(values = c("Baseline" = "#377EB8", "Above Baseline" = "#E41A1C")) +
-    theme_bw() +
-    labs(
-      title = "Model B Physiological Functions",
-      subtitle = "Learned steady-state response curves (Posterior Median)",
-      x = "Glucose (mM) [Log Scale]",
-      y = "Rate (1/h) or Flux (mmol/cell/h)",
-      color = "Ploidy Status",
-      linetype = "Cell Line"
-    ) +
-    theme(legend.position = "bottom")
-  
-  print(p_hill)
-  ggsave("results/model_B_hill_functions.pdf", plot = p_hill, width = 12, height = 6)
-  cat(">>> Saved Hill function plot to 'results/model_B_hill_functions.pdf'.\n")
-}
-
+cat(">>> Done.\n")

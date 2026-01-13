@@ -8,12 +8,12 @@ functions {
     return limit + log1p_exp(x - limit);
   }
 
-  // --- ODE SYSTEM ---
+  // --- ODE SYSTEM (Unchanged) ---
   vector model_b_ode(real t, vector y, array[] real p) {
     real theta = p[1];
     real kp    = p[2];
     real kd    = p[3];
-    real kd2   = 0;
+    real kd2   = p[4];//0;
     real g50a  = p[5];
     real na    = p[6];
     real g50d  = p[7];
@@ -40,84 +40,35 @@ functions {
     return [du_dt, dv_dt, dG_dt]';
   }
 
-  // --- PARAMETER MAPPING ---
-  vector get_p_meta(
-    int l, 
-    real p_met, 
-    tuple(vector, vector, vector, matrix, vector, matrix) theta_hier, 
-    vector log_lower, 
-    vector log_upper,
-    int structure_mode
-  ) {
-    // 1=mu, 2=sigma, 3=beta, 4=z_line, 5=sigma_beta, 6=z_beta
-    vector[10] mu_logit = logit( (theta_hier.1 - log_lower) ./ (log_upper - log_lower) );
-    vector[10] raw;
-
-    if (structure_mode == 1) {
-       // Mode 1: Fully Free (Independent)
-       raw = mu_logit + theta_hier.4[1:10, l] * 5.0; 
-    } else if (structure_mode == 2) {
-       // Mode 2: Random Intercept + Fixed Slope
-       vector[10] intercept = mu_logit + theta_hier.2 .* theta_hier.4[1:10, l];
-       vector[10] slope = theta_hier.3; 
-       raw = intercept + slope * p_met;
-    } else {
-       // Mode 0: Full Hierarchical
-       vector[10] intercept = mu_logit + theta_hier.2 .* theta_hier.4[1:10, l];
-       vector[10] slope = theta_hier.3 + theta_hier.5 .* theta_hier.6[1:10, l];
-       raw = intercept + slope * p_met;
-    }
-
-    vector[10] logp = log_lower + (log_upper - log_lower) .* inv_logit(raw);
-    return exp(logp);
-  }
-
-  array[] real get_p_ode(vector p_meta) {
+  // --- PARAMETER MAPPING (Simplified) ---
+  // Converts the raw constrained parameters to the physical ODE scales
+  // Handles the logic for p[7] and p[9] dependencies
+  array[] real get_p_ode(vector p_phys) {
     array[10] real p;
-    p[1] = p_meta[1]; // theta
-    p[2] = p_meta[2]; // kp
-    p[3] = p_meta[3]; // kd
-    p[4] = p_meta[4]; // kd2
-    p[5] = p_meta[5]; // g50a
-    p[6] = p_meta[6]; // na
-    p[8] = p_meta[8]; // nd
-    p[7]  = p[5] * p_meta[7]; 
-    p[9]  = p[2] / p_meta[9]; 
-    p[10] = p_meta[10];       
+    p[1] = p_phys[1]; // theta
+    p[2] = p_phys[2]; // kp
+    p[3] = p_phys[3]; // kd
+    p[4] = p_phys[4]; // kd2
+    p[5] = p_phys[5]; // g50a
+    p[6] = p_phys[6]; // na
+    p[8] = p_phys[8]; // nd
+    p[7]  = p[5] * p_phys[7]; // p[7] is a multiplier in inputs, converted to abs here
+    p[9]  = p[2] / p_phys[9]; // p[9] is yield inverse
+    p[10] = p_phys[10];       
     return p;
   }
 
   // --- SOLVER CORE ---
   array[] vector solve_well_trajectory(
-    int w, int l, real p_met, 
     real G0, int starve_flag,
     array[] real t_eval,
-    tuple(vector, vector, vector, matrix, vector, matrix) theta_hier,
-    tuple(vector, vector, vector, matrix, vector, matrix) theta_ic,
-    vector log_lower, vector log_upper,
-    int structure_mode
+    array[] real p_ode, // Now passed directly, no calculation inside needed
+    vector y0_params    // [log_N0, log_D0]
   ) {
-    vector[10] p_meta = get_p_meta(l, p_met, theta_hier, log_lower, log_upper, structure_mode);
-    array[10] real p_ode = get_p_ode(p_meta);
-
-    // IC Logic
-    vector[2] beta_eff_IC;
-    if (structure_mode == 1) {
-        beta_eff_IC = rep_vector(0.0, 2); 
-    } else if (structure_mode == 2) {
-        beta_eff_IC = theta_ic.3;         
-    } else {
-        beta_eff_IC = theta_ic.3 + theta_ic.5 .* col(theta_ic.6, l); 
-    }
     
-    vector[3] y0_inferred;
-    y0_inferred[1] = theta_ic.1[1] + theta_ic.2[1] * theta_ic.4[1, l] + beta_eff_IC[1] * p_met;
-    y0_inferred[2] = theta_ic.1[2] + theta_ic.2[2] * theta_ic.4[2, l] + beta_eff_IC[2] * p_met;
-    y0_inferred[3] = 0.0;
-
     real log_theta_cap = log(p_ode[1]) + 1.0;
-    real safe_IC_N = softcap(y0_inferred[1], log_theta_cap);
-    real safe_IC_D = softcap(y0_inferred[2], log_theta_cap);
+    real safe_IC_N = softcap(y0_params[1], log_theta_cap);
+    real safe_IC_D = softcap(y0_params[2], log_theta_cap);
 
     vector[3] y_start_main;
     
@@ -133,7 +84,6 @@ functions {
     y_start_main[3] = G0; 
 
     // [FIX] Sanitise time grid to avoid t=0 crash
-    // We make a local copy of t_eval and ensure the first point is > 0
     array[size(t_eval)] real t_safe = t_eval;
     if (abs(t_safe[1]) < 1e-10) {
         t_safe[1] = 1e-8; 
@@ -153,33 +103,30 @@ functions {
       array[] int slice_wells,
       int start, int end,
       // Data args
-      array[] int line_id, vector ploidy_metric, array[] int exp_id, vector G0_per_well, 
+      array[] int exp_id, vector G0_per_well, 
       array[] real t_grid,
       array[] int w_idx_count, array[] int g_idx_count, array[] int N_obs, array[] int D_obs,
       array[] int w_idx_gluc, array[] int g_idx_gluc, array[] real lum_obs, array[] real dilution, 
       array[] int is_censored, array[] int has_starvation,
       vector calib_a_fixed, vector calib_b_fixed, vector calib_sigma_fixed,
-      vector log_lower, vector log_upper,
-      // Unpacked Parameters
-      vector mu_global, vector sigma_line, vector beta_high, matrix z_line, vector sigma_beta, matrix z_beta,
-      vector mu_IC, vector sigma_IC, vector beta_IC, matrix z_IC, vector sigma_beta_IC, matrix z_beta_IC,
-      real phi_total, real phi_frac,
-      int structure_mode
+      // Parameters (Now simplified)
+      array[] real p_ode,
+      vector y0_params,
+      real phi_total, real phi_frac
   ) {
       real log_lik = 0;
       
       for (i in 1:size(slice_wells)) {
           int w = slice_wells[i];
-          int l = line_id[w];
           
           array[size(t_grid)] vector[3] y_hat;
           
+          // No line_id or ploidy_metric passed here anymore
           y_hat = solve_well_trajectory(
-              w, l, ploidy_metric[w], G0_per_well[w], has_starvation[w],
+              G0_per_well[w], has_starvation[w],
               t_grid, 
-              (mu_global, sigma_line, beta_high, z_line, sigma_beta, z_beta), // theta_hier
-              (mu_IC, sigma_IC, beta_IC, z_IC, sigma_beta_IC, z_beta_IC),     // theta_ic
-              log_lower, log_upper, structure_mode
+              p_ode,
+              y0_params
           );
 
           for (n in 1:size(w_idx_count)) {
@@ -219,16 +166,14 @@ data {
   array[N_params] real<lower=0> upper_b;
   
   int<lower=1> N_wells;
-  int<lower=1> N_lines;
   int<lower=1> N_exps;
   int<lower=1> N_obs_count;
   int<lower=1> N_obs_gluc;
-  int<lower=1> N_obs_calib;
 
   int<lower=1> N_grid;
   array[N_grid] real t_grid;
-  array[N_wells] int line_id;
-  vector[N_wells] ploidy_metric;
+  
+  // Removed: line_id, ploidy_metric
   array[N_wells] int has_starvation;
   array[N_wells] int exp_id;
 
@@ -243,10 +188,10 @@ data {
   array[N_obs_gluc] real dilution;
   array[N_obs_gluc] int<lower=0, upper=1> is_censored;
 
-  array[N_obs_calib] int calib_exp_idx;
-  array[N_obs_calib] real calib_G;
-  array[N_obs_calib] real calib_Lum;
-
+  // Calibration data removed for brevity if not fitting calib, but kept calib params
+  // If you are fitting calibration inside here, keep the block from original.
+  // Assuming calibration parameters are fixed constants passed in:
+  
   vector[N_wells] G0_per_well;
   int<lower=1> grainsize;
 
@@ -257,14 +202,12 @@ data {
 
   vector[10] prior_ode_mean;
   vector[10] prior_ode_sd;
+  
   vector<lower=0>[N_exps] calib_a_fixed;
   vector<lower=0>[N_exps] calib_b_fixed;
   vector<lower=0>[N_exps] calib_sigma_fixed;
 
-  int<lower=0,upper=2> mode;
   int<lower=0,upper=1> calc_sim;
-  
-  int<lower=0, upper=2> structure_mode;
 }
 
 transformed data {
@@ -273,88 +216,67 @@ transformed data {
 }
 
 parameters {
-  vector<lower=log_lower, upper=log_upper>[N_params] mu_global;
-  vector<lower=0>[10] sigma_line;
-  vector[10] beta_high;
-  matrix[10, N_lines] z_line;
-  vector<lower=0>[10] sigma_beta;
-  matrix[10, N_lines] z_beta;
-
+  // Single set of global parameters for this Line/Ploidy combo
+  vector<lower=log_lower, upper=log_upper>[N_params] logp;
+  
+  // Single set of Initial Condition parameters (Pooled ICs)
   vector[2] mu_IC_raw; 
-  vector<lower=0, upper=5>[2] sigma_IC;
-  vector[2] beta_IC;
-  matrix[2, N_lines] z_IC;
-  vector<lower=0>[2] sigma_beta_IC;
-  matrix[2, N_lines] z_beta_IC;
-
+  
   real<lower=1e-4> phi_total;
   real<lower=1e-4> phi_frac;
 }
 
 transformed parameters {
+  // 1. Calculate the single physical parameter set here (Optimization)
+  vector[N_params] p_phys = exp(logp);
+  array[N_params] real p_ode = get_p_ode(p_phys);
+
+
+  // 2. Calculate the ICs
   vector[2] mu_IC;
   mu_IC[1] = prior_mu_N0_mean + mu_IC_raw[1] * prior_mu_N0_sd;
   mu_IC[2] = prior_mu_D0_mean + mu_IC_raw[2] * prior_mu_D0_sd;
-  
-  tuple(vector[N_params], vector[10], vector[10], matrix[10, N_lines], vector[10], matrix[10, N_lines]) theta_hier = 
-      (mu_global, sigma_line, beta_high, z_line, sigma_beta, z_beta);
-      
-  tuple(vector[2], vector[2], vector[2], matrix[2, N_lines], vector[2], matrix[2, N_lines]) theta_ic = 
-      (mu_IC, sigma_IC, beta_IC, z_IC, sigma_beta_IC, z_beta_IC);
 }
 
 model {
   // Priors
-  mu_global ~ normal(prior_ode_mean, prior_ode_sd);
-  sigma_line ~ normal(0, 0.5); 
-  to_vector(z_line) ~ std_normal();
-  beta_high ~ normal(0, 1);
-  sigma_beta ~ normal(0, 0.5); 
-  to_vector(z_beta) ~ std_normal();
-
+  logp ~ normal(prior_ode_mean, prior_ode_sd);
   mu_IC_raw ~ std_normal();
-  sigma_IC ~ exponential(1);
-  to_vector(z_IC) ~ std_normal();
-  beta_IC ~ normal(0, 1);
-  sigma_beta_IC ~ normal(0, 0.5);
-  to_vector(z_beta_IC) ~ std_normal();
-
   phi_total ~ exponential(0.1); 
   phi_frac ~ exponential(0.1); 
   
-  if (mode == 0) {
-    array[N_wells] int seq_wells;
-    for (i in 1:N_wells) seq_wells[i] = i;
-    
-    // Arguments unpacked because reduce_sum cannot deep copy tuples
-    target += reduce_sum(
-      partial_sum_lpmf,
-      seq_wells,
-      grainsize,
-      line_id, ploidy_metric, exp_id, G0_per_well, t_grid,
-      well_idx_count, grid_idx_count, N_obs, D_obs,
-      well_idx_gluc, grid_idx_gluc, lum_obs, dilution,
-      is_censored, has_starvation,
-      calib_a_fixed, calib_b_fixed, calib_sigma_fixed,
-      log_lower, log_upper,
-      mu_global, sigma_line, beta_high, z_line, sigma_beta, z_beta,
-      mu_IC, sigma_IC, beta_IC, z_IC, sigma_beta_IC, z_beta_IC,
-      phi_total, phi_frac,
-      structure_mode
-    );
-  }
+  array[N_wells] int seq_wells;
+  for (i in 1:N_wells) seq_wells[i] = i;
+  
+  // Arguments unpacked because reduce_sum cannot deep copy tuples
+  target += reduce_sum(
+    partial_sum_lpmf,
+    seq_wells,
+    grainsize,
+    // Data
+    exp_id, G0_per_well, t_grid,
+    well_idx_count, grid_idx_count, N_obs, D_obs,
+    well_idx_gluc, grid_idx_gluc, lum_obs, dilution,
+    is_censored, has_starvation,
+    calib_a_fixed, calib_b_fixed, calib_sigma_fixed,
+    // Params (Transformed and passed directly)
+    p_ode,
+    mu_IC, 
+    phi_total, phi_frac
+  );
 }
 
 generated quantities {
   array[N_wells, N_grid] vector[3] y_sim;
   
-  if (mode != 1 && calc_sim == 1) {
+  if (calc_sim == 1) {
     for (w in 1:N_wells) {
        array[N_grid] vector[3] y_hat;
-       // GQ block is not threaded, so we can use the TP tuples directly
+       
+       // Call solver with the single global p_ode and mu_IC
        y_hat = solve_well_trajectory(
-          w, line_id[w], ploidy_metric[w], G0_per_well[w], has_starvation[w],
-          t_grid, theta_hier, theta_ic, log_lower, log_upper, structure_mode
+          G0_per_well[w], has_starvation[w],
+          t_grid, p_ode, mu_IC
        );
        
        for (g in 1:N_grid) {

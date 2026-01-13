@@ -21,89 +21,62 @@ if (MODEL_NAME == "model_B") {
   stan_data$lower_b <- config$lower
   stan_data$upper_b <- config$upper
   stan_data$N_params <- length(config$lower)
+  stan_data$has_starvation <- stan_data$has_starvation*0
 }
 
 stan_data$prior_ode_mean <- config$prior_means
 stan_data$prior_ode_sd   <- config$prior_sds
 stan_data$mode           <- 0 
 stan_data$calc_sim       <- CALC_SIM
-
-
+stan_data$structure_mode <- 0
 # 2. COMPILE
 stan_file <- paste0("MCMC/", MODEL_NAME, ".stan")
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
-# 3. INIT (Single point init for pathfinder is often sufficient, or use function)
-# ==============================================================================
-# 3. INITIALIZATION (Full Prior Sampling)
-# ==============================================================================
-init_fun <- function() {
-  # 1. ODE Parameters (mu_global): Sample from JSON Config Priors
-  #    mu_global ~ normal(prior_mean, prior_sd)
-  jit_mu <- rnorm(config$N_params, 
-                  mean = stan_data$prior_ode_mean, 
-                  sd = stan_data$prior_ode_sd)
-  
-  # 2. Sigmas: Sample from Exponential(1) 
-  #    sigma_line ~ exponential(1)
-  jit_sigma_line <- rexp(config$N_params, rate = 1)
-  
-  # 3. Random Effects (z_line): Sample from Standard Normal
-  #    to_vector(z_line) ~ std_normal()
-  jit_z_line <- matrix(rnorm(config$N_params * stan_data$N_lines, 0, 1), 
-                       nrow = config$N_params, ncol = stan_data$N_lines)
-  
-  # 4. WGD Effect (beta): Sample from Normal(0, 1)
-  #    beta_high ~ normal(0, 1)
-  jit_beta_high <- rnorm(config$N_params, 0, 1)
-  
-  # 5. ICs: Sample from Data-Derived Priors
-  #    mu_IC ~ normal(prior_mu_N0/D0, ...)
-  jit_mu_IC <- c(
-    rnorm(1, stan_data$prior_mu_N0_mean, stan_data$prior_mu_N0_sd),
-    rnorm(1, stan_data$prior_mu_D0_mean, stan_data$prior_mu_D0_sd)
-  )
-  
-  # 6. IC Variance: Sample from Exponential(1)
-  #    sigma_IC ~ exponential(1)
-  jit_sigma_IC <- rexp(2, rate = 1)
-  
-  # 7. IC Random Effects: Sample from Standard Normal
-  jit_z_IC <- matrix(rnorm(2 * stan_data$N_lines, 0, 1), nrow = 2)
-  
-  # 8. IC WGD Effect: Sample from Normal(0, 1)
-  jit_beta_IC <- rnorm(2, 0, 1)
-  
-  # 9. Nuisance / Calibration
-  #    calib_sigma ~ exponential(1)
-  #    phi ~ exponential(0.1)
-  jit_calib_sigma <- rexp(stan_data$N_exps, rate = 1)
-  jit_phi_N       <- rexp(1, rate = 0.1)
-  jit_phi_D       <- rexp(1, rate = 0.1)
+
+gen_inits <- function(d) {
+  # Calculate log bounds locally 
+  log_lo <- log(d$lower_b)
+  log_up <- log(d$upper_b)
   
   list(
-    mu_global   = jit_mu,
-    sigma_line  = jit_sigma_line,
-    beta_high   = jit_beta_high,
-    z_line      = jit_z_line,
-    mu_IC       = jit_mu_IC,
-    sigma_IC    = jit_sigma_IC,
-    beta_IC     = jit_beta_IC,
-    z_IC        = jit_z_IC,
-    calib_sigma = jit_calib_sigma,
-    phi_N       = jit_phi_N,
-    phi_D       = jit_phi_D
+    # FIX: Do NOT exponentiate. mu_global is defined in log-space in the Stan file.
+    mu_global = log_lo + (log_up - log_lo) * runif(length(log_lo), 0.25, 0.75),
+    
+    # Variances (Small start)
+    sigma_line    = rep(0.1, 10),
+    sigma_beta    = rep(0.1, 10),
+    sigma_IC      = rep(0.1, 2),
+    sigma_beta_IC = rep(0.1, 2),
+    
+    # Random effects (Zeros)
+    z_line    = matrix(0, 10, d$N_lines),
+    z_beta    = matrix(0, 10, d$N_lines),
+    z_IC      = matrix(0, 2,  d$N_lines),
+    z_beta_IC = matrix(0, 2,  d$N_lines),
+    
+    # Slopes and Raw ICs
+    beta_high = rep(0, 10),
+    beta_IC   = rep(0, 2),
+    mu_IC_raw = rep(0, 2),
+    
+    # Noise
+    phi_total = 1.0,
+    phi_frac  = 10.0
   )
 }
+
+# Generate
+init_list <- replicate(60, gen_inits(stan_data), simplify = FALSE)
 
 # 4. RUN PATHFINDER
 # runs 20 paths, returns the best approximation
 fit_pf <- mod$pathfinder(
   data = stan_data,
-#  init = init_fun,
   seed = 123,
+  init = 0.2, 
   num_threads = 60,
-  num_paths = 36
+  num_paths = 60
 )
 
 # 5. SAVE

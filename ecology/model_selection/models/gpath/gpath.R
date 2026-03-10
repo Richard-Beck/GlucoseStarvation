@@ -404,6 +404,7 @@ plot_trial <- function(G0, R = 2L, P = 2L, W = 0L, M = 1L) {
        main = sprintf("Simulation: R=%d, P=%d, W=%d", R, P, W))
 }
 
+
 #R <- 1
 #P <- 1
 #W <- 1

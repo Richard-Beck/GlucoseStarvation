@@ -335,6 +335,14 @@ smm1 <- get_model_detail(model_id = "2R_1P_0W_C0_M1" )
 smm2<- get_model_detail(model_id = "2R_2P_0W_C0_M1" )
 ```
 
+```{r}
+source("R/posterior_io_utils.R")
+source("ecology/model_selection/models/gpath/gpath.R")
+draws <- load_model_draws("1R_1P_0W_C0_M1", source="optim", method="best")
+phys_df <- extract_physical_parameters(draws, "1R_1P_0W_C0_M1")
+```
+
+
 
 CHECK FOR CHAIN CONVERGENCE
 ```{r}
@@ -424,74 +432,85 @@ p
 #ggsave("plots/F_post.png",plot=p,width=8,height=3,units="in")
 
 ```
-What do the parameters mean?
-```{r}
-library(deSolve)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(patchwork)
-source("ecology/model_selection/models/gpath/gpath.R")
 
-# 1. Generate Data (Simulations + Ribbon + Observations)
-# Refactor note: the repeated gpath run setup in this section could be replaced
-# by shared helpers from R/gpath_run_utils.R and R/posterior_io_utils.R.
-generate_pars <- function(model_ID, n_draws = 50,cv=FALSE) {
-  # Parse Dimensions
+### Cross-Model Parameter Stability (Derived Quantities)
+
+**Objective:** Evaluate macroscopic model stability across structural variations.
+
+**Derived Quantities:** * **$\mu_{max}$**: Maximum effective growth rate at saturating resource levels.
+* **Specific Affinity ($ae_1 / ah_1$)**: Competitive uptake efficiency at limiting resource concentrations.
+* **$Y_{eff1}$**: Effective net biomass yield per unit of primary resource depleted.
+* **$m$**: Base cellular maintenance cost.
+
+**Rationale:** Comparing raw parameters across structurally different models is mathematically flawed. Parameters like $Y_{R1}$ change their functional definition when transitioning from single-pathway to multi-pathway topologies due to Liebig's Law of the Minimum. The selected derived quantities represent macroscopic physiological constraints that map directly to the observed cell count ($N$) and glucose ($R_1$) data trajectories. They maintain consistent biological meaning regardless of the underlying model architecture.
+
+**Interpretation:** Stable values across the x-axis (model complexity) demonstrate that the optimization routine successfully anchors different internal network topologies to the same macroscopic experimental observations. Shifts upon adding pathways or waste kinetics indicate that the added complexity forces the model into a fundamentally different phenomenological fit.
+
+```{r}
+library(deSolve); library(dplyr); library(tidyr); library(ggplot2); library(patchwork); library(posterior)
+source("ecology/model_selection/models/gpath/gpath.R")
+source("R/gpath_run_utils.R")
+source("R/posterior_io_utils.R")
+
+generate_pars <- function(model_ID, n_draws = 50) {
   dims <- parse_run_id(model_ID)
-  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
-  strict_spec <- (C == 1)
-  L <- 3 * R + (P - 1) * R + W * R + 1
-  
-  # Load Data and map groups
-  stan_data <- readRDS("data/stan_ready_data.Rds")
-  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
-  
-  xmpl_wells <- which(!duplicated(grp_keys)) ## these cover our 10 ploidy x cell line combos.
-  
-  # Load Chains
-  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
-  
-  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
-  
-  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
-  
-  # Helper to simulate a single draw and optionally add observation noise
+  stan_data <- prepare_gpath_stan_data("data/stan_ready_data.Rds", dims$R, dims$P, dims$W, dims$C, dims$M, base_priors, drop_character = FALSE)
+  xmpl_wells <- which(!duplicated(stan_data$group_id))
+  x <- load_gpath_nuts_matrix(model_ID)
+
   get_pars <- function(draw_vals, well_idx) {
-    group_id <- stan_data$group_id[well_idx]
-    p_metric <- stan_data$ploidy_metric[well_idx]
-    p_metric <- stan_data$ploidy_metric[well_idx]
-    
-    raw_theta_line <- draw_vals[sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)]
-    raw_theta_ploidy <- draw_vals[sprintf("raw_theta_ploidy[%d]", 1:L)]
-    
-    parms <- reconstruct_parms(
-      R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
-      base_priors = base_priors, raw_theta_line = raw_theta_line, 
-      raw_theta_ploidy = raw_theta_ploidy, ploidy_metric = p_metric
-    )
-    
-    return(parms)
+    target_line_id <- stan_data$line_id[well_idx]
+    L <- stan_data$L
+    raw_theta_line <- unname(draw_vals[sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)])
+    raw_theta_ploidy <- unname(draw_vals[sprintf("raw_theta_ploidy[%d]", 1:L)])
+    reconstruct_parms(dims$R, dims$P, dims$W, dims$C == 1, dims$M, base_priors, raw_theta_line, raw_theta_ploidy, stan_data$ploidy_metric[well_idx])
   }
 
-  do.call(rbind,lapply(xmpl_wells,function(i){
+  do.call(rbind, lapply(xmpl_wells, function(i) {
     draw_indices <- sample(seq_len(nrow(x)), min(n_draws, nrow(x)))
-    all_draws <- data.frame(do.call(rbind,pbapply::pblapply(draw_indices, function(d_idx) {
-      vals <- as.numeric(x[d_idx, ])
-      names(vals) <- colnames(x)
-      unlist(get_pars(vals,i))
+    all_draws <- data.frame(do.call(rbind, pbapply::pblapply(draw_indices, function(d_idx) {
+      vals <- setNames(as.numeric(x[d_idx, ]), colnames(x))
+      p <- get_pars(vals, i)
+      
+      Phi_max <- p$A_mat %*% (p$Y_R * p$ae)
+      mu_max <- smooth_min_vec(Phi_max) - p$m
+      
+      c(mu_max = mu_max, spec_aff1 = p$ae[1] / p$ah[1], Y_eff1 = (mu_max + p$m) / p$ae[1], m = p$m)
     })))
     all_draws$ploidy_metric <- stan_data$ploidy_metric[i]
     all_draws$cellLine <- names(stan_data$line_map)[stan_data$line_id[i]]
     all_draws
   }))
-  
 }
 
-model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1",
-               "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1", "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
 
-x <- generate_pars(model_ids[4])
+all_models_data <- do.call(rbind, lapply(model_ids, function(mid) {
+  df <- generate_pars(mid, n_draws = 50)
+  df$model_ID <- factor(mid, levels = model_ids)
+  dplyr::select(df, model_ID, cellLine, ploidy_metric, mu_max, spec_aff1, Y_eff1, m)
+}))
+
+plot_df <- tidyr::pivot_longer(all_models_data, cols = c(mu_max, spec_aff1, Y_eff1, m), names_to = "parameter", values_to = "value")
+plot_df$ploidy_status <- factor(ifelse(plot_df$ploidy_metric == 0, "low", "high"), levels = c("low", "high"))
+
+pstab <- ggplot(plot_df, aes(x = ploidy_status, y = value, fill = model_ID)) +
+  geom_boxplot(outlier.alpha = 0.3, position = position_dodge(width = 0.8), linewidth = 0.3) +
+  facet_grid(rows = vars(parameter), cols = vars(cellLine), scales = "free_y") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), 
+    legend.position = "bottom", 
+    panel.border = element_rect(color = "grey80", fill = NA), 
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text = element_text(face = "bold")
+  ) +
+  labs(
+    title = "Cross-Model Parameter Stability (Derived Quantities)", 
+    x = "Ploidy Status", 
+    y = "Posterior Parameter Value", 
+    fill = "Model Structure"
+  )
 ```
 
 

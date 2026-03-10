@@ -55,3 +55,4 @@ summarize_lp_neighborhood <- function(lp, near_cut = 5) {
     finite_mask = finite_mask
   )
 }
+

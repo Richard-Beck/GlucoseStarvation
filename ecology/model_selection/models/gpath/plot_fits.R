@@ -317,10 +317,10 @@ plot_line_residuals_z <- function(line_data, line_id, model_id) {
 
 
 model_id <- c(  "1R_1P_0W_C0_M1","1R_1P_1W_C0_M1","2R_1P_0W_C0_M1",
-                 "2R_2P_0W_C0_M1","2R_2P_1W_C0_M1")[4]
+                 "2R_2P_0W_C0_M1","2R_2P_1W_C0_M1")[5]
 line_data <- generate_line_data(model_id)
 
 p <- lapply(1:5,function(line_id){
-#  plot_line_trajectories_llcolor(line_data, line_id,model_id)
-  plot_line_residuals_z(line_data, line_id,model_id)
+  plot_line_trajectories_llcolor(line_data, line_id,model_id)
+  #plot_line_residuals_z(line_data, line_id,model_id)
 })

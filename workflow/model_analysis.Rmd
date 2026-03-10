@@ -1,0 +1,1904 @@
+---
+title: "Ecological modelling"
+author: "RJB"
+date: "2026-02-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir="/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation")
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+stan_data <- readRDS("data/stan_ready_data.Rds")
+# ---- Configuration ----
+DATA_ROOT <- "ecology/model_selection/data"
+
+source("ecology/model_selection/models/gpath/gpath.R")
+
+ff <- list.files("ecology/model_selection/data/gpath/")
+
+run_configs <- lapply(ff,function(fi){
+  list(model="gpath",constraint=fi,alias=fi)
+})
+
+results_list <- lapply(run_configs, function(cfg) {
+  print(cfg$constraint)
+  
+  # 1. Construct the specific path for this config
+  config_dir <- file.path(DATA_ROOT, cfg$model, cfg$constraint)
+  
+  if (!dir.exists(config_dir)) {
+    warning(sprintf("Directory not found: %s", config_dir))
+    return(NULL)
+  }
+  
+  draws_path <- file.path(config_dir,"hier", "optim_draws_all.Rds")
+  
+  all_draws <- do.call(rbind,readRDS(draws_path))
+  
+  best_lp <- max(all_draws[,"log_lik"],na.rm=T)
+  if (is.null(best_lp)) return(NULL)
+  rel_path <- sub(paste0(config_dir, "/"), "", f)
+  parts <- strsplit(rel_path, "/")[[1]]
+    
+    # We expect at least CELL/PLOIDY components
+
+  cellLine <- parts[1]
+  ploidy   <- parts[2]
+    
+  if(cellLine=="hier") ploidy <- "hier"
+    
+  data.frame(
+      alias      = cfg$alias,     # Use the user-defined alias
+      model      = cfg$model,
+      constraint = cfg$constraint,
+      cellLine   = cellLine,
+      ploidy     = ploidy,
+      best_lp    = best_lp,
+      stringsAsFactors = FALSE
+  )
+})
+
+format_alias <- function(run_id) {
+  matches <- as.integer(regmatches(run_id, gregexpr("[0-9]+", run_id))[[1]])
+  if (length(matches) < 4) return(run_id)
+  
+  R <- matches[1]; P <- matches[2]; W <- matches[3]; C <- matches[4]
+  # Assuming M is the 5th match if present, default to 1 if missing
+  M <- if(length(matches) >= 5) matches[5] else 1 
+  
+  # Build descriptors
+  c_str <- ifelse(C == 1, "Specialized", "Dense")
+  w_str <- ifelse(W > 0, sprintf(", %dW (%s)", W, ifelse(M == 1, "Add", "Mult")), "")
+  
+  sprintf("%dR-%dP %s%s", R, P, c_str, w_str)
+}
+
+# Apply it to your rows dataframe
+
+
+# Bind the outer list (configs)
+rows <- bind_rows(results_list)
+
+
+rows$alias <- sapply(rows$constraint, format_alias)
+
+rows <- rows[!rows$cellLine=="holdout",]
+
+if (nrow(rows) == 0) stop("No valid data found for any configuration.")
+
+# Create grouping variable
+rows$condition <- interaction(rows$cellLine, rows$ploidy, sep = " ")
+
+rows$k <- sapply(rows$constraint,get_hierarchical_k,N_lines=5)
+rows$AIC <- 2*rows$k-2*rows$best_lp
+rows$AIC <- rows$AIC-min(rows$AIC)
+
+p1 <- ggplot(rows, aes(x = reorder(alias, AIC), y = AIC)) +
+  geom_col(fill = "grey30", width = 0.7) + 
+  coord_flip() +
+  scale_y_continuous(expression(Delta~AIC~(lower~is~Better))) +
+  scale_x_discrete("") +
+  theme_bw() +
+  theme(
+    panel.grid.major.y = element_blank()
+  )
+
+
+
+# 1. Calculate Deviance
+rows$deviance <- -2 * rows$best_lp
+
+# 2. Extract strictly non-dominated Pareto front
+pareto_front <- rows %>%
+  arrange(k, deviance) %>%
+  # Keep only models that tie or beat the best deviance seen so far
+  filter(deviance == cummin(deviance)) %>%
+  # If there's a tie in deviance, strictly prefer the one with fewer parameters
+  group_by(deviance) %>%
+  slice_min(order_by = k, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(k)
+
+# 3. Plot
+p2 <- ggplot(rows, aes(x = k, y = deviance)) +
+  # All tested models in the background
+  geom_point(size = 3, alpha = 0.4, color = "grey60") +
+  # Pareto frontier line and points
+  geom_line(data = pareto_front, color = "firebrick", linetype = "dashed", linewidth = 1) +
+  geom_point(data = pareto_front, size = 4, color = "firebrick") +
+  # Labels ONLY for the Pareto frontier
+  geom_text_repel(
+    data = pareto_front, 
+    aes(label = alias), 
+    box.padding = 0.6,
+    point.padding = 0.4,
+    size=2,
+    nudge_y = max(rows$deviance) * 0.01 # slight upward nudge
+  ) +
+  labs(
+    x = "Effective Parameters (k)",
+    y = expression(Deviance~(-2 * ln(hat(L))))
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+p1 + p2
+```
+
+```{r}
+library(dplyr)
+library(purrr)
+library(ggplot2)
+
+base_path <- "ecology/model_selection/data/gpath/"
+model_ids <- rows$constraint
+model_ids <- c(  "1R_1P_0W_C0_M1","1R_1P_1W_C0_M1",
+                 "2R_1P_0W_C0_M1","2R_2P_0W_C0_M1",
+                 "2R_2P_1W_C0_M1")[1:4]
+
+param_patterns <- c("^raw_")#, "^G1_0\\[")
+regex_string <- paste(param_patterns, collapse = "|")
+
+near_cut <- 5
+get_model_detail <- function(model_id, near_cut = 5) {
+  lp <- readRDS(file.path(base_path, model_id, "hier/optim_lp_all.Rds"))
+  draws <- readRDS(file.path(base_path, model_id, "hier/optim_draws_all.Rds"))
+  
+  finite_mask <- is.finite(lp)
+  best_lp <- max(lp[finite_mask])
+  lp_diff <- rep(NA_real_, length(lp))
+  lp_diff[finite_mask] <- best_lp - lp[finite_mask]
+  near_idx <- which(finite_mask & lp_diff < near_cut)
+  if (length(near_idx) < 2) stop("Fewer than 2 near-best fits.")
+  
+  X <- do.call(rbind, draws[near_idx])
+  X <- X[, grepl(regex_string, colnames(X)), drop = FALSE]
+  if (!is.matrix(X)) X <- as.matrix(X)
+  
+  corX <- cor(X)
+  
+  sds <- apply(X, 2, sd, na.rm = TRUE)
+  X <- X[, is.finite(sds) & sds > 0, drop = FALSE]
+  Xs <- scale(X)
+  pca <- prcomp(Xs, center = FALSE, scale. = FALSE)
+  
+  var_df <- data.frame(
+    param = colnames(X),
+    sd = apply(X, 2, sd),
+    mean = colMeans(X),
+    stringsAsFactors = FALSE
+  ) %>% arrange(desc(sd))
+  
+  load1 <- data.frame(param = rownames(pca$rotation), loading = pca$rotation[,1], abs_loading = abs(pca$rotation[,1])) %>% arrange(desc(abs_loading))
+  load2 <- data.frame(param = rownames(pca$rotation), loading = pca$rotation[,2], abs_loading = abs(pca$rotation[,2])) %>% arrange(desc(abs_loading))
+  
+  list(
+    model_id = model_id,
+    near_idx = near_idx,
+    lp = lp[near_idx],
+    lp_diff = lp_diff[near_idx],
+    X = X,
+    corX=corX,
+    Xs = Xs,
+    pca = pca,
+    var_df = var_df,
+    load1 = load1,
+    load2 = load2
+  )
+}
+process_model_fits <- function(model_id, near_cut = 5) {
+  lp_path <- file.path(base_path, model_id, "hier/optim_lp_all.Rds")
+  draws_path <- file.path(base_path, model_id, "hier/optim_draws_all.Rds")
+  if (!file.exists(lp_path) || !file.exists(draws_path)) return(NULL)
+  
+  lp <- readRDS(lp_path)
+  n_total <- length(lp)
+  finite_mask <- is.finite(lp)
+  n_finite <- sum(finite_mask)
+  
+  if (n_finite == 0) {
+    summary_df <- data.frame(
+      model_id = model_id, n_total = n_total, n_finite = 0, prop_finite = 0,
+      n_nan = n_total, prop_nan = 1, best_lp = NA_real_,
+      n_near_1 = 0, prop_near_1 = 0, n_near_5 = 0, prop_near_5 = 0, n_near_10 = 0, prop_near_10 = 0
+    )
+    bins_df <- data.frame(model_id = model_id, category = factor("NaN", levels = c("NaN","lp_diff >= 10","5 <= lp_diff < 10","1 <= lp_diff < 5","lp_diff < 1")), n = n_total)
+    return(list(summary = summary_df, bins = bins_df, pca = NULL))
+  }
+  
+  best_lp <- max(lp[finite_mask])
+  lp_diff <- rep(NA_real_, n_total)
+  lp_diff[finite_mask] <- best_lp - lp[finite_mask]
+  near_idx <- which(finite_mask & lp_diff < near_cut)
+  
+  summary_df <- data.frame(
+    model_id = model_id,
+    n_total = n_total,
+    n_finite = n_finite,
+    prop_finite = n_finite / n_total,
+    n_nan = sum(!finite_mask),
+    prop_nan = mean(!finite_mask),
+    best_lp = best_lp,
+    n_near_1 = sum(finite_mask & lp_diff < 1),
+    prop_near_1 = mean(finite_mask & lp_diff < 1),
+    n_near_5 = sum(finite_mask & lp_diff < 5),
+    prop_near_5 = mean(finite_mask & lp_diff < 5),
+    n_near_10 = sum(finite_mask & lp_diff < 10),
+    prop_near_10 = mean(finite_mask & lp_diff < 10)
+  )
+  
+  cat_vec <- rep(NA_character_, n_total)
+  cat_vec[!finite_mask] <- "NaN"
+  cat_vec[finite_mask & lp_diff >= 10] <- "lp_diff >= 10"
+  cat_vec[finite_mask & lp_diff < 10 & lp_diff >= 5] <- "5 <= lp_diff < 10"
+  cat_vec[finite_mask & lp_diff < 5 & lp_diff >= 1] <- "1 <= lp_diff < 5"
+  cat_vec[finite_mask & lp_diff < 1] <- "lp_diff < 1"
+  
+  bins_df <- data.frame(model_id = model_id, category = factor(cat_vec, levels = c("NaN","lp_diff >= 10","5 <= lp_diff < 10","1 <= lp_diff < 5","lp_diff < 1"))) %>%
+    count(model_id, category, name = "n")
+  
+  if (length(near_idx) < 2) return(list(summary = summary_df, bins = bins_df, pca = NULL))
+  
+  draws <- readRDS(draws_path)
+  draws_mat <- do.call(rbind, draws[near_idx])
+  keep_cols <- grepl(regex_string, colnames(draws_mat))
+  X <- draws_mat[, keep_cols, drop = FALSE]
+  if (!is.matrix(X)) X <- as.matrix(X)
+  
+  sds <- apply(X, 2, sd, na.rm = TRUE)
+  X <- X[, is.finite(sds) & sds > 0, drop = FALSE]
+  if (!ncol(X)) return(list(summary = summary_df, bins = bins_df, pca = NULL))
+  
+  Xs <- scale(X)
+  
+  pca_df <- NULL
+  if (nrow(Xs) >= 2 && ncol(Xs) >= 2) {
+    pca <- prcomp(Xs, center = FALSE, scale. = FALSE)
+    pca_df <- data.frame(model_id = model_id, fit_id = near_idx, lp = lp[near_idx], lp_diff = lp_diff[near_idx], PC1 = pca$x[,1], PC2 = pca$x[,2])
+  } else if (nrow(Xs) >= 2 && ncol(Xs) == 1) {
+    pca_df <- data.frame(model_id = model_id, fit_id = near_idx, lp = lp[near_idx], lp_diff = lp_diff[near_idx], PC1 = Xs[,1], PC2 = 0)
+  }
+  
+  list(summary = summary_df, bins = bins_df, pca = pca_df)
+}
+
+results <- map(model_ids, process_model_fits, near_cut = near_cut)
+
+summary_tbl <- map_dfr(results, "summary") %>% arrange(desc(prop_near_5), desc(best_lp))
+bins_tbl <- map_dfr(results, "bins")
+pca_tbl <- map_dfr(results, "pca")
+
+p_bins <- ggplot(bins_tbl, aes(x = reorder(model_id, n, sum), y = n, fill = category)) +
+  geom_col(position = "fill") +
+  coord_flip() +
+  theme_minimal() +
+  labs(x = "", y = "Fraction of starts", fill = "", title = "Optimization outcome profile by model")
+
+p_near <- ggplot(summary_tbl, aes(x = reorder(model_id, prop_near_5), y = prop_near_5)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  labs(x = "", y = "Fraction with lp_diff < 5", title = "Near-best capture rate")
+
+p_pca <- ggplot(pca_tbl, aes(PC1, PC2, color = lp_diff)) +
+  geom_point(alpha = 0.7, size = 1.5) +
+  facet_wrap(~model_id, scales = "free") +
+  theme_minimal() +
+  labs(x = "PC1", y = "PC2", color = "lp diff", title = "Near-best parameter continuity (PCA)")
+
+print(summary_tbl)
+print(p_bins)
+print(p_near)
+print(p_pca)
+```
+
+
+```{r}
+smm1 <- get_model_detail(model_id = "2R_1P_0W_C0_M1" )
+
+smm2<- get_model_detail(model_id = "2R_2P_0W_C0_M1" )
+```
+
+
+CHECK FOR CHAIN CONVERGENCE
+```{r}
+source("ecology/nuts_utils.R")
+source("ecology/model_selection/models/gpath/gpath.R")
+model_ids <- c(  "1R_1P_0W_C0_M1","1R_1P_1W_C0_M1","2R_1P_0W_C0_M1",
+                 "2R_2P_0W_C0_M1","2R_2P_1W_C0_M1")
+diagnostics <- lapply(model_ids,function(i){
+  print(i)
+  analyze_nuts_run(file.path("ecology/model_selection/data/gpath/",i,"/hier/nuts/"), i)
+})
+
+```
+posterior fit quality:
+```{r}
+# 1. Generate Data (Simulations + Ribbon + Observations)
+ll_well <- function(model_ID, n_draws = 50) {
+  # Parse Dimensions
+  dims <- parse_run_id(model_ID)
+  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
+  strict_spec <- (C == 1)
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  
+  # Load Data and map groups
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  unique_grps <- unique(grp_keys)
+  stan_data$N_groups <- length(unique_grps)
+  stan_data$group_id <- match(grp_keys, unique_grps)
+  
+  
+  # Load Chains
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
+  
+  x <- x[,grepl("ll_well",colnames(x))]
+  ll <- apply(x,2,median)
+  
+  data.frame(ll=ll,cellLine=names(stan_data$line_map)[stan_data$line_id],
+             ploidy=ifelse(stan_data$ploidy_metric>0,"hi","lo"),
+             G=stan_data$G0_per_well,model_id=model_ID)
+  
+  
+}
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1", "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+df <- do.call(rbind,lapply(model_ids,ll_well))
+
+p <- ggplot(df,aes(x=factor(G),y=ploidy,fill=ll))+
+  facet_grid(rows=vars(model_id),cols=vars(cellLine))+
+  geom_raster()+
+  scale_fill_viridis_c()
+p
+
+```
+
+
+PLOT posteriors:
+```{r}
+source("ecology/nuts_utils.R")
+source("ecology/model_selection/models/gpath/gpath.R")
+model_ids <- c(  "1R_1P_0W_C0_M1","1R_1P_1W_C0_M1","2R_1P_0W_C0_M1",
+                 "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+df <- do.call(rbind,lapply(model_ids,function(i){
+  extract_theta_ploidy(file.path("ecology/model_selection/data/gpath/",i,"/hier/nuts/"), i)
+}))
+
+lapply(model_ids,function(i){
+  p <- ggplot(df[df$model_id==i,],aes(x=scaling_exponent,group=factor(chain_id),fill=chain_id))+
+  facet_wrap(~parname,scales="free")+
+  geom_density(alpha=0.2)
+p
+})
+
+sel <- names(table(df$parname))[table(df$parname)==19000][1:3]
+
+  p <- ggplot(df[df$parname%in%sel,],aes(x=fold_change,group=model_id,fill=model_id))+
+  facet_wrap(~parname,scales="free_y")+
+  geom_density(alpha=0.2)
+p
+
+#ggsave("plots/F_post.png",plot=p,width=8,height=3,units="in")
+
+```
+What do the parameters mean?
+```{r}
+library(deSolve)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+source("ecology/model_selection/models/gpath/gpath.R")
+
+# 1. Generate Data (Simulations + Ribbon + Observations)
+generate_pars <- function(model_ID, n_draws = 50,cv=FALSE) {
+  # Parse Dimensions
+  dims <- parse_run_id(model_ID)
+  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
+  strict_spec <- (C == 1)
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  
+  # Load Data and map groups
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  
+  xmpl_wells <- which(!duplicated(grp_keys)) ## these cover our 10 ploidy x cell line combos.
+  
+  # Load Chains
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
+  
+  # Helper to simulate a single draw and optionally add observation noise
+  get_pars <- function(draw_vals, well_idx) {
+    group_id <- stan_data$group_id[well_idx]
+    p_metric <- stan_data$ploidy_metric[well_idx]
+    p_metric <- stan_data$ploidy_metric[well_idx]
+    
+    raw_theta_line <- draw_vals[sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)]
+    raw_theta_ploidy <- draw_vals[sprintf("raw_theta_ploidy[%d]", 1:L)]
+    
+    parms <- reconstruct_parms(
+      R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+      base_priors = base_priors, raw_theta_line = raw_theta_line, 
+      raw_theta_ploidy = raw_theta_ploidy, ploidy_metric = p_metric
+    )
+    
+    return(parms)
+  }
+
+  do.call(rbind,lapply(xmpl_wells,function(i){
+    draw_indices <- sample(seq_len(nrow(x)), min(n_draws, nrow(x)))
+    all_draws <- data.frame(do.call(rbind,pbapply::pblapply(draw_indices, function(d_idx) {
+      vals <- as.numeric(x[d_idx, ])
+      names(vals) <- colnames(x)
+      unlist(get_pars(vals,i))
+    })))
+    all_draws$ploidy_metric <- stan_data$ploidy_metric[i]
+    all_draws$cellLine <- names(stan_data$line_map)[stan_data$line_id[i]]
+    all_draws
+  }))
+  
+}
+
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1",
+               "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+x <- generate_pars(model_ids[4])
+```
+
+
+```{r}
+# 1. Generate Data (Simulations + Ribbon + Observations)
+post_growth_curves <- function(model_ID, n_draws = 50) {
+  # Parse Dimensions
+  dims <- parse_run_id(model_ID)
+  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
+  strict_spec <- (C == 1)
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  
+  # Load Data and map groups
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  unique_grps <- unique(grp_keys)
+  stan_data$N_groups <- length(unique_grps)
+  stan_data$group_id <- match(grp_keys, unique_grps)
+  
+  
+  # Load Chains
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
+  
+  df <- do.call(rbind,pbapply::pblapply(1:5,function(target_line_id){
+    do.call(rbind,lapply(sample(1:nrow(x),n_draws),function(i){
+      rtl <- x[i,sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)]
+      rtp <- x[i,sprintf("raw_theta_ploidy[%d]", 1:L)]
+      parms_lo <- reconstruct_parms(
+        R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+        base_priors = base_priors, raw_theta_line = rtl, 
+        raw_theta_ploidy = rtp, ploidy_metric = 0
+      )
+      p_metric <- max(stan_data$ploidy_metric[stan_data$line_id==target_line_id])
+      parms_hi <- reconstruct_parms(
+        R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+        base_priors = base_priors, raw_theta_line = rtl, 
+        raw_theta_ploidy = rtp, ploidy_metric = p_metric
+      )
+      G <- exp(seq(log(0.001),log(10),length.out=20))
+      do.call(rbind,lapply(G,function(Gi){
+        y0 <- c(1,Gi,rep(1,R-1),rep(0,W))
+        data.frame(line_id = target_line_id, G=Gi,ploidy=c("lo","hi"),
+                   g=c(rhs(0,y0,parms_lo)[[1]][1],
+                        rhs(0,y0,parms_hi)[[1]][1]))
+      }))
+      
+    }))
+  }))
+  df$model_id <- model_ID
+  return(df)
+}
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1", "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+df <- do.call(rbind,lapply(model_ids,post_growth_curves))
+
+smm <- aggregate(list(g=df$g),by=list(ploidy=df$ploidy,G=df$G,line_id=df$line_id,model_id=df$model_id),mean)
+
+smm$cellLine <- names(stan_data$line_map)[smm$line_id]
+
+p <- ggplot(smm,aes(x=G,y=24*g,color=ploidy,group=ploidy))+
+  facet_grid(rows=vars(model_id),cols=vars(cellLine),scales="free")+
+  geom_line()+
+  scale_x_log10("Glucose")+
+  scale_y_continuous("net growth rate")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p
+
+```
+
+
+```{r}
+# 1. Generate Data (Simulations + Ribbon + Observations)
+comp_curves <- function(model_ID, n_draws = 25) {
+  # Parse Dimensions
+  dims <- parse_run_id(model_ID)
+  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
+  strict_spec <- (C == 1)
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  
+  # Load Data and map groups
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  unique_grps <- unique(grp_keys)
+  stan_data$N_groups <- length(unique_grps)
+  stan_data$group_id <- match(grp_keys, unique_grps)
+  
+  
+  # Load Chains
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
+  
+  df <- do.call(rbind,pbapply::pblapply(1:5,function(target_line_id){
+    do.call(rbind,lapply(sample(1:nrow(x),n_draws),function(i){
+      rtl <- x[i,sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)]
+      rtp <- x[i,sprintf("raw_theta_ploidy[%d]", 1:L)]
+      parms_lo <- reconstruct_parms(
+        R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+        base_priors = base_priors, raw_theta_line = rtl, 
+        raw_theta_ploidy = rtp, ploidy_metric = 0
+      )
+      p_metric <- max(stan_data$ploidy_metric[stan_data$line_id==target_line_id])
+      parms_hi <- reconstruct_parms(
+        R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+        base_priors = base_priors, raw_theta_line = rtl, 
+        raw_theta_ploidy = rtp, ploidy_metric = p_metric
+      )
+      
+      Gi <- 1
+      parms <- combine_parms(parms_lo,parms_hi)
+      y0 <- c(500,500,Gi,rep(1,R-1),rep(0,W))
+      
+      out <- ode(y0,times=0:144,func = rhs_mix,parms = parms)
+      
+      
+      
+      G <- c(0.0,0.1,0.25,0.5,1)
+      do.call(rbind,lapply(G,function(Gi){
+        y0 <- c(500,500,Gi,rep(1,R-1),rep(0,W))
+        out <- ode(y0,times=0:144,func = rhs_mix,parms = parms)
+        out <- out[,1:3]
+        colnames(out) <- c("time","N_lo","N_hi")
+        out <- data.frame(out)
+        out$line_id <- target_line_id
+        out$G <- Gi
+        out$draw <- i
+        out
+      }))
+      
+    }))
+  }))
+  df$model_id <- model_ID
+  return(df)
+}
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1", "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+df <- do.call(rbind,lapply(model_ids,comp_curves))
+
+for(id in unique(df$line_id)){
+  p <- ggplot(df[df$line_id==id,],aes(x=time,y=N_lo-N_hi,group=draw))+
+  facet_grid(cols=vars(G),rows=vars(model_id),scales="free")+
+  geom_line(alpha=0.2)+
+    ggtitle(names(stan_data$line_map)[id])
+ plot(p)  
+}
+
+
+
+
+```
+
+```{r}
+library(posterior)
+library(matrixStats)
+
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1", "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+model_ids <- model_ids[c(1,2,4)]
+
+
+stan_data <- readRDS("data/stan_ready_data.Rds")
+
+N_holdout <- function(FOLD_ID,stan_data){
+  line_vec   <- as.integer(stan_data$line_id)
+  ploidy_vec <- as.numeric(stan_data$ploidy_metric)
+
+  idx_line <- which(line_vec == FOLD_ID)
+  if (!length(idx_line)) stop(sprintf("No wells found for line_id == %d", FOLD_ID))
+  
+  # Define "high ploidy" as max(ploidy_metric) within this line (robust to 0/1 or -0.5/+0.5)
+  hi_ploidy <- max(ploidy_vec[idx_line], na.rm = TRUE)
+  tol <- 1e-12
+  idx_holdout <- which(line_vec == FOLD_ID & abs(ploidy_vec - hi_ploidy) < tol)
+  
+  sum(stan_data$well_idx_count%in%idx_holdout)+sum(stan_data$well_idx_gluc%in%idx_holdout)
+}
+
+process_baseline <- function(mid,n_chains=4){
+  fs <- sprintf("ecology/model_selection/data/gpath/%s/holdout/nuts/nuts_draws_%01d.Rds", mid, 1:n_chains)
+  fs <- fs[file.exists(fs)]
+  dr <- Reduce(\(a,b) bind_draws(a, b, along="chain"), lapply(fs, \(x) as_draws_array(readRDS(x))))
+  # Correct Bayesian ELPD calculation using log-sum-exp
+  if ("log_lik_holdout" %in% variables(dr)) {
+    ll_draws <- as.numeric(subset_draws(dr, variable="log_lik_holdout"))
+    S <- length(ll_draws)
+    elpd <- logSumExp(ll_draws) - log(S) 
+  } else {
+    elpd <- NA_real_
+  }
+  
+   diags <- suppressWarnings(summarise_draws(dr, rhat=rhat, ess_bulk=ess_bulk))
+  
+  data.frame(
+    model_id = mid,  elpd = elpd, 
+    bad_rhat = sum(diags$rhat > 1.01, na.rm=TRUE), bad_ess = sum(diags$ess_bulk < 400, na.rm=TRUE)
+  )
+}
+
+process_fold <- function(mid, fld, n_chains=4) {
+  fs <- sprintf("ecology/model_selection/data/gpath/%s/hier/nuts_cv/nuts_draws_fold%02d_chain%02d.Rds", mid, fld, 1:n_chains)
+  fs <- fs[file.exists(fs)]
+  
+  if (length(fs) == 0) return(data.frame(model_id=mid, fold=fld, elpd=NA_real_, bad_rhat=NA_integer_, bad_ess=NA_integer_))
+  
+  dr <- Reduce(\(a,b) bind_draws(a, b, along="chain"), lapply(fs, \(x) as_draws_array(readRDS(x))))
+  
+  # Correct Bayesian ELPD calculation using log-sum-exp
+  if ("log_lik_holdout" %in% variables(dr)) {
+    ll_draws <- as.numeric(subset_draws(dr, variable="log_lik_holdout"))
+    S <- length(ll_draws)
+    elpd <- logSumExp(ll_draws) - log(S) 
+  } else {
+    elpd <- NA_real_
+  }
+  
+  # Train calculation (optional, keeping for your reference)
+  if ("log_lik_train" %in% variables(dr)) {
+    llt_draws <- as.numeric(subset_draws(dr, variable="log_lik_train"))
+    S_train <- length(llt_draws)
+    llt <- logSumExp(llt_draws) - log(S_train)
+  } else {
+    llt <- NA_real_
+  }
+  
+  diags <- suppressWarnings(summarise_draws(dr, rhat=rhat, ess_bulk=ess_bulk))
+  
+  data.frame(
+    model_id = mid, fold = fld, elpd = elpd, ll_train = llt,
+    bad_rhat = sum(diags$rhat > 1.01, na.rm=TRUE), bad_ess = sum(diags$ess_bulk < 400, na.rm=TRUE)
+  )
+}
+
+# 1. Get the fold-level results
+fold_results <- do.call(rbind, lapply(model_ids, \(m) do.call(rbind, lapply(1:5, \(f) process_fold(m, f)))))
+rownames(fold_results) <- NULL
+
+# Assuming fold_results is the dataframe from the previous step
+# You must provide the exact number of held-out observations for each fold.
+# For example: obs_per_fold <- c(1200, 1500, 1100, 2000, 1400)
+
+aggregate_elpd_corrected <- function(df, obs_per_fold) {
+  K <- length(unique(df$fold))
+  
+  # Ensure the dataframe is sorted by fold to match the obs_per_fold vector
+  df <- df[order(df$fold), ]
+  
+  # 1. Normalize by observation count
+  df$mean_pt_elpd <- df$elpd / obs_per_fold
+  
+  # 2. Calculate total ELPD and total N
+  total_elpd <- sum(df$elpd, na.rm=TRUE)
+  N_total <- sum(obs_per_fold)
+  
+  # 3. Calculate corrected SE
+  var_pt_elpd <- var(df$mean_pt_elpd, na.rm=TRUE)
+  se_total_elpd <- N_total * sqrt(var_pt_elpd / K)
+  
+  data.frame(
+    constraint = df$model_id[1],
+    total_elpd = total_elpd,
+    se_elpd = se_total_elpd
+  )
+}
+
+# Example usage (you will need to replace the obs_per_fold vector with your actual counts):
+obs_counts <- sapply(1:5,N_holdout,stan_data=stan_data)
+final_elpd_table <- do.call(rbind, lapply(split(fold_results, fold_results$model_id), 
+                                          \(x) aggregate_elpd_corrected(x, obs_counts)))
+final_elpd_table <- final_elpd_table[order(final_elpd_table$total_elpd, decreasing=TRUE), ]
+rownames(final_elpd_table) <- NULL
+
+print(final_elpd_table)
+
+
+elpd_df <- merge(final_elpd_table,rows[,c("constraint","deviance","k")])
+
+# compute linear transform
+a <- diff(range(elpd_df$deviance)) / diff(range(elpd_df$total_elpd))
+b <- min(elpd_df$deviance) - a * min(elpd_df$total_elpd)
+
+p3 <- ggplot(elpd_df, aes(x = k)) +
+  geom_point(aes(y = total_elpd)) +
+  geom_errorbar(aes(ymin =  (total_elpd - se_elpd),
+                    ymax = (total_elpd + se_elpd))) +
+  scale_y_continuous("Total ELPD")+
+  scale_x_continuous("Effective Parameters (k)",breaks=unique(elpd_df$k))+
+  theme_bw()
+p3
+
+F2 <- (p1 + p2 + p3) +
+  plot_layout(widths = c(3, 3, 2)) +
+  plot_annotation(tag_levels = "A") &
+  theme(text = element_text(size = 6))
+
+ggsave("plots/F2.png",plot=F2,width=8,height=3,units="in")
+```
+
+
+```{r}
+library(deSolve)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+source("ecology/model_selection/models/gpath/gpath.R")
+
+# 1. Generate Data (Simulations + Ribbon + Observations)
+generate_line_data <- function(model_ID, target_line_id, n_draws = 50,cv=FALSE) {
+  # Parse Dimensions
+  dims <- parse_run_id(model_ID)
+  R <- dims$R; P <- dims$P; W <- dims$W; C <- dims$C; M <- dims$M
+  strict_spec <- (C == 1)
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  
+  # Load Data and map groups
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  unique_grps <- unique(grp_keys)
+  stan_data$N_groups <- length(unique_grps)
+  stan_data$group_id <- match(grp_keys, unique_grps)
+  
+  
+  # Load Chains
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  if(cv){
+    chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts_cv")
+    chain_files <- list.files(chain_dir, 
+                            pattern = paste0("nuts_draws_fold0",target_line_id,"_chain0[0-9]+\\.Rds"),
+                            full.names = TRUE)
+  }
+  
+  x <- as_draws_matrix(do.call(bind_draws, c(lapply(chain_files, readRDS), along = "chain")))
+  
+  target_wells <- which(stan_data$line_id == target_line_id)
+  line_name <- names(stan_data$line_map)[stan_data$line_map == target_line_id]
+  times <- seq(0, max(stan_data$t_grid), length.out = 200)
+  
+  # Helper to simulate a single draw and optionally add observation noise
+  run_sim <- function(draw_vals, well_idx, add_noise = FALSE) {
+    group_id <- stan_data$group_id[well_idx]
+    p_metric <- stan_data$ploidy_metric[well_idx]
+    p_metric <- stan_data$ploidy_metric[well_idx]
+    
+    N0_raw <- draw_vals[sprintf("raw_N0[%d]", group_id)]
+    N0 <- exp(log(500) + N0_raw * 1.0) 
+    G1_0 <- draw_vals[sprintf("G1_0[%d]", well_idx)]
+    
+    raw_theta_line <- draw_vals[sprintf("raw_theta_line[%d,%d]", 1:L, target_line_id)]
+    raw_theta_ploidy <- draw_vals[sprintf("raw_theta_ploidy[%d]", 1:L)]
+    
+    parms <- reconstruct_parms(
+      R = R, P = P, W = W, strict_spec = strict_spec, M = M, 
+      base_priors = base_priors, raw_theta_line = raw_theta_line, 
+      raw_theta_ploidy = raw_theta_ploidy, ploidy_metric = p_metric
+    )
+    
+    y0 <- c(N = max(as.numeric(N0), 1e-6), R1 = as.numeric(G1_0))
+    if (R > 1) y0 <- c(y0, setNames(pmax(rep(1.0, R-1), 0), paste0("R", 2:R)))
+    if (W > 0) y0 <- c(y0, setNames(rep(0.0, W), paste0("W", 1:W)))
+    
+    out <- as.data.frame(deSolve::ode(y = y0, times = times, func = rhs, parms = parms, method = "lsoda"))
+    
+    if (add_noise) {
+      # 1. Observation Noise for N (Lognormal)
+      sigma_N <- if ("sigma_N" %in% names(draw_vals)) draw_vals["sigma_N"] else exp(log(0.2) + draw_vals["raw_sigma_N"] * 0.5)
+      out$N <- pmax(0, rlnorm(nrow(out), log(pmax(out$N, 0) + 1.0), sigma_N) - 1.0)
+      
+      # 2. Observation Noise for R1 (via Luminescence)
+      exp_id <- stan_data$exp_id[well_idx]
+      a_fix <- stan_data$calib_a_fixed[exp_id]
+      b_fix <- stan_data$calib_b_fixed[exp_id]
+      sig_fix <- stan_data$calib_sigma_fixed[exp_id]
+      
+      dil_idx <- which(stan_data$well_idx_gluc == well_idx)
+      mean_dil <- if (length(dil_idx) > 0) mean(stan_data$dilution[dil_idx]) else 1.0
+      
+      mu <- a_fix * pmax(out$R1, 0) * mean_dil + b_fix
+      lum_sim <- rlnorm(nrow(out), log(pmax(mu, 1e-12)), sig_fix)
+      out$R1 <- pmax(0, (lum_sim - b_fix) / (a_fix * mean_dil + 1e-12))
+    }
+    
+    out_long <- tidyr::pivot_longer(out, cols = -time, names_to = "Variable", values_to = "Value")
+    out_long$well_idx <- well_idx
+    out_long$ploidy_abs <- stan_data$ploidy_abs[well_idx]
+    out_long$G0 <- stan_data$G0_per_well[well_idx]
+    out_long$line_name <- line_name
+    return(out_long)
+  }
+
+  # --- 1A. Mean Trajectory ---
+  mean_vals <- colMeans(as.matrix(x))
+  names(mean_vals) <- colnames(x)
+  df_mean <- do.call(rbind, lapply(target_wells, function(w) run_sim(mean_vals, w, add_noise = FALSE)))
+  
+  # --- 1B. Posterior Predictive Ribbon ---
+  draw_indices <- sample(seq_len(nrow(x)), min(n_draws, nrow(x)))
+  cat("Simulating predictive draws...\n")
+  all_draws <- pbapply::pblapply(draw_indices, function(d_idx) {
+    vals <- as.numeric(x[d_idx, ])
+    names(vals) <- colnames(x)
+    do.call(rbind, lapply(target_wells, function(w) run_sim(vals, w, add_noise = TRUE)))
+  })
+  
+  df_ribbon <- do.call(rbind, all_draws) %>%
+    group_by(time, Variable, well_idx, ploidy_abs, G0, line_name) %>%
+    summarize(
+      lower = quantile(Value, probs = 0.05, na.rm = TRUE),
+      upper = quantile(Value, probs = 0.95, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # --- 1C. Experimental Observations ---
+  idx_N <- stan_data$well_idx_count %in% target_wells
+  obsN <- data.frame(
+    well_idx = stan_data$well_idx_count[idx_N],
+    time = stan_data$t_grid[stan_data$grid_idx_count[idx_N]],
+    Value = as.numeric(stan_data$N_obs[idx_N]),
+    Variable = "N"
+  )
+  
+  idx_G <- stan_data$well_idx_gluc %in% target_wells
+  wells_G <- stan_data$well_idx_gluc[idx_G]
+  exps_G <- stan_data$exp_id[wells_G]
+  
+  lum <- as.numeric(stan_data$lum_obs[idx_G])
+  dil <- as.numeric(stan_data$dilution[idx_G])
+  obsG <- data.frame(
+    well_idx = wells_G,
+    time = stan_data$t_grid[stan_data$grid_idx_gluc[idx_G]],
+    Value = pmax(0, (lum - stan_data$calib_b_fixed[exps_G]) / (stan_data$calib_a_fixed[exps_G] * dil + 1e-12)),
+    Variable = "R1"
+  )
+  
+  df_obs <- rbind(obsN, obsG)
+  df_obs$ploidy_abs <- stan_data$ploidy_abs[df_obs$well_idx]
+  df_obs$G0 <- stan_data$G0_per_well[df_obs$well_idx]
+  df_obs$line_name <- line_name
+  
+  return(list(mean = df_mean, ribbon = df_ribbon, obs = df_obs))
+}
+
+# 2. Plot Data
+plot_line_trajectories <- function(data_list, model_ID) {
+  df_mean <- data_list$mean
+  df_ribbon <- data_list$ribbon
+  df_obs <- data_list$obs
+  
+  # Format G0 levels for faceting
+  g0_levels <- sort(unique(df_mean$G0))
+  g0_labels <- paste0("G[0]=", g0_levels)
+  
+  df_mean$G0_label <- factor(paste0("G[0]=", df_mean$G0), levels = g0_labels)
+  df_ribbon$G0_label <- factor(paste0("G[0]=", df_ribbon$G0), levels = g0_labels)
+  df_obs$G0_label <- factor(paste0("G[0]=", df_obs$G0), levels = g0_labels)
+  
+  vars_to_plot <- unique(df_mean$Variable)
+  line_name <- df_mean$line_name[1]
+  
+  plot_list <- lapply(vars_to_plot, function(v) {
+    sub_mean <- df_mean[df_mean$Variable == v, ]
+    sub_ribbon <- df_ribbon[df_ribbon$Variable == v, ]
+    sub_obs <- df_obs[df_obs$Variable == v, ]
+    
+    title_str <- v
+    if (v == "N") title_str <- "N (alive cells)"
+    if (v == "R1") title_str <- "R1: Glucose"
+    
+    p <- ggplot() +
+      geom_ribbon(data = sub_ribbon, aes(x = time, ymin = lower, ymax = upper), fill = "dodgerblue", alpha = 0.25) +
+      geom_line(data = sub_mean, aes(x = time, y = Value), linewidth = 1, color = "dodgerblue4")
+    
+    if (nrow(sub_obs) > 0) {
+      p <- p + geom_point(data = sub_obs, aes(x = time, y = Value), color = "black", size = 1.2, alpha = 0.8)
+    }
+    
+    p + facet_grid(rows = vars(G0_label), cols = vars(ploidy_abs), scales = "free") +
+      theme_minimal() +
+      labs(title = title_str, x = "Time", y = "") +
+      theme(
+        strip.background = element_rect(fill = "grey90", color = NA),
+        strip.text = element_text(face = "bold"),
+        panel.border = element_rect(color = "grey80", fill = NA)
+      )
+  })
+  
+  combined_plot <- wrap_plots(plot_list, nrow = 1) + 
+    plot_annotation(
+      title = sprintf("Model: %s | Cell Line: %s", model_ID, line_name),
+      theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+    )
+  
+  print(combined_plot)
+  return(invisible(combined_plot))
+}
+
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1",
+               "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+model_ids <- model_ids[c(1,2,4)]
+
+cv <-  FALSE
+
+cv_tag <- ""
+if(cv) cv_tag <- "cv_"
+
+for(model_id in model_ids){
+  for(line_id in 1:5){
+    df_line <- generate_line_data(model_id, target_line_id = line_id,cv=cv)
+    p <- plot_line_trajectories(df_line, model_id)
+    outPath <- file.path("ecology/model_selection/plots/gpath",
+                         model_id,
+                         paste0(cv_tag,line_id,".png"))
+    ggsave(outPath,plot=p,width=9,height=8,units = "in")  
+  }
+  
+}
+
+```
+
+
+```{r}
+library(posterior)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+get_grid <- function(model_ID) {
+  # 1. Parse Dimensions and Settings
+  dims <- parse_run_id(model_ID)
+  R <- dims$R
+  P <- dims$P
+  W <- dims$W
+  C <- dims$C
+  M <- dims$M
+  
+  L <- 3 * R + (P - 1) * R + W * R + 1
+  strict_spec <- (C == 1)
+  
+  # 2. Load Data and Models
+  stan_data <- readRDS("data/stan_ready_data.Rds")
+  
+  source("ecology/model_selection/models/gpath/gpath.R") 
+  
+  # 3. Read and combine separate chain files
+  chain_dir <- file.path("ecology/model_selection/data/gpath", model_ID, "hier/nuts")
+  chain_files <- list.files(chain_dir, pattern = "nuts_draws_[0-9]+\\.Rds", full.names = TRUE)
+  
+  draws_list <- lapply(chain_files, readRDS)
+  
+  # Bind along chains, then immediately flatten chains/iterations into a draws_matrix
+  x_array <- do.call(bind_draws, c(draws_list, along = "chain"))
+  x <- as_draws_matrix(x_array)
+  
+  # 4. Identify Representative Wells
+  well_map <- data.frame(
+    well_id = 1:length(stan_data$line_id),
+    line_id = stan_data$line_id,
+    metric  = stan_data$ploidy_metric
+  )
+  
+  rep_wells <- well_map %>%
+    group_by(line_id) %>%
+    summarise(
+      lo_metric = min(metric),
+      hi_metric = max(metric),
+      .groups = "drop"
+    ) %>%
+    arrange(line_id)
+  
+  line_names <- names(stan_data$line_map)[match(rep_wells$line_id, stan_data$line_map)]
+  
+  # 5. Construct Target Variable Names
+  needed_vars <- sprintf("raw_theta_ploidy[%d]", 1:L)
+  for (lid in rep_wells$line_id) {
+    needed_vars <- c(needed_vars, sprintf("raw_theta_line[%d,%d]", 1:L, lid))
+  }
+  
+  # 6. Extract Data and Strip Posterior Classes
+  sub_mat <- subset_draws(x, variable = needed_vars)
+  
+  # Strip all draws_matrix attributes so base R row subsetting yields a named vector
+  mat_data <- as.matrix(sub_mat)
+  class(mat_data) <- "matrix" 
+  
+  # 7. Grid Definition
+  ggrid <- expand.grid(
+    G1 = exp(seq(log(0.001), log(10), length.out = 20)),
+    G2 = exp(seq(log(0.001), log(1), length.out = 10))
+  )
+  
+  draw_indices <- sample(seq_len(nrow(mat_data)), min(200, nrow(mat_data)))
+  
+  # 8. Iterate and compute
+  final_df <- do.call(rbind, pbapply::pblapply(draw_indices, function(draw_i) {
+    
+    # row_vals is now a standard named numeric vector
+    row_vals <- mat_data[draw_i, ]
+    
+    # This will now correctly extract the numeric values instead of NAs
+    raw_theta_ploidy <- row_vals[sprintf("raw_theta_ploidy[%d]", 1:L)]
+    
+    do.call(rbind, lapply(1:nrow(rep_wells), function(line_idx) {
+      lid <- rep_wells$line_id[line_idx]
+      cline <- line_names[line_idx]
+      
+      raw_theta_line <- row_vals[sprintf("raw_theta_line[%d,%d]", 1:L, lid)]
+      
+      params_lo <- reconstruct_parms(
+        R, P, W, strict_spec, M, base_priors, 
+        raw_theta_line, raw_theta_ploidy, rep_wells$lo_metric[line_idx]
+      )
+      
+      params_hi <- reconstruct_parms(
+        R, P, W, strict_spec, M, base_priors, 
+        raw_theta_line, raw_theta_ploidy, rep_wells$hi_metric[line_idx]
+      )
+      
+      grid_results <- t(apply(ggrid, 1, function(row) {
+        state_vec <- c(N = 1, G1 = row["G1"])
+        if (R > 1) state_vec <- c(state_vec, G2 = row["G2"])
+        if (W > 0) state_vec <- c(state_vec, rep(0.0, W))
+        
+        dn_lo <- rhs(0, state_vec, params_lo)[[1]][1]
+        dn_hi <- rhs(0, state_vec, params_hi)[[1]][1]
+        
+        c(dn_lo, dn_hi)
+      }))
+      
+      data.frame(
+        draw_index = draw_i,
+        cellLine   = cline,
+        G1         = ggrid$G1,
+        G2         = ggrid$G2,
+        g_lo       = grid_results[, 1],
+        g_hi       = grid_results[, 2]
+      )
+    }))
+  }))
+  
+  final_df$winlo <- final_df$g_lo > final_df$g_hi
+  
+  smm <- aggregate(
+    list(fwin = final_df$winlo), 
+    by = list(cellLine = final_df$cellLine, G1 = final_df$G1, G2 = final_df$G2), 
+    mean
+  )
+  
+  smm$id <- model_ID
+  return(smm)
+}
+
+model_ids <- c("1R_1P_0W_C0_M1", "1R_1P_1W_C0_M1", "2R_1P_0W_C0_M1",
+               "2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1")
+
+smm <- do.call(rbind, lapply(model_ids, get_grid))
+
+p <- ggplot(smm, aes(x = G1, y = G2 * 100, fill = fwin)) +
+  facet_grid(rows = vars(id), cols = vars(cellLine)) +
+  geom_raster() +
+  scale_x_log10("Glucose (mM)") +
+  scale_y_log10("R (%)") +
+  scale_fill_viridis_c("P(lo>hi)") +
+  ggtitle("probability low ploidy wins")+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        text = element_text(size=8))
+print(p)
+ggsave("plots/F_grids.png",plot=p,width=8,height=6,units="in")
+```
+
+
+```{r}
+library(posterior)
+library(dplyr)
+library(purrr)
+
+nutsDir <- "ecology/model_selection/data/gpath/2R_2P_0W_C0_M1/hier/nuts/"
+source("ecology/model_selection/models/gpath/gpath.R")
+config <- generate_stan_config(
+  R = 2,
+  P = 2,
+  W =0,
+  strict_spec = (0 == 1L),M = 0,
+  base_priors = base_priors
+)
+chains <- 1:4
+target_vars <- c("raw_theta_line", "raw_theta_ploidy", "raw_N0", "raw_sigma_N", "sigma_base", "sigma_rel", "G1_0","log_lik")
+
+draws_combined <- reduce(map(chains, ~readRDS(file.path(nutsDir, sprintf("nuts_draws_%d.Rds", .x)))), bind_draws, along="chain") %>% subset_draws(variable=target_vars)
+diags_combined <- reduce(map(chains, ~readRDS(file.path(nutsDir, sprintf("nuts_diagnostics_%d.Rds", .x)))), bind_draws, along="chain")
+
+conv_stats <- summarise_draws(draws_combined, "mean", "sd", "rhat", "ess_bulk", "ess_tail")
+flagged_params <- filter(conv_stats, rhat>1.01 | ess_bulk<400)
+
+diag_stats <- summarise_draws(diags_combined, total=~sum(.x), max=~max(.x), mean=~mean(.x))
+key_diags <- filter(diag_stats, grepl("divergent__|treedepth__|accept_stat__", variable))
+
+print(flagged_params)
+print(key_diags)
+library(dplyr)
+library(tidyr)
+
+# Convert the draws object to a standard matrix
+draws_mat <- as_draws_matrix(draws_combined)
+
+# Compute the correlation matrix
+cor_mat <- cor(draws_mat)
+
+# Convert the matrix into a long-format data frame for sorting
+cor_df <- as.data.frame(as.table(cor_mat)) %>%
+  rename(param1 = Var1, param2 = Var2, correlation = Freq) %>%
+  # Convert factors to character strings
+  mutate(param1 = as.character(param1),
+         param2 = as.character(param2),
+         abs_cor = abs(correlation)) %>%
+  # Filter out self-correlations and duplicate pairs (since matrix is symmetric)
+  filter(param1 < param2) %>%
+  # Rank by the highest absolute correlation
+  arrange(desc(abs_cor))
+
+# Print the top 20 most highly correlated parameter pairs
+print(head(cor_df, 20))
+
+library(dplyr)
+library(stringr)
+
+# 1. Define the physical parameter names in the exact order Stan unpacks them
+param_labels <- c(
+  "ae_1", "ae_2", 
+  "ah_1", "ah_2", 
+  "Y_mat_1_1", "Y_mat_2_1", "Y_mat_1_2", "Y_mat_2_2", 
+  "m"
+)
+
+# 2. Function to translate raw Stan variable names into descriptive names
+annotate_param <- function(param_string) {
+  
+  # Handle 2D matrices (e.g., raw_theta_line[1, 5] -> Param 1, Line 5)
+  if (grepl("\\[\\d+,\\s*\\d+\\]", param_string)) {
+    base_name <- sub("\\[.*", "", param_string)
+    idx_1 <- as.integer(sub(".*\\[(\\d+),.*", "\\1", param_string))
+    idx_2 <- as.integer(sub(".*,\\s*(\\d+)\\].*", "\\1", param_string))
+    
+    if (base_name == "raw_theta_line") {
+      return(sprintf("%s (Line %d)", param_labels[idx_1], idx_2))
+    }
+    return(param_string)
+  }
+  
+  # Handle 1D vectors (e.g., raw_theta_ploidy[1] -> Param 1)
+  if (grepl("\\[\\d+\\]", param_string)) {
+    base_name <- sub("\\[.*", "", param_string)
+    idx_1 <- as.integer(sub(".*\\[(\\d+)\\].*", "\\1", param_string))
+    
+    if (base_name == "raw_theta_ploidy") {
+      return(sprintf("%s (Ploidy Effect)", param_labels[idx_1]))
+    }
+    if (base_name == "raw_N0") {
+      return(sprintf("N0 (Group %d)", idx_1))
+    }
+    return(param_string)
+  }
+  
+  # Return unchanged if no match (e.g., for sigma_N, m)
+  return(param_string)
+}
+
+# 3. Apply the mapping to the correlation data frame
+cor_df_annotated <- cor_df %>%
+  rowwise() %>%
+  mutate(
+    param1_desc = annotate_param(param1),
+    param2_desc = annotate_param(param2)
+  ) %>%
+  ungroup() %>%
+  # Reorder columns to put descriptive names first
+  select(param1_desc, param2_desc, correlation, abs_cor, param1, param2) %>%
+  arrange(desc(abs_cor))
+
+# Print the readable pairs
+print(head(cor_df_annotated, 20))
+
+library(dplyr)
+library(stringr)
+
+# Function to summarize and count highly correlated parameter pairs
+summarize_correlations <- function(df_annotated, threshold = 0.8) {
+  df_annotated %>%
+    filter(abs_cor > threshold) %>%
+    rowwise() %>%
+    mutate(
+      # Extract the base parameter name by stripping out the entity tags in parentheses
+      base_param1 = trimws(str_remove(param1_desc, "\\(.*\\)")),
+      base_param2 = trimws(str_remove(param2_desc, "\\(.*\\)")),
+      
+      # Standardize the order alphabetically so A-B and B-A group together
+      pair_name = paste(sort(c(base_param1, base_param2)), collapse = " - "),
+      
+      # Identify if the parameters belong to a specific line and extract the ID
+      is_line1 = str_detect(param1_desc, "Line"),
+      is_line2 = str_detect(param2_desc, "Line"),
+      line_id1 = str_extract(param1_desc, "(?<=Line )\\d+"),
+      line_id2 = str_extract(param2_desc, "(?<=Line )\\d+"),
+      
+      # Classify the relationship type
+      rel_type = case_when(
+        is_line1 & is_line2 & (line_id1 == line_id2) ~ "Within-Line",
+        is_line1 & is_line2 & (line_id1 != line_id2) ~ "Between-Line",
+        TRUE ~ "Global/Other"
+      )
+    ) %>%
+    ungroup() %>%
+    # Group by the standardized pair name and relationship type
+    group_by(pair_name, rel_type) %>%
+    summarize(
+      count = n(),
+      avg_abs_cor = round(mean(abs_cor), 3),
+      .groups = "drop"
+    ) %>%
+    # Sort by the most frequent offenders first, then by the highest average correlation
+    arrange(desc(count), desc(avg_abs_cor))
+}
+
+# Apply the condensation function
+condensed_summary <- summarize_correlations(cor_df_annotated, threshold = 0.8)
+
+# Print the top structural issues
+print(head(condensed_summary, 20), n = 20)
+
+library(ggplot2)
+library(gridExtra)
+
+# 1. Convert draws and diagnostics to standard data frames
+draws_df <- as_draws_df(draws_combined)
+diags_df <- as_draws_df(diags_combined)
+
+# 2. Bind the divergence flag to the parameter draws
+# (as_draws_df preserves the precise iteration order)
+plot_df <- draws_df %>%
+  mutate(divergent = as.factor(diags_df$divergent__))
+
+# 3. Separate the data to plot divergent points on top
+div_data <- filter(plot_df, divergent == "1")
+nondiv_data <- filter(plot_df, divergent == "0")
+
+p1 <- "raw_theta_line[3,3]"
+p2 <- "G1_0[42]"
+p3 <- "raw_theta_line[6,5]"
+p4 <- "G1_0[57]"
+
+# Plot A: The raw_theta_line boundary
+p_hierarchy <- ggplot() +
+  geom_point(data = nondiv_data, aes(x = .data[[p1]], y = .data[[p2]]), color = "grey80", alpha = 0.3) +
+  geom_point(data = div_data, aes(x = .data[[p1]], y = .data[[p2]]), color = "red", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Structural Geometry: raw_theta_line[1,3] vs [3,3]",
+    x = "raw_theta_line[1,3]", 
+    y = "raw_theta_line[3,3]"
+  )
+
+# Plot B: The raw_theta_ploidy boundary
+p_corr <- ggplot() +
+  geom_point(data = nondiv_data, aes(x = .data[[p3]], y = .data[[p4]]), color = "grey80", alpha = 0.3) +
+  geom_point(data = div_data, aes(x = .data[[p3]], y = .data[[p4]]), color = "red", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Structural Geometry: raw_theta_ploidy Collinearity",
+    x = "raw_theta_ploidy[7]", 
+    y = "raw_theta_ploidy[9]"
+  )
+
+# 5. Display the plots side-by-side
+grid.arrange(p_hierarchy, p_corr, ncol = 2)
+```
+
+
+
+```{r}
+
+constraint <- "glucose_glutamine_limiting"
+#constraint <- "glucose_simple"
+#constraint <- "unconstrained"
+
+model <- c("cobbdoug","pathways","pathways2","cd_dynamic2","glucose_lag")[3]
+
+source("ecology/model_selection/analysis_utils.R")
+source(file.path("ecology/model_selection/models",model,paste0(model,".R")))
+# 1. Define Directories
+all_dirs <- list.dirs(file.path("ecology/model_selection/data",model,constraint), recursive = TRUE)
+fit_dirs <- all_dirs[file.exists(file.path(all_dirs, "stan_data.Rds"))]
+
+cat("Found", length(fit_dirs), "directories with data.\n")
+
+# 2. Loop, Load, and Aggregate
+all_sim <- list()
+all_obs <- list()
+all_params <- list() # <--- NEW: Init params list
+
+for(fdir in fit_dirs) {
+  cat("Processing:", fdir, "...\n")
+  res <- process_directory(fdir, Model)
+  
+  if(!is.null(res)) {
+    all_sim[[fdir]]    <- res$sim
+    all_obs[[fdir]]    <- res$obs
+    all_params[[fdir]] <- res$params # <--- NEW: Capture params
+  }
+}
+
+master_sim    <- bind_rows(all_sim)
+master_obs    <- bind_rows(all_obs)
+master_params <- bind_rows(all_params) # <--- NEW: Bind params
+
+# 3. Plot per Line (Existing)
+unique_lines <- unique(master_sim$line_name)
+outDir <- file.path("ecology/model_selection/plots",model,constraint)
+dir.create(outDir, showWarnings = FALSE)
+
+for(line in unique_lines) {
+  cat("Plotting Line Fit:", line, "\n")
+  p <- plot_results_grid(master_obs, master_sim, target_line = line,
+                         vars_to_plot = c(N=TRUE, G1=TRUE, G2=TRUE))#, x1=T,x2=T))
+  fpath <- file.path(outDir, paste0(line, ".png"))
+  ggsave(filename = fpath, plot = p, width = 12, height = 7, units = "in")
+}
+
+# 4. Plot Parameter Comparison (New)
+cat("Plotting Parameter Comparison...\n")
+p_param <- plot_param_comparison(master_params)
+ggsave(filename = file.path(outDir, "param_comparison.png"), 
+       plot = p_param, width = 12, height = 8, units = "in")
+
+
+cat("Plotting Parameter Ratios...\n")
+p_ratio <- plot_param_ratios(master_params)
+ggsave(filename = file.path(outDir, "param_ratios.png"), 
+       plot = p_ratio, width = 10, height = 8, units = "in")
+```
+
+
+```{r}
+library(tidyverse)
+library(deSolve)
+library(patchwork)
+library(cmdstanr)
+
+MODEL_NAME <- "gpath"
+RUN_ID <- "2R_2P_1W_C0_M1" 
+
+base_dir <- "ecology/model_selection"
+fit_dir <- file.path(base_dir, "data", MODEL_NAME, RUN_ID, "hier")
+plot_dir <- file.path(base_dir, "plots", MODEL_NAME, RUN_ID, "hier")
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+source(file.path(base_dir, "models", MODEL_NAME, paste0(MODEL_NAME, ".R")))
+
+get_best_hier_fit <- function(fit_dir) {
+  d <- readRDS(file.path(fit_dir, "stan_data.Rds"))
+  lp_vec <- readRDS(file.path(fit_dir, "optim_lp_all.Rds"))
+  rc_vec <- readRDS(file.path(fit_dir, "optim_rc_all.Rds"))
+  
+  valid_idx <- which((rc_vec == 0L | rc_vec == 70L) & is.finite(lp_vec))
+  if(length(valid_idx) == 0) stop("No valid fits found.")
+  
+  best_i <- valid_idx[which.max(lp_vec[valid_idx])]
+  best_draw_mat <- readRDS(file.path(fit_dir, "optim_draws_all.Rds"))[[best_i]]
+  
+  list(d = d, params = setNames(as.numeric(best_draw_mat[1,]), colnames(best_draw_mat)))
+}
+
+process_hierarchical_data <- function(fit_data, config, run_flags) {
+  d <- fit_data$d
+  p_vec <- fit_data$params
+  line_id_to_name <- setNames(names(d$line_map), unlist(d$line_map))
+  sim_list <- vector("list", d$N_wells)
+  
+  state_names <- c("N", paste0("G", 1:config$R), if(config$W > 0) paste0("W", 1:config$W) else NULL)
+  
+  for(w in 1:d$N_wells) {
+    lid <- d$line_id[w]
+    p_metric <- d$ploidy_metric[w]
+    
+    raw_w <- numeric(config$L)
+    for(k in 1:config$L) {
+      raw_w[k] <- p_vec[[paste0("raw_theta_line[", k, ",", lid, "]")]] + 
+                  p_vec[[paste0("raw_theta_ploidy[", k, "]")]] * p_metric
+    }
+    
+    theta_phys <- exp(log(config$prior_centers) + raw_w * config$prior_scales)
+    theta_mapped <- theta_phys[config$param_map] * config$param_mask
+    
+    ptr <- 1
+    ae <- theta_mapped[ptr:(ptr+config$R-1)]; ptr <- ptr + config$R
+    ah <- theta_mapped[ptr:(ptr+config$R-1)]; ptr <- ptr + config$R
+    Y_mat <- matrix(theta_mapped[ptr:(ptr+config$P*config$R-1)], nrow=config$P, ncol=config$R, byrow=FALSE); ptr <- ptr + config$P*config$R
+    
+    if(config$W > 0) {
+      K_mat <- matrix(theta_mapped[ptr:(ptr+config$W*config$R-1)], nrow=config$W, ncol=config$R, byrow=FALSE); ptr <- ptr + config$W*config$R
+      tox <- theta_mapped[ptr:(ptr+config$W-1)]; ptr <- ptr + config$W
+    } else {
+      K_mat <- matrix(0, nrow=0, ncol=config$R)
+      tox <- numeric(0)
+    }
+    m <- theta_mapped[ptr]
+    
+    parms <- list(R=config$R, P=config$P, W=config$W, ae=ae, ah=ah, Y_mat=Y_mat, K_mat=K_mat, tox=tox, m=m, waste_mech=rep(as.numeric(run_flags$M), config$W))
+    
+    y0 <- setNames(numeric(length(state_names)), state_names)
+    y0["N"] <- exp(log(500) + p_vec[[paste0("raw_N0[", d$group_id[w], "]")]])
+    g1_0_val <- if(paste0("G1_0[", w, "]") %in% names(p_vec)) p_vec[[paste0("G1_0[", w, "]")]] else d$G0_per_well[w]
+    y0["G1"] <- g1_0_val
+    
+    if(config$R > 1) {
+      for(c in 2:config$R) y0[paste0("G", c)] <- if(is.matrix(d$R_init_base)) d$R_init_base[w, c] else 1.0
+    }
+    
+    out <- ode(y = y0, times = d$t_grid, func = rhs, parms = parms, method = "lsoda")
+    
+    sim_list[[w]] <- as.data.frame(out) %>%
+      mutate(
+        well = w,
+        line_name = line_id_to_name[as.character(lid)],
+        ploidy = if(p_metric < 0.1) "lo" else "hi",
+        G0_val = d$G0_per_well[w], 
+        G0_lbl = paste0("G0=", signif(d$G0_per_well[w], 3)),
+        G1_0_est = g1_0_val
+      )
+  }
+  
+  obsN <- tibble(well = d$well_idx_count, time = d$t_grid[d$grid_idx_count], value = as.numeric(d$N_obs), type = "N")
+  obsG <- tibble(well = d$well_idx_gluc, time = d$t_grid[d$grid_idx_gluc], lum = as.numeric(d$lum_obs), dil = as.numeric(d$dilution)) %>%
+    mutate(exp = d$exp_id[well], value = pmax(0, (lum - d$calib_b_fixed[exp]) / (d$calib_a_fixed[exp] * dil + 1e-12)), type = "G1") %>%
+    select(well, time, value, type)
+  
+  master_obs <- bind_rows(obsN, obsG) %>%
+    mutate(
+      line_name = line_id_to_name[as.character(d$line_id[well])],
+      ploidy = if_else(d$ploidy_metric[well] < 0.1, "lo", "hi"),
+      G0_val = d$G0_per_well[well],
+      G0_lbl = paste0("G0=", signif(d$G0_per_well[well], 3))
+    )
+  
+  list(sim = bind_rows(sim_list), obs = master_obs)
+}
+
+run_flags <- parse_run_id(RUN_ID)
+
+config <- generate_stan_config(run_flags$R, run_flags$P, run_flags$W, run_flags$C == 1L, 0, base_priors)
+
+fit_data <- get_best_hier_fit(fit_dir)
+res <- process_hierarchical_data(fit_data, config, run_flags) 
+
+for(line in unique(res$sim$line_name)) {
+  p <- plot_results_grid(res$obs, res$sim, target_line = line, vars_to_plot = c(N=TRUE, G1=TRUE, G2=(config$R > 1)))
+  ggsave(filename = file.path(plot_dir, paste0(line, "_hier_fit.png")), plot = p, width = 14, height = 8, units = "in")
+}
+
+#dev.off()
+```
+
+
+The code in the following chunk compares different fits on the same plot. Keep it around, it may be useful (although likely needs updated in order to work):
+```{r}
+
+library(dplyr)
+library(ggplot2)
+
+constraints <- c("glucose_glutamine_limiting", "glucose_glutamine","glucose_simple")
+
+source("ecology/model_selection/analysis_utils.R")
+source("ecology/model_selection/pathways.R")
+
+# --- 1. Initialize Aggregation Lists ---
+global_sim <- list()
+global_obs <- list()
+global_params <- list()
+
+# --- 2. Loop over Constraints to Load Data ---
+for(constraint in constraints) {
+  
+  cat("Processing Constraint:", constraint, "...\n")
+  
+  # Construct path specific to this constraint
+  # Note: logic changed to use the loop variable 'constraint'
+  base_path <- file.path("ecology/model_selection/data/pathways", constraint)
+  
+  if(!dir.exists(base_path)) {
+    warning(paste("Directory not found:", base_path))
+    next
+  }
+
+  all_dirs <- list.dirs(base_path, recursive = TRUE)
+  # Assuming stan_data.Rds indicates a valid fit directory
+  fit_dirs <- all_dirs[file.exists(file.path(all_dirs, "stan_data.Rds"))]
+  
+  cat("  Found", length(fit_dirs), "directories.\n")
+
+  for(fdir in fit_dirs) {
+    # cat("  Loading:", fdir, "...\n") 
+    res <- process_directory(fdir, ModelPathways)
+    
+    if(!is.null(res)) {
+      # Create a unique key for the list (e.g., "constraint_path")
+      key <- paste0(constraint, "_", fdir)
+      
+      # IMPORTANT: Tag the simulation data with the constraint name
+      # This 'model' column triggers the multi-color plotting logic
+      global_sim[[key]] <- res$sim %>% mutate(model = constraint)
+      
+      # We collect obs/params as well
+      global_obs[[key]] <- res$obs
+      global_params[[key]] <- res$params %>% mutate(model = constraint)
+    }
+  }
+}
+
+# --- 3. Aggregate Data ---
+master_sim    <- bind_rows(global_sim)
+master_params <- bind_rows(global_params)
+
+# For observations, we likely loaded the same data twice (once for each model).
+# We bind them, but then remove exact duplicates to avoid over-plotting points.
+master_obs <- bind_rows(global_obs) %>% 
+  distinct(line_name, time, type, G0_lbl, value, .keep_all = TRUE)
+
+# --- 4. Plotting (Comparison) ---
+unique_lines <- unique(master_sim$line_name)
+
+# Create a shared output directory for comparisons
+outDir <- "ecology/model_selection/plots/comparison"
+if(!dir.exists(outDir)) dir.create(outDir, recursive = TRUE)
+
+for(line in unique_lines) {
+  cat("Plotting Line Fit:", line, "\n")
+  
+  # The plotting function will detect the 'model' column in master_sim
+  # and automatically color the lines by constraint.
+  p <- plot_results_grid(master_obs, master_sim, target_line = line,
+                         vars_to_plot = c(N=TRUE, G1=TRUE, G2=TRUE, Lac=FALSE, Amm=FALSE))
+  
+  if(!is.null(p)) {
+    fpath <- file.path(outDir, paste0(line, ".png"))
+    ggsave(filename = fpath, plot = p, width = 6, height = 4, units = "in")
+  }
+}
+```
+
+
+
+```{r}
+
+configs <- list(list(model="pathways",constraint="glucose_glutamine_limiting",alias="Glucose + R -> E + Pr"),
+                list(model="pathways",constraint="glucose_glutamine",alias="Glucose + R: Subst"))  
+
+ix <- 2
+
+constraint <- configs[[ix]]$constraint
+model <- configs[[ix]]$model
+x <- readRDS(file.path("ecology/model_selection/data/",model,constraint,"hier/nuts_draws.Rds"))
+source(file.path("ecology/model_selection/models",model,paste0(model,".R")))
+source(file.path("ecology/model_selection/models",model,"constraints.R"))
+
+active_constraint <- constraints_list[[constraint]]
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(posterior) # fits$draws() returns a posterior object
+active_indices <- unique(active_constraint$map[active_constraint$mask == 1])
+
+# 2. Subset draws
+ploidy_draws <- subset_draws(x, variable = "raw_theta_ploidy")
+
+# 3. Process data and Filter
+plot_data <- as_draws_df(ploidy_draws) %>%
+  pivot_longer(
+    cols = starts_with("raw_theta_ploidy"),
+    names_to = "parameter_index",
+    values_to = "value"
+  ) %>%
+  mutate(
+    # Extract the numeric index from "raw_theta_ploidy[1]"
+    idx = as.numeric(str_extract(parameter_index, "\\d+"))
+  ) %>%
+  # --- FILTER STEP ---
+  # Keep only the parameters that are active in the constraint
+  filter(idx %in% active_indices) %>%
+  mutate(
+    # Map to biological names using the Model object
+    param_label = factor(Model$param_names[idx], levels = Model$param_names)
+  )
+
+# 4. Create the visualization
+ppost <- ggplot(plot_data, aes(x = value, fill = as.factor(.chain), color = as.factor(.chain))) +
+  geom_density(alpha = 0.4) + 
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray30") + # Add reference line at 0
+  facet_wrap(~ param_label, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Posterior Distributions of Ploidy Effects (Active Parameters)",
+    subtitle = configs[[ix]]$alias,
+    x = "Effect Size (Raw Scale)",
+    y = "Density",
+    fill = "Chain",
+    color = "Chain"
+  ) +
+  theme(legend.position = "bottom")
+
+print(ppost)
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(posterior)
+
+# 1. Setup paths
+constraint <- "glucose_glutamine"
+model <- "pathways"
+base_path <- file.path("ecology/model_selection/data", model, constraint, "hier/nuts")
+
+# 2. Load and merge the chains correctly
+chain_files <- file.path(base_path, paste0("nuts_draws_", 1:4, ".Rds"))
+draws_list <- lapply(chain_files, readRDS)
+
+# FIX: Use do.call + along = "chain"
+# This forces posterior to treat the objects as new chains for the same variables,
+# ignoring the original chain IDs (which are likely all '1').
+x <- do.call(bind_draws, c(draws_list, along = "chain"))
+
+# 3. Load model metadata and constraints
+source(file.path("ecology/model_selection/models", model, paste0(model, ".R")))
+source(file.path("ecology/model_selection/models", model, "constraints.R"))
+
+active_constraint <- constraints_list[[constraint]]
+active_indices <- unique(active_constraint$map[active_constraint$mask == 1])
+
+# 4. Subset and Process Data
+plot_data <- x %>%
+  subset_draws(variable = "raw_theta_ploidy") %>%
+  as_draws_df() %>%
+  pivot_longer(
+    cols = starts_with("raw_theta_ploidy"),
+    names_to = "parameter_name",
+    values_to = "value"
+  ) %>%
+  mutate(
+    idx = as.numeric(str_extract(parameter_name, "\\d+"))
+  ) %>%
+  filter(idx %in% active_indices) %>%
+  mutate(
+    param_label = factor(Model$param_names[idx], levels = Model$param_names),
+    chain_id = as.factor(.chain)
+  )
+
+# 5. Visualization
+ppost <- ggplot(plot_data, aes(x = value, fill = chain_id, color = chain_id)) +
+  geom_density(alpha = 0.4) + 
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray30") + 
+  facet_wrap(~ param_label, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Posterior Distributions (Merged Chains)",
+    subtitle = paste("Constraint:", constraint),
+    x = "Effect Size",
+    y = "Density",
+    fill = "Chain",
+    color = "Chain"
+  ) +
+  theme(legend.position = "bottom")
+
+print(ppost)
+
+```
+
+```{r}
+target_draws <- subset_draws(x, variable = c("raw_theta_ploidy", "raw_theta_line"))
+```
+
+
+```{r}
+library(posterior)
+library(dplyr)
+library(stringr)
+
+# 1. Subset BOTH variable groups
+# This excludes the massive 'theta_per_well' derived quantities but keeps the core hierarchy
+target_draws <- subset_draws(x, variable = c("raw_theta_ploidy", "raw_theta_line"))
+
+# 2. Compute Summary
+# This usually takes a few seconds for ~1000-2000 parameters
+ess_summary <- summarise_draws(target_draws, ess_bulk, ess_tail, rhat)
+
+# 3. Parse and Filter
+# logic: ploidy is [i], line is [line, i]. We need 'i' to match active_indices.
+target_summary <- ess_summary %>%
+  mutate(
+    # Get all numbers from the string "variable[1,2]" -> c("1", "2")
+    indices = str_extract_all(variable, "\\d+"),
+    
+    # Logic: If 1 number, it's the param index. If 2 numbers, the 2nd is the param index.
+    param_idx = sapply(indices, function(x) {
+      if(length(x) == 1) return(as.numeric(x[1]))       # ploidy[i]
+      if(length(x) == 2) return(as.numeric(x[1]))       # line[line, i]
+      return(NA)
+    }),
+    
+    # Label the type for the report
+    type = if_else(str_detect(variable, "line"), "Line-Specific", "Ploidy (Global)")
+  ) %>%
+  # --- FILTER STEP ---
+  filter(param_idx %in% active_indices) %>%
+  mutate(
+    # Map to biological names
+    param_name = Model$param_names[param_idx]
+  ) %>%
+  select(-indices) # Clean up list column
+```
+
+
+```{r}
+library(posterior)
+library(dplyr)
+library(purrr) # useful for mapping/reducing if needed, but base R works too
+
+constraint <- "glucose_glutamine"
+model <- "pathways"
+base_path <- file.path("ecology/model_selection/data", model, constraint, "hier/nuts")
+
+# 1. Load and Merge Diagnostics
+# We must load the 4 separate files and bind them along the 'chain' dimension
+diag_files <- file.path(base_path, paste0("nuts_diagnostics_", 1:4, ".Rds"))
+
+# Read files into a list
+diag_list <- lapply(diag_files, readRDS)
+
+# Merge them into one draws object
+# 'along = "chain"' ensures they are treated as chains 1, 2, 3, 4
+diagnostics <- do.call(bind_draws, c(diag_list, along = "chain"))
+
+# Convert to data frame for easy analysis
+diag_df <- as_draws_df(diagnostics)
+
+# (Optional) Load summaries if needed, though your report below doesn't use 'smm'
+# Summary files likely need to be re-computed from full draws for global Rhats,
+# so simply binding them might not be statistically valid for all metrics.
+# We will skip loading 'smm' here unless you specifically need it.
+
+
+# --- HEALTH CHECK REPORT ---
+
+cat("=== HMC DIAGNOSTICS REPORT ===\n")
+
+# 1. Check Divergences
+total_divergences <- sum(diag_df$divergent__)
+total_draws <- nrow(diag_df)
+
+cat(sprintf("Total Divergences: %d (%.2f%% of %d draws)\n", 
+            total_divergences, 
+            (total_divergences / total_draws) * 100,
+            total_draws))
+
+if (total_divergences > 0) {
+  cat("  -> CRITICAL: Divergences detected.\n")
+  cat("  -> SUGGESTION: Increase 'adapt_delta' (e.g., 0.95 or 0.99).\n")
+} else {
+  cat("  -> OK: No divergences.\n")
+}
+
+# 2. Check Tree Depth
+# NUTS default cap is usually 10, but might be set higher in your run.
+# We infer the cap by looking at the max depth reached, or you can hardcode it.
+max_depth_hit <- max(diag_df$treedepth__)
+prop_max_depth <- mean(diag_df$treedepth__ == max_depth_hit)
+
+cat(sprintf("\nMax Tree Depth Hit: %d\n", max_depth_hit))
+cat(sprintf("Percent of draws hitting max depth: %.2f%%\n", prop_max_depth * 100))
+
+if (prop_max_depth > 0.01) { # If more than 1% hit the limit
+  cat("  -> WARNING: Sampler is hitting the max_treedepth cap.\n")
+  cat("  -> SUGGESTION: Increase 'max_treedepth' (e.g., 12 or 15).\n")
+} else {
+  cat("  -> OK: Tree depth looks healthy.\n")
+}
+
+# 3. Check E-BFMI (Energy)
+# We calculate this per chain using the merged data
+ebfmi_by_chain <- diag_df %>%
+  group_by(.chain) %>%
+  summarise(
+    numer = sum(diff(energy__)^2),
+    denom = var(energy__) * n(),
+    ebfmi = numer / denom,
+    .groups = "drop"
+  )
+
+cat("\nE-BFMI per chain (Should be > 0.3):\n")
+print(ebfmi_by_chain)
+
+if (any(ebfmi_by_chain$ebfmi < 0.3)) {
+  cat("  -> WARNING: Low E-BFMI detected. Distribution may be hard to explore.\n")
+  cat("  -> SUGGESTION: Check priors or re-parameterize (non-centered).\n")
+} else {
+  cat("  -> OK: Energy transitions look efficient.\n")
+}
+
+
+
+```
+

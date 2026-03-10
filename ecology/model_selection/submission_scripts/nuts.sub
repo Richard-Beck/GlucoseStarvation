@@ -1,0 +1,80 @@
+#!/bin/bash
+#SBATCH --job-name=PF_nuts
+#SBATCH --output=logs/nuts_%A_%a.out
+#SBATCH --error=logs/nuts_%A_%a.err
+
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32  # 4 chains * 8 threads = 32 CPUs
+#SBATCH --mem=32G           # Increased memory for NUTS
+#SBATCH --time=04:00:00     # Increased time (NUTS is slower than optim)
+#SBATCH --qos=normal
+
+#SBATCH --exclude=hpctpa3pc0030
+
+# 5 lines x 2 ploidies = 10 total tasks
+#SBATCH --array=0-9
+
+# ---- Argument Parsing ----
+# 1. Model Name (Default to 'cobbdoug' if not provided)
+MODEL_NAME=${1:-"cobbdoug"}
+
+# 2. Constraint Name (Default to 'unconstrained' if not provided)
+CONSTRAINT_NAME=${2:-"unconstrained"}
+
+# ---- 2. Container Config ----
+CONTAINER_URI="docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"
+BINDS="-B /home/$USER,/share,/etc/passwd,/etc/group"
+
+# Keep OMP single threaded so R can fork safely
+export OMP_NUM_THREADS=1
+export TZ="US/Eastern"
+
+# ---- 3. Conditions ----
+cellLines=("MCF10A" "MDA-MB-231" "SNU668" "SUM-159-chem" "SUM-159-fuse")
+ploidies=("hi" "lo")
+
+
+# ---- 5. NUTS Config ----
+N_CHAINS=4          # Number of MCMC chains
+N_CORES=4           # Number of chains to run in parallel (usually = N_CHAINS)
+THREADS_PER_CHAIN=8 # Intra-chain threads (Stan threading)
+
+# ---- 6. Array Logic ----
+idx=$SLURM_ARRAY_TASK_ID
+
+# Map index to conditions (every 2 tasks switch cell line)
+line_idx=$(( idx / 2 )) # 0..4
+plo_idx=$(( idx % 2 ))  # 0..1
+
+cellLine="${cellLines[$line_idx]}"
+ploidy="${ploidies[$plo_idx]}"
+
+echo "Starting task $SLURM_ARRAY_TASK_ID on $(hostname)"
+echo "Condition: ${cellLine} ${ploidy}"
+echo "Model: ${MODEL_NAME} | Constraint: ${CONSTRAINT_NAME}"
+echo "Config: ${N_CHAINS} chains | ${N_CORES} parallel | ${THREADS_PER_CHAIN} threads/chain"
+
+# ---- FORCE CACHE REFRESH ----
+# This prevents "unknown userid" errors by forcing the node to resolve you now
+id $USER > /dev/null 2>&1
+sleep 2
+
+# ---- 7. Execution ----
+# Arguments match the new nuts_model.R signature:
+# 1: MODEL_NAME
+# 2: CONSTRAINT_NAME
+# 3: cellLine
+# 4: ploidy
+# 5: N_CHAINS
+# 6: N_CORES (Parallel chains)
+# 7: THREADS_PER_CHAIN
+
+apptainer exec $BINDS $CONTAINER_URI \
+  Rscript ecology/model_selection/nuts_model.R \
+  "$MODEL_NAME" \
+  "$CONSTRAINT_NAME" \
+  "$cellLine" \
+  "$ploidy" \
+  "$N_CHAINS" \
+  "$N_CORES" \
+  "$THREADS_PER_CHAIN"

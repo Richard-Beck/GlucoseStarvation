@@ -38,9 +38,314 @@ ff_strip <- sapply(ff_strip,function(fi){
 meta <- do.call(rbind,pbapply::pblapply(ff_strip,get_meta))
 meta$fname <- ff_strip
 
+saveRDS(meta,"data/counts/image_metadata.Rds")
+
 ```
 
+Define a subset of images that we will combine into composites for visualization when fitting:
+
+```{r}
+meta <- readRDS("data/counts/image_metadata.Rds")
+head(meta)
+
+pos  <- meta[!duplicated(meta[,1:6]),]
+pos <- pos[!pos$cellLine%in%c("MCF10A-ctrl","MCF10A-hras"),]
+
+
+
+well_ids <- sub("_[0-9]{2}d[0-9]{2}h[0-9]{2}m$", "", pos$fname)
+
+writeLines(well_ids,"data/counts/wells/well_ids.txt")
+
+```
+
+
+```{r}
+
+x <- data.table::fread("data/counts/batch_results_TEMP_MEASURE_SIZE.csv")
+colnames(x)[1] <- "fname"
+meta <- readRDS("data/counts/image_metadata.Rds")
+x <- full_join(meta,x,by="fname")
+
+library(dplyr)
+
+# df_objects: per-object dataframe (well, time, size, p_alive, p_dead, p_junk)
+y <- x %>%
+  group_by(experiment, plateID, ploidy, glucose, hours,cellLine) %>%
+  summarize(
+    tot_area = sum(cell_size_px,na.rm=T),
+    mean_size_alive = mean(cell_size_px[predicted_label_name=="alive"],na.rm=T),
+    med_size_alive = median(cell_size_px[predicted_label_name=="alive"],na.rm=T),
+    prop_junk = mean(predicted_label_name=="junk",na.rm=T),
+    n_alive=sum(predicted_label_name=="alive",na.rm=T),
+    n_dead = sum(predicted_label_name=="dead",na.rm=T),
+    n_junk = sum(predicted_label_name=="junk",na.rm=T),
+    f_pacc = mean(cell_size_px[predicted_label_name=="alive"] > 2*med_size_alive, na.rm=TRUE),
+    .groups = "drop"
+  ) 
+
+saveRDS(y,"data/counts/uncorrected_features.Rds")
+library(splines)
+alive_time <- x %>%
+  filter(predicted_label_name=="alive") %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine, hours) %>%
+  summarize(
+    n_alive = n(),
+    med_size_alive = median(cell_size_px, na.rm=TRUE),
+    mean_size_alive = mean(cell_size_px, na.rm=TRUE),
+    q75_size_alive = quantile(cell_size_px, 0.75, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+fit_peak <- function(df, yvar="med_size_alive", df_spline=4, min_alive=20) {
+  df <- df %>% filter(is.finite(.data[[yvar]]), n_alive >= min_alive) %>% arrange(hours)
+  if (nrow(df) < (df_spline + 1) || dplyr::n_distinct(df$hours) < (df_spline + 1)) return(tibble(peak_hours=NA_real_, peak_size=NA_real_))
+  fit <- lm(reformulate(sprintf("ns(hours, df=%d)", df_spline), response=yvar), data=df, weights=pmax(df$n_alive, 1))
+  grid <- data.frame(hours = seq(min(df$hours), max(df$hours), length.out=200))
+  pred <- predict(fit, newdata=grid)
+  tibble(peak_hours = grid$hours[which.max(pred)], peak_size = max(pred, na.rm=TRUE))
+}
+
+peaks <- alive_time %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine) %>%
+  group_modify(~fit_peak(.x, yvar="med_size_alive", df_spline=4)) %>%
+  ungroup()
+
+anchors <- peaks %>%
+  group_by(cellLine, ploidy) %>%
+  summarize(
+    anchor_size = median(peak_size, na.rm=TRUE),
+    anchor_hours = median(peak_hours, na.rm=TRUE),
+    n_traj = sum(is.finite(peak_size)),
+    .groups = "drop"
+  )
+
+alive_rel <- x %>%
+  filter(predicted_label_name=="alive") %>%
+  left_join(anchors, by=c("cellLine","ploidy")) %>%
+  mutate(size_rel = cell_size_px / anchor_size)
+
+smm <- alive_rel %>%
+  group_by(experiment, plateID, ploidy, glucose, hours, cellLine) %>%
+  summarize(
+    n_alive = n(),
+    med_rel = median(size_rel, na.rm=TRUE),
+    q10_rel = quantile(size_rel, 0.10, na.rm=TRUE),
+    q90_rel = quantile(size_rel, 0.90, na.rm=TRUE),
+    iqr_rel = IQR(size_rel, na.rm=TRUE),
+    p_gt_1.5 = mean(size_rel > 1.5, na.rm=TRUE),
+    p_gt_2 = mean(size_rel > 2, na.rm=TRUE),
+    p_gt_3 = mean(size_rel > 3, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+p_pacc <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = p_gt_2, color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+
+p_rel <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = med_rel, color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+
+```
+```{r}
+pos_alive <- x %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine, hours, pos) %>%
+  summarize(
+    n_alive = sum(predicted_label_name == "alive", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+pos_bias <- pos_alive %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine, hours) %>%
+  mutate(
+    ref_n_alive = median(n_alive, na.rm = TRUE),
+    rel_alive = (n_alive + 0.5) / (ref_n_alive + 0.5),
+    log_rel_alive = log(rel_alive),
+    rank_alive = rank(n_alive, ties.method = "average"),
+    n_pos = n()
+  ) %>%
+  ungroup() %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine, pos) %>%
+  summarize(
+    n_time = n(),
+    mean_rel_alive = mean(rel_alive, na.rm = TRUE),
+    mean_log_rel_alive = mean(log_rel_alive, na.rm = TRUE),
+    sd_log_rel_alive = sd(log_rel_alive, na.rm = TRUE),
+    frac_below_0.8 = mean(rel_alive < 0.8, na.rm = TRUE),
+    frac_below_0.67 = mean(rel_alive < 0.67, na.rm = TRUE),
+    frac_lowest = mean(rank_alive == min(rank_alive), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(mean_rel_alive)
+
+bad_pos <- pos_bias %>%
+  filter(n_time >= 4,
+         mean_rel_alive < 0.75,
+         frac_below_0.8 > 0.75)
+
+getpos <- function(pos,d){
+
+  npos <- length(pos)
+  
+  xpos <- c(2,2,4,4)
+  ypos <- c(2,4,2,4)
+  
+  if(npos==6){
+    xpos=c(2,2,2,4,4,4)
+    ypos <- c(1,3,1,3,1,3)
+  }
+  
+  if(npos==9){
+    xpos=c(1,1,1,3,3,3,5,5,5)
+    ypos = c(1,3,5,1,3,5,1,3,5)
+  }
+    
+  if(d=="x") return(xpos/5)
+  else return(ypos/5)
+}
+pos_map <- pos_bias %>%
+  group_by(experiment, plateID, ploidy, glucose, cellLine)%>%
+  mutate(row=as.numeric(substr(plateID,2,3)),
+         col=substr(plateID,1,1),
+         xpos=paste0(letters[row],getpos(pos,"x")),
+         ypos=paste0(col,getpos(pos,"y")))%>%
+  ungroup()
+
+p <- ggplot(filter(pos_map,cellLine=="MCF10A"),aes(x=xpos,y=ypos,fill=mean_log_rel_alive))+
+  geom_raster()
+p
+
+```
+
+
+```{r}
+pos <- x %>%
+  group_by(experiment, plateID, ploidy, glucose, hours, cellLine, fname) %>%
+  summarize(
+    tot_area = sum(cell_size_px, na.rm=TRUE),
+    mean_size_alive = mean(cell_size_px[predicted_label_name=="alive"], na.rm=TRUE),
+    med_size_alive = median(cell_size_px[predicted_label_name=="alive"], na.rm=TRUE),
+    prop_junk = mean(predicted_label_name=="junk", na.rm=TRUE),
+    n_alive = sum(predicted_label_name=="alive", na.rm=TRUE),
+    n_dead = sum(predicted_label_name=="dead", na.rm=TRUE),
+    n_junk = sum(predicted_label_name=="junk", na.rm=TRUE),
+    .groups = "drop"
+  )
+
+smm <- pos %>%
+  group_by(experiment, plateID, ploidy, glucose, hours, cellLine) %>%
+  summarize(
+    n_pos = n(),
+    mean_n_alive = mean(n_alive, na.rm=TRUE),
+    var_n_alive = var(n_alive, na.rm=TRUE),
+    sd_n_alive = sd(n_alive, na.rm=TRUE),
+    cv_n_alive = sd_n_alive / pmax(mean_n_alive, 1),
+    fano_n_alive = var_n_alive / pmax(mean_n_alive, 1),
+    mean_med_size_alive = mean(med_size_alive, na.rm=TRUE),
+    sd_med_size_alive = sd(med_size_alive, na.rm=TRUE),
+    cv_med_size_alive = sd_med_size_alive / pmax(mean_med_size_alive, 1),
+    .groups = "drop"
+  )
+
+p_var <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = cv_n_alive, color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+```
+
+
+```{r}
+smm <- readRDS("data/counts/uncorrected_features.Rds")
+tmp <- smm%>%filter(plateID=="B2",cellLine=="MCF10A")
+
+
+```
+
+
+```{r}
+smm <- readRDS("data/counts/uncorrected_features.Rds")
+plots <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = n_alive, color = "alive")) +
+    geom_point(aes(y = n_dead, color = "dead")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+p_sz <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = mean_size_alive, color = "mean")) +
+    geom_point(aes(y = med_size_alive, color = "median")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+p_pacc <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = f_pacc, color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+p_ar <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = tot_area/(1408*1040), color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+
+p_jk <- lapply(unique(smm$cellLine), function(cl) {
+  d <- smm[smm$cellLine == cl,]
+  ggplot(d, aes(x = hours)) +
+    geom_point(aes(y = prop_junk, color = "mean")) +
+    facet_grid(rows = vars(as.numeric(glucose)),
+               cols = vars(ploidy),
+               scales = "free") +
+    ggtitle(cl, subtitle = unique(d$experiment))
+})
+names(plots) <- unique(smm$cellLine)
+
+names(plots) <- unique(smm$cellLine)
+```
+
+
+
 We need to define a representative set of images for evaluating our image processing pipeline. Factors to balance are 1) Cell-line 2) sub-lineage (e.g. 2N vs 4N etc), 3) experiment id (different experiments can use different reporters or other settings) 4) Time. 5) Glucose concentration. Note that we also hope our training set has many examples of both alive and dead cells, but ensuring a good sampling across 1-5 should ensure this anyway.
+
+
 
 ```{r}
 set.seed(42)
@@ -485,7 +790,11 @@ smm <- do.call(rbind,lapply(names(x_merged), function(grp) {
   cnt}))
 
 saveRDS(smm,"data/counts/uncorrected.Rds")
+```
 
+
+```{r}
+smm <- readRDS("data/counts/uncorrected.Rds")
 plots <- lapply(unique(smm$cellLine), function(cl) {
   d <- smm[cellLine == cl]
   ggplot(d, aes(x = hours)) +

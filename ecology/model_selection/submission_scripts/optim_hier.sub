@@ -1,0 +1,58 @@
+#!/bin/bash
+#SBATCH --job-name=PF_hier
+#SBATCH --output=logs/hier_%j.out
+#SBATCH --error=logs/hier_%j.err
+
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32  # 4 parallel starts * 8 threads = 32 CPUs
+#SBATCH --mem=64G           # Increased memory (fitting all lines at once requires more RAM)
+#SBATCH --time=08:00:00     # Optimization on the full hierarchy might take longer
+#SBATCH --qos=normal
+
+#SBATCH --exclude=hpctpa3pc0030
+
+# ---- Argument Parsing ----
+# 1. Model Name
+MODEL_NAME=${1:-"cobbdoug"}
+
+# 2. Constraint Name
+CONSTRAINT_NAME=${2:-"unconstrained"}
+
+# ---- 2. Container Config ----
+CONTAINER_URI="docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"
+BINDS="-B /home/$USER,/share,/etc/passwd,/etc/group"
+
+# Keep OMP single threaded so R can fork safely
+export OMP_NUM_THREADS=1
+export TZ="US/Eastern"
+
+# ---- 3. Optimization Config ----
+# We fit ALL data at once, so we don't need array indices for cell lines.
+
+N_STARTS=50          # Total number of optimization attempts
+N_CORES=1           # Number of starts to run in parallel (R mc.cores)
+NUM_THREADS=32       # Number of threads PER start (Stan threads)
+
+echo "Starting Hierarchical Optimization on $(hostname)"
+echo "Model: ${MODEL_NAME} | Constraint: ${CONSTRAINT_NAME}"
+echo "Config: ${N_STARTS} starts | ${N_CORES} parallel cores | ${NUM_THREADS} threads/core"
+
+# ---- FORCE CACHE REFRESH ----
+id $USER > /dev/null 2>&1
+sleep 2
+
+# ---- 4. Execution ----
+# R Script Arguments:
+# 1: MODEL_NAME
+# 2: CONSTRAINT_NAME
+# 3: N_STARTS
+# 4: N_CORES (Parallel R processes)
+# 5: NUM_THREADS (Stan C++ threads)
+
+apptainer exec $BINDS $CONTAINER_URI \
+  Rscript ecology/model_selection/optim_model_hier.R \
+  "$MODEL_NAME" \
+  "$CONSTRAINT_NAME" \
+  "$N_STARTS" \
+  "$N_CORES" \
+  "$NUM_THREADS"

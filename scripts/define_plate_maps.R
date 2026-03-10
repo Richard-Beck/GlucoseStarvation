@@ -107,6 +107,8 @@ get_meta <- function(filename){
   fparts <- strsplit(filename,"_") |> unlist()
   pmap <- m[[paste(fparts[1:2],collapse="_")]]
   
+  pos <- fparts[length(fparts)-1]
+  
   rc <- fparts[length(fparts)-2]
   row <- substr(rc,1,1)
   col <- paste0("C",substr(rc,2,nchar(rc)))
@@ -141,7 +143,7 @@ get_meta <- function(filename){
     }
   }
   
-  data.frame(cellLine = fparts[1],experiment=fparts[2],plateID=rc,ploidy,glucose,hours)
+  data.frame(cellLine = fparts[1],experiment=fparts[2],plateID=rc,pos=pos,ploidy,glucose,hours)
   
 }
 

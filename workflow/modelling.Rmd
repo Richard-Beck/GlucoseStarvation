@@ -10,62 +10,97 @@ knitr::opts_knit$set(root.dir = "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/
 ```
 
 ```{r}
-fitDir <- "data/pathfinder_1cond/model_B1cond/"
-cellLines <- list.files(fitDir)
-ploidy <- c("hi","lo")
+# --- Configuration ---
+MODEL_NAME <- "model_B1cond" # Switch to "model_q1cond" as needed
+# MODEL_NAME <- "model_q1cond" 
 
-conds <- expand.grid(cellLine=cellLines,ploidy=ploidy)
+fitDirBase <- "data/pathfinder_1cond/"
 
-x <- lapply(1:nrow(conds),function(i){
-  cellLine <- conds$cellLine[i]
-  ploidy <- conds$ploidy[i]
+# --- Data Loading Helper ---
+load_fits <- function(model_name, base_dir) {
+  fitDir <- file.path(base_dir, model_name)
+  cellLines <- list.files(fitDir)
+  # Filter out non-directories or files if necessary, assuming structure holds
+  cellLines <- cellLines[dir.exists(file.path(fitDir, cellLines))]
   
-  target_file <- file.path(fitDir,cellLine,ploidy,"optim_model_B1cond.Rds")
-  target_data <- file.path(fitDir,cellLine,ploidy,"stan_data.Rds")
+  if(length(cellLines) == 0) stop("No cell line folders found in ", fitDir)
   
+  ploidy <- c("hi","lo")
+  conds <- expand.grid(cellLine=cellLines, ploidy=ploidy, stringsAsFactors = FALSE)
   
-  opt <- readRDS(target_file)
-  data <- readRDS(target_data)
+  x <- lapply(1:nrow(conds), function(i){
+    cellLine <- conds$cellLine[i]
+    ploidy <- conds$ploidy[i]
+    
+    target_file <- file.path(fitDir, cellLine, ploidy, paste0("optim_", model_name, ".Rds"))
+    target_data <- file.path(fitDir, cellLine, ploidy, "stan_data.Rds")
+    
+    if (!file.exists(target_file) || !file.exists(target_data)) return(NULL)
+    
+    opt <- readRDS(target_file)
+    data <- readRDS(target_data)
+    
+    # Check structure of opt
+    if(length(opt) == 0) return(NULL)
+    
+    ok <- sapply(opt, '[[', "retcode", simplify=TRUE) == 0
+    if (sum(ok) == 0) return(NULL)
+    
+    lp <- sapply(opt[ok], '[[', "lp", simplify=TRUE)
+    pars <- do.call(rbind, lapply(opt[ok], '[[', "pars"))
+    
+    list(mean_ok = mean(ok), lp=lp, pars=pars, cellLine=cellLine, ploidy=ploidy, data=data)
+  })
   
-  ok <- sapply(opt,'[[',"retcode",simplify=T)==0
-  lp <- sapply(opt[ok],'[[',"lp",simplify=T)
-  pars <- do.call(rbind,lapply(opt[ok],'[[',"pars"))
-  list(mean_ok = mean(ok),lp=lp,pars=pars,cellLine=cellLine,ploidy=ploidy,data=data)
-})
-
-proc_lp <- function(xi){
-  lp <- xi$lp
-  lp <- lp[order(lp,decreasing = F)]
-  data.frame(rank=1:length(lp),lp=lp,lp_diff=pmin(100,max(lp)-lp),cellLine=xi$cellLine,ploidy=xi$ploidy)
+  # Filter nulls
+  x <- x[!sapply(x, is.null)]
+  # Filter those with 0 successes (though handled above)
+  mean_OK <- sapply(x, '[[', "mean_ok")
+  x <- x[mean_OK > 0]
+  return(x)
 }
 
-mean_OK <- sapply(x,'[[',"mean_ok")
+x <- load_fits(MODEL_NAME, fitDirBase)
 
-x <- x[mean_OK>0]
+# --- LP Processing and Plotting ---
+proc_lp <- function(xi){
+  lp <- xi$lp
+  lp <- lp[order(lp, decreasing = FALSE)]
+  data.frame(rank=1:length(lp), lp=lp, lp_diff=pmin(100, max(lp)-lp), cellLine=xi$cellLine, ploidy=xi$ploidy)
+}
 
-df_lp <- do.call(rbind,lapply(x,proc_lp))
-
-p <- ggplot(df_lp,aes(x=rank,y=lp_diff,color=ploidy))+
-  facet_wrap(ploidy~cellLine,scales="free",ncol=5)+
-  geom_point()
-p
-
-p <- ggplot(df_lp,aes(x=rank,y=lp,color=ploidy))+
-  facet_wrap(ploidy~cellLine,scales="free",ncol=5)+
-  geom_point()
-p
-
-bests <- aggregate(list(lp=df_lp$lp),by=list(cellLine=df_lp$cellLine,ploidy=df_lp$ploidy),max)
-bests
-sum(bests$lp) ## best so far: -84992.77
+if (length(x) > 0) {
+  df_lp <- do.call(rbind, lapply(x, proc_lp))
+  
+  library(ggplot2)
+  p1 <- ggplot(df_lp, aes(x=rank, y=lp_diff, color=ploidy)) +
+    facet_wrap(ploidy~cellLine, scales="free", ncol=5) +
+    geom_point() +
+    labs(title = paste(MODEL_NAME, "- LP Diff"))
+  print(p1)
+  
+  p2 <- ggplot(df_lp, aes(x=rank, y=lp, color=ploidy)) +
+    facet_wrap(ploidy~cellLine, scales="free", ncol=5) +
+    geom_point() +
+    labs(title = paste(MODEL_NAME, "- Absolute LP"))
+  print(p2)
+  
+  bests <- aggregate(list(lp=df_lp$lp), by=list(cellLine=df_lp$cellLine, ploidy=df_lp$ploidy), max)
+  print(bests)
+  print(paste("Total Best LP:", sum(bests$lp)))
+} else {
+  message("No valid fits found for ", MODEL_NAME)
+}
 ```
 
 
 
 ```{r}
-plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, pars, cell_line, ploidy, cond_label = "Condition") {
+
+plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, pars, cell_line, ploidy, model_name, cond_label = "Condition") {
   suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(ggplot2); library(tibble); library(patchwork) })
   
+  # 1. Parse Sims
   idx_df <- tibble(variable = colnames(y_sim_draws_mat)) %>%
     mutate(clean = gsub("^y_sim\\[|\\]$", "", variable)) %>%
     separate(clean, c("w","g","s"), sep = ",", convert = TRUE)
@@ -77,11 +112,15 @@ plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, pars, cell_line, plo
     mutate(
       well_idx = as.integer(w),
       time = as.numeric(stan_data$t_grid[g]),
-      type = case_when(s == 1 ~ "NL", s == 2 ~ "ND", s == 3 ~ "G")
+      # Map s index to state name. 
+      # Model B: 1=NL, 2=ND, 3=G
+      # Model Q: 1=NL, 2=ND, 3=G, 4=qN. 
+      type = case_when(s == 1 ~ "NL", s == 2 ~ "ND", s == 3 ~ "G", s == 4 ~ "qN", TRUE ~ as.character(s))
     ) %>%
     select(draw, well_idx, time, type, value) %>%
     filter(!is.na(type))
   
+  # 2. Parse Obs
   meta <- tibble(well_idx = seq_len(stan_data$N_wells), G0 = as.numeric(stan_data$G0_per_well), exp_id = as.integer(stan_data$exp_id)) %>%
     mutate(Condition = cond_label, G0_lbl = factor(paste0(G0, " mM"), levels = paste0(sort(unique(G0)), " mM")))
   
@@ -105,31 +144,59 @@ plot_ppc_from_draws <- function(y_sim_draws_mat, stan_data, pars, cell_line, plo
   obs_df <- bind_rows(obs_counts, obs_gluc)
   sims_df <- sims_df %>% left_join(meta %>% select(well_idx, Condition, G0_lbl, exp_id), by = "well_idx")
   
-  # use best (first) row; change to median if you prefer
-  g50a <- exp(as.numeric(pars[1, "logp[5]"]))
-  g50d <- g50a * exp(as.numeric(pars[1, "logp[7]"]))  # gamma multiplier in your Stan mapping
-  g50g <- g50a * exp(as.numeric(pars[1, "logp[11]"]))  # g50g multiplier  <-- NEW
-  hline_df <- tidyr::expand_grid(
-    Condition = unique(meta$Condition),
-    G0_lbl    = levels(meta$G0_lbl)
-  )
-
+  # 3. Handle Reference Lines (Model Specific)
+  hline_df <- NULL
   
+  if (model_name == "model_B1cond" || model_name == "model_B1") {
+    # Existing logic for B
+    g50a <- exp(as.numeric(pars[1, "logp[5]"]))
+    g50d <- g50a * exp(as.numeric(pars[1, "logp[7]"])) 
+    g50g <- g50a * exp(as.numeric(pars[1, "logp[11]"]))
+    
+    hline_base <- tidyr::expand_grid(
+      Condition = unique(meta$Condition),
+      G0_lbl    = levels(meta$G0_lbl)
+    )
+    
+    # Construct DF for plotting
+    hline_df <- bind_rows(
+      hline_base %>% mutate(yintercept = g50a, type_lbl = "growth"),
+      hline_base %>% mutate(yintercept = g50d, type_lbl = "death"),
+      hline_base %>% mutate(yintercept = g50g, type_lbl = "uptake")
+    )
+  } else if (grepl("model_q", model_name)) {
+    # Logic for Q: Plot KG (p[9]) as reference for Glucose affinity
+    # Assuming params follow model_q structure
+    KG <- exp(as.numeric(pars[1, "logp[9]"]))
+    
+    hline_base <- tidyr::expand_grid(
+      Condition = unique(meta$Condition),
+      G0_lbl    = levels(meta$G0_lbl)
+    )
+    hline_df <- hline_base %>% mutate(yintercept = KG, type_lbl = "KG (uptake)")
+  }
+
+  # 4. Plots
   p_counts <- ggplot() +
-    geom_line(data = sims_df %>% filter(type != "G"), aes(time, value, group = interaction(draw, well_idx, type), color = type)) +
-    geom_point(data = obs_df %>% filter(type != "G"), aes(time, value, shape = factor(exp_id), color = type)) +
+    geom_line(data = sims_df %>% filter(type %in% c("NL","ND")), aes(time, value, group = interaction(draw, well_idx, type), color = type)) +
+    geom_point(data = obs_df %>% filter(type %in% c("NL","ND")), aes(time, value, shape = factor(exp_id), color = type)) +
     facet_grid(G0_lbl ~ Condition, scales = "free") + theme_bw() + labs(title = "Counts", shape = "Exp")
   
   p_gluc <- ggplot() +
-    geom_hline(data = hline_df, aes(yintercept = g50a,color="growth"), linewidth = 0.5, alpha = 0.8) +
-    geom_hline(data = hline_df, aes(yintercept = g50d,color="death"), linewidth = 0.5, alpha = 0.8) +
-    geom_hline(data = hline_df, aes(yintercept = g50g, color = "uptake"), linewidth = 0.5, alpha = 0.8) + # <-- NEW
     geom_line(data = sims_df %>% filter(type == "G"), aes(time, value, group = interaction(draw, well_idx))) +
     geom_point(data = obs_df %>% filter(type == "G"), aes(time, value, shape = factor(exp_id))) +
-    scale_y_log10()+
+    scale_y_log10() +
     facet_grid(G0_lbl ~ Condition, scales = "free") + theme_bw() + labs(title = "Glucose", shape = "Exp")
+
+  if (!is.null(hline_df)) {
+    p_gluc <- p_gluc + 
+      geom_hline(data = hline_df, aes(yintercept = yintercept, color = type_lbl), linewidth = 0.5, alpha = 0.8)
+  }
   
-  (p_counts | p_gluc) + plot_annotation(title = paste0(cell_line, " ", ploidy, ": PPC (all draws)"))
+  # Optional: If Model Q, maybe plot qN internal state?
+  # For now keeping it to Counts | Gluc as requested to avoid exploding layout
+  
+  (p_counts | p_gluc) + plot_annotation(title = paste0(model_name, " - ", cell_line, " ", ploidy, ": PPC"))
 }
 
 plot_xi_pars_in_bounds <- function(xi, lp_thresh = 10) {
@@ -137,6 +204,8 @@ plot_xi_pars_in_bounds <- function(xi, lp_thresh = 10) {
   stan_data=xi$data
   lp <- xi$lp
   keep <- lp >= (max(lp) - lp_thresh)
+  if(sum(keep) == 0) keep <- which.max(lp) # ensure at least 1
+  
   pars <- as.data.frame(xi$pars[keep, , drop = FALSE])
   
   log_lower <- log(as.numeric(stan_data$lower_b))
@@ -144,22 +213,25 @@ plot_xi_pars_in_bounds <- function(xi, lp_thresh = 10) {
   param_names <- paste0("logp[", seq_len(stan_data$N_params), "]")
   bounds <- data.frame(Param = param_names, log_lower = log_lower, log_upper = log_upper)
   
+  # Handle cases where pars might have extra columns or mismatch
+  available_params <- intersect(colnames(pars), param_names)
+  
   df <- pars %>%
+    select(all_of(available_params)) %>%
     mutate(.draw = seq_len(n())) %>%
-    pivot_longer(cols = all_of(param_names), names_to = "Param", values_to = "logp") %>%
+    pivot_longer(cols = -c(.draw), names_to = "Param", values_to = "logp") %>%
     left_join(bounds, by = "Param") %>%
     mutate(Param = factor(Param, levels = rev(param_names)))
   
   ggplot(df, aes(x = logp, y = Param)) +
-    geom_segment(aes(x = log_lower, xend = log_upper, yend = Param,color="red")) +
+    geom_segment(aes(x = log_lower, xend = log_upper, yend = Param, color="red")) +
     geom_point(position = position_jitter(height = 0.35, width = 0)) +
     theme_bw() +
     labs(
       title = paste0(xi$cellLine, " ", xi$ploidy, ": logp within ", lp_thresh, " of best"),
-      x = "log(parameter) (optimized values)", y = NULL
+      x = "log(parameter)", y = NULL
     )
 }
-
 
 run_y_sim_from_pars <- function(mod, stan_data, pars) {
   suppressPackageStartupMessages({
@@ -176,9 +248,11 @@ run_y_sim_from_pars <- function(mod, stan_data, pars) {
   out <- vector("list", nrow(pars))
   for (i in seq_len(nrow(pars))) {
     r <- pars[i, , drop = FALSE]
-
-    logp <- as.numeric(r[, paste0("logp[", 1:stan_data$N_params, "]")])
-    logp <- pmin(pmax(logp, log_lower + eps), log_upper - eps)  # <- key fix
+    
+    # Construct logp vector dynamically based on N_params
+    p_names <- paste0("logp[", 1:stan_data$N_params, "]")
+    logp <- as.numeric(r[, p_names])
+    logp <- pmin(pmax(logp, log_lower + eps), log_upper - eps)
 
     init_list <- list(
       logp      = logp,
@@ -194,7 +268,7 @@ run_y_sim_from_pars <- function(mod, stan_data, pars) {
       iter_sampling = 1,
       fixed_param = TRUE,
       init = list(init_list),
-      threads=1,
+      threads = 1,
       refresh = 0
     )
 
@@ -204,43 +278,45 @@ run_y_sim_from_pars <- function(mod, stan_data, pars) {
   do.call(rbind, out)
 }
 
-run_xi_ppc <- function(xi, mod, n = 6, cond_label = "Condition") {
-
+run_xi_ppc <- function(xi, mod, model_name, n = 6, cond_label = "Condition") {
   # order pars by best lp
   lp  <- max(xi$lp) - xi$lp
   o   <- order(lp)
   pars <- as.data.frame(xi$pars[o, , drop = FALSE])
   pars <- head(pars, n)
 
-  # run simulations USING THE EXISTING FUNCTION
   draws <- run_y_sim_from_pars(
     mod       = mod,
     stan_data = xi$data,
     pars      = pars
   )
 
-  # plot
   p <- plot_ppc_from_draws(
     draws,
     stan_data = xi$data,
-    pars=pars,
+    pars      = pars,
     cell_line = xi$cellLine,
     ploidy    = xi$ploidy,
+    model_name = model_name,
     cond_label = cond_label
   )
-
   
   list(draws = draws, plot = p)
 }
 
+# --- Execution ---
 
-MODEL_NAME="model_B1cond"
-stan_file <- paste0("MCMC/", MODEL_NAME, ".stan")
-#mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE),force_recompile=T)
-mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
-plts <- lapply(x,function(xi) run_xi_ppc(xi,mod = mod,n=1)$plot)
-
-bps <- lapply(x,plot_xi_pars_in_bounds)
+if (length(x) > 0) {
+  stan_file <- paste0("MCMC/", MODEL_NAME, ".stan")
+  mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
+  
+  plts <- lapply(x, function(xi) run_xi_ppc(xi, mod = mod, model_name = MODEL_NAME, n=1)$plot)
+  bps <- lapply(x, plot_xi_pars_in_bounds)
+  
+  # To view:
+  # plts[[1]]
+  # bps[[1]]
+}
 
 ```
 

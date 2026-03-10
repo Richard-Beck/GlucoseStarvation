@@ -1,0 +1,63 @@
+#!/bin/bash
+#SBATCH --job-name=PF_hier
+#SBATCH --output=logs/hier_%j.out
+#SBATCH --error=logs/hier_%j.err
+
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32  # 32 Stan threads per sequential start
+#SBATCH --mem=16G           # Memory for fitting all lines at once
+#SBATCH --time=02:00:00     # Optimization time
+#SBATCH --qos=normal
+
+#SBATCH --exclude=hpctpa3pc0030
+
+# ---- Argument Parsing ----
+MODEL_NAME=${1:-"gpath"}
+R_VAL=${2:-2}
+P_VAL=${3:-2}
+W_VAL=${4:-0}
+CONSTRAINT_FLAG=${5:-0}      # 1=strict specialization, 0=unconstrained
+WASTE_MECH_FLAG=${6:-1}      # 1=additive, 0=multiplicative
+
+# ---- Container Config ----
+CONTAINER_URI="docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"
+BINDS="-B /home/$USER,/share,/etc/passwd,/etc/group"
+
+# Keep OMP single threaded so R can fork safely
+export OMP_NUM_THREADS=1
+export TZ="US/Eastern"
+
+# ---- Optimization Config ----
+N_STARTS=250                  # Total number of optimization attempts (runs sequentially)
+NUM_THREADS=32               # Number of threads PER start (Stan threads)
+
+echo "Starting Hierarchical Optimization on $(hostname)"
+echo "Model: ${MODEL_NAME} | Dimensions: ${R_VAL}R, ${P_VAL}P, ${W_VAL}W"
+echo "Constraint Flag: ${CONSTRAINT_FLAG} | Waste Mech Flag: ${WASTE_MECH_FLAG}"
+echo "Config: ${N_STARTS} sequential starts | ${NUM_THREADS} Stan threads"
+
+# ---- FORCE CACHE REFRESH ----
+id $USER > /dev/null 2>&1
+sleep 2
+
+# ---- Execution ----
+# R Script Arguments:
+# 1: MODEL_NAME
+# 2: R_val
+# 3: P_val
+# 4: W_val
+# 5: CONSTRAINT_FLAG
+# 6: WASTE_MECH_FLAG
+# 7: N_STARTS
+# 8: NUM_THREADS
+
+apptainer exec $BINDS $CONTAINER_URI \
+  Rscript ecology/model_selection/models/gpath/optim.R \
+  "$MODEL_NAME" \
+  "$R_VAL" \
+  "$P_VAL" \
+  "$W_VAL" \
+  "$CONSTRAINT_FLAG" \
+  "$WASTE_MECH_FLAG" \
+  "$N_STARTS" \
+  "$NUM_THREADS"

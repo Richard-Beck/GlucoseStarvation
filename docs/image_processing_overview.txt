@@ -1,0 +1,262 @@
+Image Processing Workflow Overview
+Date: 2026-03-10
+
+Purpose
+Preserve the current understanding of the image-processing workflow, the expected
+intermediate files under `data/`, and the main issues/inconsistencies that should
+ be fixed in future work.
+
+High-level workflow
+
+1. Raw image universe
+- Raw images from multiple experiments are linked into a shared `all_raw/`
+  directory by `scripts/mapFolders.R`.
+- Filename metadata are parsed with `get_meta()` in `scripts/define_plate_maps.R`.
+- The metadata table is saved as `data/counts/image_metadata.Rds`.
+
+2. Training-set ID selection
+- `workflow/preliminaries_and_metadata.Rmd` samples training images from
+  `data/counts/image_metadata.Rds`.
+- The current code filters out `MCF10A-ctrl` and `MCF10A-hras`, splits by
+  `cellLine`, and samples evenly across cell lines.
+- The output is `data/train/train_image_ids.csv`.
+- Important: despite the prose in the notebook, the implemented sampling is only
+  balanced by cell line. It is not explicitly stratified by ploidy, glucose,
+  experiment, or time.
+
+3. Validation-set ID selection
+- The notebook contains code that would generate `data/eval/eval_image_ids.csv`
+  in the same way as the training set.
+- However, that block is guarded by a hard `stop(...)` warning that validation is
+  currently being performed on an older image set.
+- Practical interpretation: the effective validation set is legacy and frozen,
+  not regenerated from the current project metadata.
+
+4. Crop generation for train/eval images
+- `scripts/image_processing/create_image_set.py` reads a CSV with a `fname`
+  column and uses `imutils.image_utils` to build:
+  - composite images: `{key}_composite.tif`
+  - Cellpose inputs: `{key}_cpose_input.tif`
+- Both are center-cropped to `200 x 200`.
+- Expected outputs:
+  - `data/train/composites/*.tif`
+  - `data/train/cellpose_inputs/*.tif`
+  - `data/eval/composites/*.tif`
+  - `data/eval/cellpose_inputs/*.tif`
+
+5. Interactive classifier training
+- `scripts/image_processing/train_classifier_interactive.py` is the active
+  object-labeling and classifier-training script.
+- It takes:
+  - `--images_dir` pointing to composite crops
+  - `--cpose_inputs_dir` pointing to Cellpose-input crops
+  - `--output_dir` for labels and classifier state
+- It runs Cellpose on the fly for each crop, matches the corresponding composite,
+  and launches `CurationController`.
+- The main persisted artifacts are:
+  - `session_labels.json`
+  - `object_classifier.pkl`
+- Expected location from the notebook:
+  - `data/train/classifier_training_outputs/session_labels.json`
+  - `data/train/classifier_training_outputs/object_classifier.pkl`
+
+6. Quick prediction on cropped train/eval sets
+- `scripts/image_processing/quick_segment_and_classify.py` applies the trained
+  classifier to pre-made train/eval crops.
+- It:
+  - runs Cellpose on `cpose_input` images
+  - saves segmentation masks as `{key}_mask.tif`
+  - classifies each object using the composite image
+  - writes a per-object CSV
+- Expected eval outputs:
+  - `data/eval/object_predictions.csv`
+  - `data/eval/masks/*.tif`
+
+7. Full-batch inference on all raw data
+- `scripts/image_processing/batch_segment_and_classify.py` is the full raw-data
+  inference path used to generate per-object classifications for the main count
+  workflow.
+- It works directly from `all_raw/`, builds Cellpose inputs and composites from
+  raw images, segments objects, classifies them, and writes a per-object CSV.
+- The SLURM wrappers indicate outputs such as:
+  - `data/counts/batch_results.csv`
+  - `data/counts/batch_results_v2.csv`
+  - `data/counts/batch_results_TEMP_MEASURE_SIZE.csv`
+  - `data/counts/wells/batch_results.csv`
+
+8. Feature extraction / exploratory analysis
+- `batch_segment_and_classify_TEMP_MEASURE_SIZE.py` is a variant that adds
+  `cell_size_px` to the output rows.
+- `workflow/preliminaries_and_metadata.Rmd` uses
+  `data/counts/batch_results_TEMP_MEASURE_SIZE.csv` to build
+  `data/counts/uncorrected_features.Rds` and a series of size- and position-based
+  exploratory summaries.
+- This feature branch is exploratory; it does not feed the active Stan-data
+  construction path.
+
+Expected intermediate files under `data/`
+
+data/counts
+- `image_metadata.Rds`
+- `batch_results.csv`
+- `batch_results_v2.csv`
+- `batch_results_TEMP_MEASURE_SIZE.csv`
+- `uncorrected.Rds`
+- `uncorrected_features.Rds`
+- `wells/well_ids.txt`
+- `wells/batch_results.csv`
+- `wells/wells/*.tif`
+
+data/train
+- `train_image_ids.csv`
+- `composites/*.tif`
+- `cellpose_inputs/*.tif`
+- `classifier_training_outputs/session_labels.json`
+- `classifier_training_outputs/object_classifier.pkl`
+- possibly `curation_outputs/...` from older naming
+
+data/eval
+- `eval_image_ids.csv` if a new validation split is generated
+- `composites/*.tif`
+- `cellpose_inputs/*.tif`
+- `object_predictions.csv`
+- `masks/*.tif`
+- `visualization_panels/*.png`
+
+data/eval_old
+- `labelling_output_points/session_point_labels.json`
+- likely additional legacy validation artifacts not represented in this repo
+
+Alternate / auxiliary mask-curation path
+- `scripts/image_processing/curate_masks.py` supports a separate workflow for
+  curating segmentation masks rather than object-class labels.
+- It expects or creates:
+  - `cpose_masks/*.tif`
+  - `curated_masks/*.tif`
+- This path appears to be separate from the notebook’s main classifier-training
+  path.
+
+How to inspect the current training/validation sets
+
+1. Inspect the split definition files
+- `data/train/train_image_ids.csv`
+- `data/eval/eval_image_ids.csv` if it exists
+
+2. Inspect generated crops
+- `data/train/composites`
+- `data/train/cellpose_inputs`
+- `data/eval/composites`
+- `data/eval/cellpose_inputs`
+
+3. Inspect training labels and classifier state
+- `data/train/classifier_training_outputs/session_labels.json`
+- `data/train/classifier_training_outputs/object_classifier.pkl`
+
+4. Inspect held-out predictions and masks
+- `data/eval/object_predictions.csv`
+- `data/eval/masks`
+
+5. Inspect one example end-to-end
+- `scripts/image_processing/workflow_exemplar_images.py` can generate a panel of:
+  - raw phase / alive / dead channels
+  - normalized Cellpose input
+  - segmentation masks
+  - normalized classifier input
+  - classifier boundary visualization
+
+How training/validation sets could be updated or modified
+
+Training set
+1. Rebuild `data/counts/image_metadata.Rds` from `all_raw/` if needed.
+2. Edit or regenerate `data/train/train_image_ids.csv`.
+3. Run `create_image_set.py` to regenerate the cropped composites and Cellpose
+   inputs.
+4. Run `train_classifier_interactive.py` to create or update:
+   - `session_labels.json`
+   - `object_classifier.pkl`
+5. Optionally run `quick_segment_and_classify.py` on the training crops to
+   inspect the classifier’s behavior on the curated set.
+
+Validation set
+1. Safest path is to create a new validation namespace, e.g. `data/eval_v2/`,
+   rather than overwrite the legacy validation set.
+2. Create a new validation ID CSV.
+3. Run `create_image_set.py` to generate crops.
+4. Run `quick_segment_and_classify.py` to generate predictions and masks.
+5. If proper ground truth is needed, manually annotate a new holdout set and
+   store those annotations in a documented format.
+
+Recommended improvement for future split creation
+- Use `data/counts/image_metadata.Rds` as the master table.
+- Build train/eval splits that are explicitly stratified by:
+  - `cellLine`
+  - `ploidy`
+  - `glucose`
+  - `experiment`
+  - coarse `hours` bins
+- This would better match the stated goal in the notebook and produce a more
+  representative training and validation set.
+
+Issues and inconsistencies identified
+
+1. Training split is only balanced by cell line
+- The prose says the set should balance cell line, sub-lineage, experiment, time,
+  and glucose concentration.
+- The implemented code only equalizes `cellLine`.
+
+2. Validation split is intentionally frozen and partly external
+- The notebook uses `stop(...)` to prevent overwriting the older validation set.
+- This makes the effective validation workflow partly dependent on external legacy
+  artifacts rather than reproducible project-local code.
+
+3. Inconsistent classifier output paths
+- The notebook refers to both:
+  - `data/train/classifier_training_outputs/object_classifier.pkl`
+  - `data/train/curation_outputs/object_classifier.pkl`
+- The batch SLURM scripts point to `classifier_training_outputs`.
+- This should be standardized.
+
+4. Manual validation format is consumed but not produced here
+- The notebook reads:
+  - `data/eval_old/labelling_output_points/session_point_labels.json`
+- I do not see code in this repo that creates that point-label file.
+- That means part of the validation workflow is undocumented or external.
+
+5. Separate mask-curation workflow is not integrated clearly
+- `curate_masks.py` provides a mask-curation path, but it does not appear to be
+  integrated into the main notebook-driven classifier workflow.
+- It is unclear whether this path is active, deprecated, or experimental.
+
+6. Training labels are tied to file order
+- `train_classifier_interactive.py` loads prior labels from `session_labels.json`
+  and warns if the number of files differs.
+- This suggests label alignment depends on the order and count of files in the
+  input directory, which is brittle if the set is changed after curation starts.
+
+7. Data folder contract is implicit, not explicit
+- The scripts assume many `data/...` files and directories exist, but the repo
+  does not define a single authoritative data contract document.
+- This should be addressed in future documentation.
+
+Practical notes for future maintenance
+
+- Treat `data/train/train_image_ids.csv` and any future `eval_image_ids.csv` as
+  the authoritative split definitions.
+- Preserve old validation artifacts under a distinct namespace instead of mixing
+  them with newly generated sets.
+- Standardize on one classifier output directory name.
+- Document the manual-label format and the tool used to generate it.
+- If the split-generation code is updated, keep random seeds and stratification
+  rules explicit for reproducibility.
+
+Open questions / clarifications to resolve later
+
+- Which classifier output location is authoritative:
+  `classifier_training_outputs` or `curation_outputs`?
+- Does `data/eval_old/labelling_output_points/session_point_labels.json` still
+  exist in the working data area, and is it still the intended gold-standard
+  validation set? <YES IT EXISTS. IT IS THE CURRENT DE-FACTO GOLD STANDARD. IT WAS GENERATED BEFORE FILTERING OUT MCF10A-CTRL/HRAS, SO STRICTLY SPEAKING SHOULD BE UPDATED, HOWEVER IT IS 'GOOD ENOUGH FOR NOW'>
+- Was the validation ground truth created with a tool outside this repo? <IT WAS CREATED WITH THE SCRIPTS IN THIS REPO, ALTHOUGH THE VERSION OF THOSE SCRIPTS IS UNKNOWN.>
+- Should future train/eval sets be regenerated from scratch with explicit
+  stratification, or should the legacy validation set remain the publication
+  standard?

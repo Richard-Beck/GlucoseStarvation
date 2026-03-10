@@ -28,6 +28,8 @@ run_configs <- lapply(ff,function(fi){
   list(model="gpath",constraint=fi,alias=fi)
 })
 
+# Refactor note: this model-level optimization summary block could eventually use
+# helpers from R/posterior_io_utils.R once the stale path parsing here is removed.
 results_list <- lapply(run_configs, function(cfg) {
   print(cfg$constraint)
   
@@ -170,6 +172,10 @@ param_patterns <- c("^raw_")#, "^G1_0\\[")
 regex_string <- paste(param_patterns, collapse = "|")
 
 near_cut <- 5
+# Refactor note: `get_model_detail()` and `process_model_fits()` both repeat
+# optimization-output loading and LP-neighborhood bookkeeping. That logic could
+# move to R/posterior_io_utils.R (`load_optim_outputs()` and
+# `summarize_lp_neighborhood()`).
 get_model_detail <- function(model_id, near_cut = 5) {
   lp <- readRDS(file.path(base_path, model_id, "hier/optim_lp_all.Rds"))
   draws <- readRDS(file.path(base_path, model_id, "hier/optim_draws_all.Rds"))
@@ -344,6 +350,9 @@ diagnostics <- lapply(model_ids,function(i){
 ```
 posterior fit quality:
 ```{r}
+# Refactor note: this and the later posterior-simulation chunks repeat the same
+# "load stan_data -> add group structure -> load and bind nuts draws" pattern.
+# That could be centralized in R/gpath_run_utils.R and R/posterior_io_utils.R.
 # 1. Generate Data (Simulations + Ribbon + Observations)
 ll_well <- function(model_ID, n_draws = 50) {
   # Parse Dimensions
@@ -425,6 +434,8 @@ library(patchwork)
 source("ecology/model_selection/models/gpath/gpath.R")
 
 # 1. Generate Data (Simulations + Ribbon + Observations)
+# Refactor note: the repeated gpath run setup in this section could be replaced
+# by shared helpers from R/gpath_run_utils.R and R/posterior_io_utils.R.
 generate_pars <- function(model_ID, n_draws = 50,cv=FALSE) {
   # Parse Dimensions
   dims <- parse_run_id(model_ID)
@@ -1443,6 +1454,9 @@ dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 source(file.path(base_dir, "models", MODEL_NAME, paste0(MODEL_NAME, ".R")))
 
+# Refactor note: the manual fit loading and stan-data augmentation below are a
+# good candidate for extraction into R/gpath_run_utils.R once this legacy block
+# is cleaned up.
 get_best_hier_fit <- function(fit_dir) {
   d <- readRDS(file.path(fit_dir, "stan_data.Rds"))
   lp_vec <- readRDS(file.path(fit_dir, "optim_lp_all.Rds"))

@@ -1,0 +1,66 @@
+Stale or broken code identified during review
+Date: 2026-03-10
+
+workflow/model_analysis.Rmd
+- `workflow/model_analysis.Rmd:31`
+  `results_list <- lapply(run_configs, function(cfg) { ... })` is broken/stale for the current hierarchical `gpath` layout. Inside this block it computes `rel_path` from undefined variable `f` and then tries to recover `cellLine`/`ploidy` from a directory structure that no longer exists for the active `hier` outputs.
+- `workflow/model_analysis.Rmd:173`
+  `get_model_detail()` is an exploratory helper superseded by `process_model_fits()` at line 219. It is only used immediately below for `smm1`/`smm2` and does not feed the main model-comparison workflow.
+- `workflow/model_analysis.Rmd:428`
+  `generate_pars()` is stale/broken. Its nested `get_pars()` references `target_line_id`, which is never defined in scope, repeats `p_metric <- ...` twice, and declares `cv` / `group_id` without using them.
+- `workflow/model_analysis.Rmd:1369`
+  The chunk starting with `constraint <- "glucose_glutamine_limiting"` is a legacy non-`gpath` analysis branch (`cobbdoug`, `pathways`, `pathways2`, `cd_dynamic2`, `glucose_lag`). It no longer matches the current active workflow centered on `ecology/model_selection/models/gpath/*`.
+- `workflow/model_analysis.Rmd:1446`
+  `get_best_hier_fit()` assumes `stan_data.Rds` and `optim_rc_all.Rds` exist under `ecology/model_selection/data/gpath/<RUN_ID>/hier/`. The current active `gpath` optimizer in `ecology/model_selection/models/gpath/optim.R` does not save either file, so this helper is stale against current outputs.
+- `workflow/model_analysis.Rmd:1460`
+  `process_hierarchical_data()` manually unpacks parameters using older `Y_mat`/`tox` logic that does not match the current `gpath` parameter reconstruction implemented by `reconstruct_parms()` in `ecology/model_selection/models/gpath/gpath.R`.
+- `workflow/model_analysis.Rmd:1551`
+  The chunk explicitly labeled "Keep it around" is acknowledged legacy code. It depends on `pathways`-era helpers and is not part of the current active workflow.
+- `workflow/model_analysis.Rmd:1641`
+  The `configs <- list(list(model="pathways", ...))` chunk is a stale posterior-plotting branch for legacy `pathways` outputs (`hier/nuts_draws.Rds`) rather than current `gpath` output structure.
+- `workflow/model_analysis.Rmd:1712`
+  The `constraint <- "glucose_glutamine"; model <- "pathways"` posterior-density chunk is another legacy `pathways` branch, separate from the active `gpath` workflow.
+- `workflow/model_analysis.Rmd:1820`
+  The HMC diagnostics chunk is also hard-wired to legacy `pathways` outputs and repeats diagnostics logic that is already encapsulated in `ecology/nuts_utils.R`.
+
+ecology/model_selection/analysis_utils.R
+- `ecology/model_selection/analysis_utils.R:15`
+  The file hard-depends on `ecology/pathways_model/pathways.R`, which is not present in this repository. That makes the file stale or at least broken as checked in.
+- `ecology/model_selection/analysis_utils.R:23`
+  `parse_metadata()` assumes per-line/per-ploidy fit directories (`.../LineName/PloidyLabel`). That directory convention belongs to the older non-hierarchical model-selection pipeline, not the current `gpath/<run_id>/hier` layout.
+- `ecology/model_selection/analysis_utils.R:36`
+  `process_directory()` is tied to the old fit-directory contract (`stan_data.Rds`, `optim_rc_all.Rds`, `optim_draws_all.Rds` inside per-line/per-ploidy folders) and therefore is stale for the active `gpath` pipeline.
+
+ecology/subset_stan_data.R
+- `ecology/subset_stan_data.R:2`
+  `subset_stan_data()` is only consumed by legacy per-line scripts under `ecology/model_selection/optim_model.R` and `ecology/model_selection/nuts_model.R`. It is unused by the active hierarchical `gpath` workflow.
+
+ecology/model_selection/optim_model.R
+- `ecology/model_selection/optim_model.R:1`
+  Entire script is a legacy per-line/per-ploidy optimizer path. It depends on `subset_stan_data()` and the old constraint-driven model family layout rather than the active `models/gpath/optim.R` workflow.
+
+ecology/model_selection/nuts_model.R
+- `ecology/model_selection/nuts_model.R:1`
+  Entire script is a legacy per-line/per-ploidy NUTS path. It saves `nuts_draws_list.Rds`, a format not used by the current `gpath` workflow, and depends on `subset_stan_data()`.
+
+ecology/model_selection/optim_model_hier.R
+- `ecology/model_selection/optim_model_hier.R:1`
+  Entire script is an older generic hierarchical optimizer for legacy model families. It is superseded by `ecology/model_selection/models/gpath/optim.R` for the current workflow.
+
+ecology/model_selection/nuts_model_hier.R
+- `ecology/model_selection/nuts_model_hier.R:1`
+  Entire script is an older generic hierarchical NUTS runner superseded by `ecology/model_selection/models/gpath/nuts.R`.
+- `ecology/model_selection/nuts_model_hier.R:99`
+  `unflatten_hier_draw()` still reconstructs `G1_0_raw`, while the active `gpath` Stan workflow uses `G1_0`. This is stale against the current parameterization.
+
+ecology/model_selection/models/gpath/pathfinder.R
+- `ecology/model_selection/models/gpath/pathfinder.R:138`
+  `init_arg` is built from optimization output, but `mod$pathfinder()` is called with `init = 2` at line 177. The optimization-derived init path is dead code.
+
+ecology/model_selection/models/gpath/plot_fits.R
+- `ecology/model_selection/models/gpath/plot_fits.R:30`
+  `generate_line_data()` selects the best optimization result using `fits[,"log_lik"]`, but active optimization outputs are not guaranteed to contain `log_lik` in `optim_draws_all.Rds`. This is stale or brittle against the current output contract.
+- `ecology/model_selection/models/gpath/plot_fits.R:43`
+  The same function references `target_line_id`, which is not defined in scope inside `run_sim()`. This is broken as written.
+- `ecology/model_selection/models/gpath/plot_fits.R:152`
+  `prep_line_diag_exact()` also assumes `log_lik` is present in optimization draws and is therefore coupled to an older or inconsistent output shape.

@@ -1,0 +1,71 @@
+• Current end-to-end path
+
+  1. Raw images and object-level classification
+     Counts path starts by linking raw images with workflow/preliminaries_and_metadata.Rmd:19 via scripts/mapFolders.R,
+     then parsing filename metadata with get_meta() in scripts/define_plate_maps.R:105. Object classification is
+     produced by process_image_key() / process_well_id() / main() in scripts/image_processing/
+     batch_segment_and_classify.py:62, which depend on build_raw_group_map, make_cpose_input, and make_composite.
+  2. Count aggregation and optional count smoothing
+     workflow/adaptive_cell_count.Rmd:60 aggregates batch object results into data/counts/uncorrected.Rds. It optionally
+     runs optimize_counts() in src/optimize_counts.R:2, which calls preprocess_dt() and calculate_total_cost() in src/
+     count_smoothing.cpp, then writes data/counts/corrected.Rds at workflow/adaptive_cell_count.Rmd:156.
+  3. Stan data construction
+     The actual Stan input is built only by R/prepare_data.R. Key functions are as_corrected_counts() at line 39,
+     get_grid_idx() at line 221, and costf() at line 291. This script reads data/counts/uncorrected.Rds at R/
+     prepare_data.R:72, merges glucose calibration/data CSVs, constructs the stan_data list at R/prepare_data.R:333, and
+     saves data/stan_ready_data.Rds at R/prepare_data.R:388.
+  4. Model configuration, compilation, optimization, sampling
+     The active model family is gpath under ecology/model_selection/models/gpath/gpath.R. Core helpers are
+     parse_run_id(), get_hierarchical_k(), generate_stan_config(), get_param_names(), and reconstruct_parms(). All fit
+     scripts compile ecology/model_selection/models/gpath/gpath_hier.stan.
+
+     Optimization is ecology/model_selection/models/gpath/optim.R: load stan_ready_data.Rds at line 30, add config at
+     line 37, compile at line 50, run mod$optimize() at line 57, save per-start draws/LP at lines 73-74. Results are
+     consolidated by ecology/model_selection/models/gpath/combine.R:20, which writes optim_draws_all.Rds and
+     optim_lp_all.Rds.
+
+     NUTS is ecology/model_selection/models/gpath/nuts.R: load data at line 42, add config at line 50, compile at line
+     78, convert best optimization draw to init, run mod$sample() at line 210, save summaries/draws at lines 228-229.
+
+     Pathfinder is ecology/model_selection/models/gpath/pathfinder.R: same data/config path, compile at line 71, run
+     mod$pathfinder() at line 174, save outputs at lines 194-198.
+
+     CV NUTS is ecology/model_selection/models/gpath/nuts_cv.R, which rebuilds is_train by holding out the max-ploidy
+     wells for one cell line, then samples one chain per fold/chain combination.
+  5. Model comparison, diagnostics, plots/tables
+     The main comparison notebook is workflow/model_analysis.Rmd. It loads stan_ready_data.Rds at line 19 and sources
+     gpath.R at line 23. It computes AIC and Pareto-front model ranking around lines 101-139, optimization-neighborhood
+     summaries via process_model_fits() at line 219, NUTS diagnostics using analyze_nuts_run() from ecology/
+     nuts_utils.R:68, ploidy-effect posterior summaries using extract_theta_ploidy() at ecology/nuts_utils.R:7, and CV
+     ELPD summaries around workflow/model_analysis.Rmd:730.
+
+     There is also a plotting helper script, ecology/model_selection/models/gpath/plot_fits.R, with
+     generate_line_data(), plot_line_trajectories(), and prep_line_diag_exact() for simulated-vs-observed fit plots.
+
+  Image-derived feature branch
+
+  This is separate from the Stan path. The size-aware classifier is scripts/image_processing/
+  batch_segment_and_classify_TEMP_MEASURE_SIZE.py, which adds cell_size_px. workflow/preliminaries_and_metadata.Rmd:65
+  reads batch_results_TEMP_MEASURE_SIZE.csv, builds data/counts/uncorrected_features.Rds at line 87, and uses that for
+  exploratory feature plots. I do not see that file being consumed anywhere in R/prepare_data.R or the Stan fitting
+  scripts.
+
+  Dead code / duplicated pathways
+
+  - corrected.Rds is not in the Stan path. workflow/adaptive_cell_count.Rmd:156 writes data/counts/corrected.Rds, but R/
+    prepare_data.R:72 reads data/counts/uncorrected.Rds. So count smoothing is currently QC/side-path, not model input.
+  - uncorrected_features.Rds is exploratory only. It is created in workflow/preliminaries_and_metadata.Rmd:87 and not
+    used in Stan-data construction.
+  - ecology/subset_stan_data.R:2 is only used by legacy per-line scripts ecology/model_selection/optim_model.R and
+    ecology/model_selection/nuts_model.R, not by the current gpath hierarchical workflow.
+  - ecology/model_selection/optim_model_hier.R and ecology/model_selection/nuts_model_hier.R are older generic
+    hierarchical runners; the active code is the models/gpath/*.R set.
+  - workflow/modelling.Rmd:20 is a separate legacy analysis path using data/pathfinder_1cond/ and MCMC/*.stan; it is not
+    wired to the current ecology/model_selection/data/gpath outputs.
+  - ecology/model_selection/models/gpath/pathfinder.R computes init_arg from optimization, but the actual call at line
+    174 uses init = 2; that optimization-derived init path is dead.
+  - workflow/model_analysis.Rmd:48 has a broken/stale block: it uses undefined variable f when trying to derive
+    cellLine/ploidy from rel_path.
+  - There are obvious stale duplicates: create_image_set_old.py, batch_segment_and_classify_TEMP_MEASURE_SIZE.py,
+    run_batch_TEMP_MEASURE_SIZE.sbatch, submission_scripts/optim_gpath_old, and multiple .nfs* files under ecology/
+    model_selection/models/gpath/.

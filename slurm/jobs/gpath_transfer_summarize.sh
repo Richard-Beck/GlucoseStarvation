@@ -10,6 +10,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "$REPO_ROOT"
+
 MODEL_NAME=${1:-"gpath"}
 RUN_ID=${2:?run id required}
 OUTPUT_ROOT=${3:-"data/gpath_transfer_cv"}

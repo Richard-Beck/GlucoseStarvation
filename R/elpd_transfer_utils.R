@@ -45,10 +45,12 @@ build_transfer_output_dir <- function(
 }
 
 save_transfer_run_outputs <- function(
-  fit,
+  draws,
   output_dir,
   run_tag,
-  split_meta
+  split_meta,
+  summary_obj = NULL,
+  diag_obj = NULL
 ) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -57,12 +59,11 @@ save_transfer_run_outputs <- function(
   diag_path <- file.path(output_dir, sprintf("optim_diagnostics_%s.Rds", run_tag))
   meta_path <- file.path(output_dir, sprintf("split_meta_%s.Rds", run_tag))
 
-  saveRDS(fit$summary(), summary_path)
-  saveRDS(fit$draws(), draws_path)
+  saveRDS(summary_obj, summary_path)
+  saveRDS(draws, draws_path)
 
-  diag <- tryCatch(fit$diagnostic_summary(), error = function(e) NULL)
-  if (!is.null(diag)) {
-    saveRDS(diag, diag_path)
+  if (!is.null(diag_obj)) {
+    saveRDS(diag_obj, diag_path)
   }
 
   saveRDS(split_meta, meta_path)

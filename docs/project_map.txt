@@ -39,6 +39,9 @@
      existing gpath_hier.stan, with starts initialized from prior full-data NUTS draws, and
      scripts/summarize_gpath_transfer_cv.R picks the best start per condition before aggregating transfer-gain /
      transfer-regret summaries.
+     There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
+     scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
+     data/gpath_transfer_cv_nuts/.
   5. Model comparison, diagnostics, plots/tables
      The main comparison notebook is workflow/model_analysis.Rmd. It loads stan_ready_data.Rds at line 19 and sources
      gpath.R at line 23. It computes AIC and Pareto-front model ranking around lines 101-139, optimization-neighborhood
@@ -54,8 +57,10 @@
 
      Cluster submission is beginning to move outside ecology. slurm/README.md defines the target structure:
      `slurm/jobs/` for stable job scripts, `slurm/submit_*.sh` for one-shot wrappers, and `slurm/runs/...` for generated
-     manifests/job metadata. The directional transfer workflow currently uses this new path via
-     slurm/submit_gpath_transfer_pipeline.sh plus slurm/jobs/gpath_transfer_*.sh.
+     manifests/job metadata. The directional transfer workflows currently use this new path via
+     slurm/submit_gpath_transfer_pipeline.sh and slurm/submit_gpath_transfer_nuts_pipeline.sh plus their
+     corresponding `slurm/jobs/gpath_transfer*.sh` job scripts. These submit wrappers now clear `slurm/logs/` before a
+     new batch submission to keep log volume manageable.
 
   Image-derived feature branch
 

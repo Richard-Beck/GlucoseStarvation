@@ -30,8 +30,14 @@
      Pathfinder is ecology/model_selection/models/gpath/pathfinder.R: same data/config path, compile at line 71, run
      mod$pathfinder() at line 174, save outputs at lines 194-198.
 
-     CV NUTS is ecology/model_selection/models/gpath/nuts_cv.R, which rebuilds is_train by holding out the max-ploidy
-     wells for one cell line, then samples one chain per fold/chain combination.
+     Legacy CV NUTS is ecology/model_selection/models/gpath/nuts_cv.R, which rebuilds is_train by holding out the
+     max-ploidy wells for one cell line, then samples one chain per fold/chain combination.
+
+     The newer directional transfer CV path lives outside ecology: R/gpath_run_utils.R now has
+     get_directional_transfer_split() / apply_directional_transfer_holdout(), scripts/run_gpath_transfer_cv.R runs
+     null/transfer/oracle fits for low->high or high->low line-transfer evaluation using the existing
+     gpath_hier.stan, and scripts/summarize_gpath_transfer_cv.R aggregates held-out ELPD plus transfer-gain /
+     transfer-regret summaries.
   5. Model comparison, diagnostics, plots/tables
      The main comparison notebook is workflow/model_analysis.Rmd. It loads stan_ready_data.Rds at line 19 and sources
      gpath.R at line 23. It computes AIC and Pareto-front model ranking around lines 101-139, optimization-neighborhood
@@ -41,6 +47,11 @@
 
      There is also a plotting helper script, ecology/model_selection/models/gpath/plot_fits.R, with
      generate_line_data(), plot_line_trajectories(), and prep_line_diag_exact() for simulated-vs-observed fit plots.
+
+     Cluster submission is beginning to move outside ecology. slurm/README.md defines the target structure:
+     `slurm/jobs/` for stable job scripts, `slurm/submit_*.sh` for one-shot wrappers, and `slurm/runs/...` for generated
+     manifests/job metadata. The directional transfer workflow currently uses this new path via
+     slurm/submit_gpath_transfer_pipeline.sh plus slurm/jobs/gpath_transfer_*.sh.
 
   Image-derived feature branch
 

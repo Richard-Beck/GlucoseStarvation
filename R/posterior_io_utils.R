@@ -6,6 +6,15 @@ list_matching_rds <- function(path, pattern) {
   sort(files)
 }
 
+log_mean_exp <- function(x) {
+  if (!length(x)) {
+    return(NA_real_)
+  }
+
+  xmax <- max(x)
+  xmax + log(mean(exp(x - xmax)))
+}
+
 bind_rds_draws <- function(files, along = "chain") {
   draws_list <- lapply(files, readRDS)
   do.call(posterior::bind_draws, c(draws_list, along = along))
@@ -53,6 +62,158 @@ summarize_lp_neighborhood <- function(lp, near_cut = 5) {
     lp_diff = lp_diff,
     near_idx = near_idx,
     finite_mask = finite_mask
+  )
+}
+
+clamp_constrained_init <- function(init, maxG0) {
+  if (!is.null(init$sigma_base)) {
+    init$sigma_base <- max(init$sigma_base, 1e-12)
+  }
+
+  if (!is.null(init$sigma_rel)) {
+    init$sigma_rel <- max(init$sigma_rel, 1e-12)
+  }
+
+  if (!is.null(init$G1_0)) {
+    init$G1_0 <- pmax(init$G1_0, 1e-12)
+    init$G1_0 <- pmin(init$G1_0, (2.0 * maxG0) - 1e-12)
+  }
+
+  init
+}
+
+flat_to_init_list <- function(
+  x_named,
+  param_names = c(
+    "raw_theta_line",
+    "raw_theta_ploidy",
+    "raw_N0",
+    "raw_sigma_N",
+    "sigma_base",
+    "sigma_rel",
+    "G1_0"
+  ),
+  maxG0
+) {
+  keep <- !grepl("__$", names(x_named)) & names(x_named) != "lp__"
+  x_named <- x_named[keep]
+  x_named <- x_named[is.finite(x_named)]
+
+  nms <- names(x_named)
+  if (is.null(nms) || !length(nms)) {
+    stop("init vector has no usable names")
+  }
+
+  out <- list()
+
+  scalars <- !grepl("\\[", nms)
+  if (any(scalars)) {
+    for (nm in nms[scalars]) {
+      if (nm %in% param_names) {
+        out[[nm]] <- unname(x_named[[nm]])
+      }
+    }
+  }
+
+  idx_nms <- nms[!scalars]
+  if (length(idx_nms)) {
+    base <- sub("\\[.*$", "", idx_nms)
+
+    for (bn in unique(base)) {
+      if (!(bn %in% param_names)) {
+        next
+      }
+
+      these <- idx_nms[base == bn]
+      idx_list <- lapply(these, function(s) {
+        as.integer(strsplit(gsub("^.*\\[|\\]$", "", s), ",")[[1]])
+      })
+
+      dims <- pmax(1L, Reduce(pmax, idx_list))
+      arr <- array(0.0, dim = dims)
+
+      for (k in seq_along(these)) {
+        ii <- idx_list[[k]]
+        arr[matrix(ii, nrow = 1)] <- unname(x_named[[these[[k]]]])
+      }
+
+      if (length(dims) == 1L) {
+        out[[bn]] <- as.numeric(arr)
+      } else if (length(dims) == 2L) {
+        out[[bn]] <- matrix(arr, nrow = dims[1], ncol = dims[2])
+      } else {
+        out[[bn]] <- arr
+      }
+    }
+  }
+
+  clamp_constrained_init(out, maxG0 = maxG0)
+}
+
+sample_posterior_init <- function(draws, seed, maxG0, param_names = NULL) {
+  dm <- posterior::as_draws_matrix(draws)
+  if (nrow(dm) < 1) {
+    stop("Posterior draws matrix is empty")
+  }
+
+  set.seed(seed)
+  pick <- sample.int(nrow(dm), 1)
+  x_named <- dm[pick, , drop = TRUE]
+  x_named <- x_named[is.finite(x_named)]
+  x_named <- x_named[!is.na(x_named)]
+
+  flat_to_init_list(
+    x_named = x_named,
+    param_names = param_names,
+    maxG0 = maxG0
+  )
+}
+
+load_posterior_init_from_dir <- function(
+  path,
+  seed,
+  maxG0,
+  pattern = "^nuts_draws_[0-9]+\\.Rds$",
+  param_names = NULL
+) {
+  draws <- bind_rds_draws(list_matching_rds(path, pattern), along = "chain")
+  sample_posterior_init(
+    draws = draws,
+    seed = seed,
+    maxG0 = maxG0,
+    param_names = param_names
+  )
+}
+
+get_well_loglik_draws <- function(draws, well_idx) {
+  dm <- posterior::as_draws_matrix(draws)
+  cols <- sprintf("ll_well[%d]", as.integer(well_idx))
+  available <- colnames(dm)
+  missing <- setdiff(cols, available)
+
+  if (length(missing)) {
+    alt_cols <- make.names(cols)
+    if (all(alt_cols %in% available)) {
+      cols <- alt_cols
+      missing <- character(0)
+    }
+  }
+
+  if (length(missing)) {
+    stop(sprintf(
+      "Missing ll_well columns: %s",
+      paste(utils::head(missing, 5), collapse = ", ")
+    ))
+  }
+
+  rowSums(dm[, cols, drop = FALSE])
+}
+
+compute_well_subset_elpd <- function(draws, well_idx) {
+  ll_draws <- get_well_loglik_draws(draws, well_idx)
+  list(
+    elpd = log_mean_exp(ll_draws),
+    ll_draws = ll_draws
   )
 }
 

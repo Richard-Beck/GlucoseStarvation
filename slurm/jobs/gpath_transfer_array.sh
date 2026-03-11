@@ -10,10 +10,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-cd "$REPO_ROOT"
-
 MODEL_NAME=${1:-"gpath"}
 R_VAL=${2:-1}
 P_VAL=${3:-1}
@@ -47,6 +43,8 @@ export TZ="US/Eastern"
 export APPTAINER_NOHTTPS=1
 
 mkdir -p slurm/logs
+
+echo "PWD: $(pwd)"
 
 echo "Starting transfer CV task on $(hostname)"
 echo "Slurm job: ${SLURM_JOB_ID} | array task: ${TASK_ID}"

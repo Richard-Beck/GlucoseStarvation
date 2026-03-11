@@ -12,6 +12,8 @@ CHAIN_ARG <- if (length(args) >= 6) args[6] else "1,2,3,4"
 source("R/gpath_run_utils.R")
 source("R/elpd_transfer_utils.R")
 
+cat(sprintf(">>> make_gpath_transfer_manifest.R cwd: %s\n", getwd()))
+
 stan_data_path <- resolve_stan_data_path(STAN_DATA_PATH)
 stan_data <- readRDS(stan_data_path)
 

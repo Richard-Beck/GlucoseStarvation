@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "$REPO_ROOT"
-
 MODEL_NAME=${1:-"gpath"}
 R_VAL=${2:-1}
 P_VAL=${3:-1}
@@ -33,16 +29,18 @@ BINDS=${BINDS:-"-B /home/$USER,/share,/etc/passwd,/etc/group"}
 
 RUN_ID="${R_VAL}R_${P_VAL}P_${W_VAL}W_C${CONSTRAINT_FLAG}_M${WASTE_MECH_FLAG}"
 STAMP=$(date +"%Y%m%d_%H%M%S")
-RUN_DIR="${REPO_ROOT}/slurm/runs/gpath_transfer/${RUN_ID}/${STAMP}"
+RUN_DIR="slurm/runs/gpath_transfer/${RUN_ID}/${STAMP}"
 MANIFEST_PATH="${RUN_DIR}/task_manifest.tsv"
 JOB_INFO_PATH="${RUN_DIR}/job_ids.txt"
 
-ARRAY_SCRIPT="${REPO_ROOT}/slurm/jobs/gpath_transfer_array.sh"
-SUMMARY_SCRIPT="${REPO_ROOT}/slurm/jobs/gpath_transfer_summarize.sh"
-MANIFEST_SCRIPT="${REPO_ROOT}/scripts/make_gpath_transfer_manifest.R"
+ARRAY_SCRIPT="slurm/jobs/gpath_transfer_array.sh"
+SUMMARY_SCRIPT="slurm/jobs/gpath_transfer_summarize.sh"
+MANIFEST_SCRIPT="scripts/make_gpath_transfer_manifest.R"
 
-mkdir -p "$RUN_DIR" "${REPO_ROOT}/slurm/logs"
+mkdir -p "$RUN_DIR" "slurm/logs"
 export APPTAINER_NOHTTPS=1
+
+echo "PWD: $(pwd)"
 
 echo "Preparing transfer CV manifest in ${RUN_DIR}"
 apptainer exec $BINDS $CONTAINER_URI \
@@ -114,21 +112,21 @@ ARRAY_JOB_ID=$(sbatch --parsable \
   "$CONSTRAINT_FLAG" \
   "$WASTE_MECH_FLAG" \
   "$MANIFEST_PATH" \
-  "${REPO_ROOT}/scripts/run_gpath_transfer_cv.R" \
+  "scripts/run_gpath_transfer_cv.R" \
   "$ITER_WARMUP" \
   "$ITER_SAMPLING" \
   "$ADAPT_DELTA" \
   "$MAX_TREED" \
   "$NUM_THREADS" \
-  "${REPO_ROOT}/${OUTPUT_ROOT}")
+  "$OUTPUT_ROOT")
 
 SUMMARY_JOB_ID=$(sbatch --parsable \
   --dependency="afterany:${ARRAY_JOB_ID}" \
   "$SUMMARY_SCRIPT" \
   "$MODEL_NAME" \
   "$RUN_ID" \
-  "${REPO_ROOT}/${OUTPUT_ROOT}" \
-  "${REPO_ROOT}/scripts/summarize_gpath_transfer_cv.R")
+  "$OUTPUT_ROOT" \
+  "scripts/summarize_gpath_transfer_cv.R")
 
 cat > "$JOB_INFO_PATH" <<EOF
 run_id=${RUN_ID}

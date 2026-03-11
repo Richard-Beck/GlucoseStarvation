@@ -41,6 +41,8 @@ DIRECTION <- normalize_transfer_direction(DIRECTION)
 FIT_TYPE <- normalize_fit_type(FIT_TYPE)
 STAN_DATA_PATH <- resolve_stan_data_path(STAN_DATA_PATH)
 
+cat(sprintf(">>> run_gpath_transfer_cv.R cwd: %s\n", getwd()))
+
 cat(sprintf(
   ">>> Transfer CV | %s | %s | line=%d | direction=%s | fit=%s | chain=%d\n",
   MODEL_NAME,

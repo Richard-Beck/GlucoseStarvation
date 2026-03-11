@@ -12,6 +12,8 @@ source("R/gpath_run_utils.R")
 source("R/posterior_io_utils.R")
 source("R/elpd_transfer_utils.R")
 
+cat(sprintf(">>> summarize_gpath_transfer_cv.R cwd: %s\n", getwd()))
+
 base_dir <- file.path(OUTPUT_ROOT, MODEL_NAME, RUN_ID)
 if (!dir.exists(base_dir)) {
   stop(sprintf("Transfer CV output directory not found: %s", base_dir))

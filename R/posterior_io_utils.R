@@ -66,12 +66,16 @@ summarize_lp_neighborhood <- function(lp, near_cut = 5) {
 }
 
 clamp_constrained_init <- function(init, maxG0) {
-  if (!is.null(init$sigma_base)) {
-    init$sigma_base <- max(init$sigma_base, 1e-12)
+  if (!is.null(init$raw_sigma_base)) {
+    init$raw_sigma_base <- as.numeric(init$raw_sigma_base)
   }
 
-  if (!is.null(init$sigma_rel)) {
-    init$sigma_rel <- max(init$sigma_rel, 1e-12)
+  if (!is.null(init$raw_sigma_rel)) {
+    init$raw_sigma_rel <- as.numeric(init$raw_sigma_rel)
+  }
+
+  if (!is.null(init$nu_N)) {
+    init$nu_N <- max(as.numeric(init$nu_N), 2 + 1e-12)
   }
 
   if (!is.null(init$G1_0)) {
@@ -89,8 +93,9 @@ flat_to_init_list <- function(
     "raw_theta_ploidy",
     "raw_N0",
     "raw_sigma_N",
-    "sigma_base",
-    "sigma_rel",
+    "raw_sigma_base",
+    "raw_sigma_rel",
+    "nu_N",
     "G1_0"
   ),
   maxG0

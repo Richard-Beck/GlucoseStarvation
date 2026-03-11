@@ -1,0 +1,22 @@
+Proposed evaluation: leave one cell line out at a time, estimate the shared ploidy effect from the remaining lines, then test whether that effect transfers
+ to the held-out line while allowing its line-specific nuisance parameters to be inferred from the observed ploidy state. Here, the nuisance parameters are 
+the cell-line baseline ODE quantities needed to instantiate the trajectory, such as initial conditions and parameters like uptake rates, saturation 
+constants, yields, and related line-level biological terms. The key idea is to ask whether a ploidy effect learned across other lines can explain the 
+missing ploidy state of a new line once that line’s baseline biology has been inferred from its observed state.
+
+In practice, this evaluation is directional. In the original scheme, the low-ploidy variant of the held-out line is retained to infer its nuisance 
+parameters, and the high-ploidy variant is held out apart from the t=0 point; the transferred ploidy effect is then used to predict that missing
+ high-ploidy behavior. This is a reasonable primary analysis if the lower-ploidy state is treated as the biological baseline. However, the procedure is 
+not necessarily symmetric, so the reverse direction—using the high-ploidy state to infer nuisance parameters and testing prediction of the low-ploidy 
+state—should also be run as a sensitivity analysis. Results should therefore be reported separately for low→high and high→low transfer, with any pooled 
+summary treated as secondary.
+
+For each held-out line and transfer direction, compare three fits on the missing ploidy state: a null fit with no ploidy effect, a transfer fit using 
+the ploidy effect estimated from the training lines, and an oracle fit where the ploidy effect is allowed to re-fit freely for that line. From these, 
+report the transfer gain over null and the transfer regret relative to oracle. This preserves the logic of the existing cross-validation framework, but 
+makes the directional assumption explicit and tests how sensitive the conclusion is to which ploidy state is treated as the baseline.
+
+This is an update to the nuts_cv procedure intended to be less computationally intensive. Much of the code infrastructure to achieve this update is already
+in place. It is recommended to perform multiple optimizations with starting parameters sampled from the posteriors.
+
+This preoject is in process of reorganization, so no new code should be added inside the /ecology folder. 

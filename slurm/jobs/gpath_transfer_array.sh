@@ -33,7 +33,7 @@ if [ -z "$TASK_LINE" ]; then
   exit 1
 fi
 
-IFS=$'\t' read -r _TASK LINE_ID DIRECTION FIT_TYPE CHAIN_ID OBSERVED_VALUE HOLDOUT_VALUE HOLDOUT_WELLS HOLDOUT_OBS STAN_DATA_PATH <<< "$TASK_LINE"
+IFS=$'\t' read -r _TASK LINE_ID DIRECTION FIT_TYPE START_ID OBSERVED_VALUE HOLDOUT_VALUE HOLDOUT_WELLS HOLDOUT_OBS STAN_DATA_PATH <<< "$TASK_LINE"
 
 CONTAINER_URI=${CONTAINER_URI:-"docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"}
 BINDS=${BINDS:-"-B /home/$USER,/share,/etc/passwd,/etc/group"}
@@ -49,7 +49,7 @@ echo "PWD: $(pwd)"
 echo "Starting transfer CV task on $(hostname)"
 echo "Slurm job: ${SLURM_JOB_ID} | array task: ${TASK_ID}"
 echo "Manifest: ${MANIFEST_PATH}"
-echo "Task: line=${LINE_ID} direction=${DIRECTION} fit=${FIT_TYPE} chain=${CHAIN_ID}"
+echo "Task: line=${LINE_ID} direction=${DIRECTION} fit=${FIT_TYPE} start=${START_ID}"
 echo "Held-out wells=${HOLDOUT_WELLS} held-out obs=${HOLDOUT_OBS}"
 
 id "$USER" > /dev/null 2>&1
@@ -66,7 +66,7 @@ apptainer exec $BINDS $CONTAINER_URI \
   "$LINE_ID" \
   "$DIRECTION" \
   "$FIT_TYPE" \
-  "$CHAIN_ID" \
+  "$START_ID" \
   "$ITER_WARMUP" \
   "$ITER_SAMPLING" \
   "$ADAPT_DELTA" \

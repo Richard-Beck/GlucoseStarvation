@@ -17,14 +17,14 @@ build_transfer_run_id <- function(
   line_id,
   direction,
   fit_type,
-  chain_id
+  start_id
 ) {
   sprintf(
-    "line%02d_%s_%s_chain%02d",
+    "line%02d_%s_%s_start%02d",
     as.integer(line_id),
     normalize_transfer_direction(direction),
     normalize_fit_type(fit_type),
-    as.integer(chain_id)
+    as.integer(start_id)
   )
 }
 
@@ -52,15 +52,15 @@ save_transfer_run_outputs <- function(
 ) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-  summary_path <- file.path(output_dir, sprintf("nuts_summary_%s.Rds", run_tag))
-  draws_path <- file.path(output_dir, sprintf("nuts_draws_%s.Rds", run_tag))
-  diag_path <- file.path(output_dir, sprintf("nuts_diagnostics_%s.Rds", run_tag))
+  summary_path <- file.path(output_dir, sprintf("optim_summary_%s.Rds", run_tag))
+  draws_path <- file.path(output_dir, sprintf("optim_draws_%s.Rds", run_tag))
+  diag_path <- file.path(output_dir, sprintf("optim_diagnostics_%s.Rds", run_tag))
   meta_path <- file.path(output_dir, sprintf("split_meta_%s.Rds", run_tag))
 
   saveRDS(fit$summary(), summary_path)
   saveRDS(fit$draws(), draws_path)
 
-  diag <- tryCatch(fit$sampler_diagnostics(), error = function(e) NULL)
+  diag <- tryCatch(fit$diagnostic_summary(), error = function(e) NULL)
   if (!is.null(diag)) {
     saveRDS(diag, diag_path)
   }
@@ -77,6 +77,9 @@ save_transfer_run_outputs <- function(
 
 summarize_transfer_draws <- function(draws, split_meta) {
   ll <- compute_well_subset_elpd(draws, split_meta$holdout_wells)
+  dm <- posterior::as_draws_matrix(draws)
+  lp_col <- if ("lp__" %in% colnames(dm)) "lp__" else NULL
+  lp_value <- if (is.null(lp_col)) NA_real_ else as.numeric(dm[1, lp_col])
 
   data.frame(
     line_id = split_meta$line_id,
@@ -86,13 +89,14 @@ summarize_transfer_draws <- function(draws, split_meta) {
     observed_value = split_meta$observed_value,
     holdout_wells = length(split_meta$holdout_wells),
     holdout_obs = split_meta$holdout_total_obs,
+    lp__ = lp_value,
     elpd = ll$elpd,
     stringsAsFactors = FALSE
   )
 }
 
 collect_transfer_result_files <- function(output_dir) {
-  draw_files <- list.files(output_dir, pattern = "^nuts_draws_.*\\.Rds$", full.names = TRUE)
+  draw_files <- list.files(output_dir, pattern = "^optim_draws_.*\\.Rds$", full.names = TRUE)
   meta_files <- list.files(output_dir, pattern = "^split_meta_.*\\.Rds$", full.names = TRUE)
 
   list(
@@ -113,7 +117,7 @@ summarize_transfer_directory <- function(output_dir) {
   )
 
   rows <- lapply(files$draw_files, function(draw_file) {
-    tag <- sub("^nuts_draws_(.*)\\.Rds$", "\\1", basename(draw_file))
+    tag <- sub("^optim_draws_(.*)\\.Rds$", "\\1", basename(draw_file))
     split_meta <- meta_by_tag[[tag]]
     if (is.null(split_meta)) {
       stop(sprintf("Missing split metadata for '%s'", tag))
@@ -121,7 +125,7 @@ summarize_transfer_directory <- function(output_dir) {
 
     draws <- readRDS(draw_file)
     out <- summarize_transfer_draws(draws, split_meta)
-    out$chain_tag <- tag
+    out$start_tag <- tag
     out
   })
 

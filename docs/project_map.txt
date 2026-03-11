@@ -35,8 +35,9 @@
 
      The newer directional transfer CV path lives outside ecology: R/gpath_run_utils.R now has
      get_directional_transfer_split() / apply_directional_transfer_holdout(), scripts/run_gpath_transfer_cv.R runs
-     null/transfer/oracle fits for low->high or high->low line-transfer evaluation using the existing
-     gpath_hier.stan, and scripts/summarize_gpath_transfer_cv.R aggregates held-out ELPD plus transfer-gain /
+     null/transfer/oracle multi-start optimizations for low->high or high->low line-transfer evaluation using the
+     existing gpath_hier.stan, with starts initialized from prior full-data NUTS draws, and
+     scripts/summarize_gpath_transfer_cv.R picks the best start per condition before aggregating transfer-gain /
      transfer-regret summaries.
   5. Model comparison, diagnostics, plots/tables
      The main comparison notebook is workflow/model_analysis.Rmd. It loads stan_ready_data.Rds at line 19 and sources

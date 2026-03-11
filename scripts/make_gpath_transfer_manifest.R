@@ -7,7 +7,7 @@ STAN_DATA_PATH <- if (length(args) >= 2) args[2] else ""
 LINE_ARG <- if (length(args) >= 3) args[3] else "all"
 DIRECTION_ARG <- if (length(args) >= 4) args[4] else "low_to_high,high_to_low"
 FIT_ARG <- if (length(args) >= 5) args[5] else "null,transfer,oracle"
-CHAIN_ARG <- if (length(args) >= 6) args[6] else "1,2,3,4"
+START_ARG <- if (length(args) >= 6) args[6] else "1,2,3,4"
 
 source("R/gpath_run_utils.R")
 source("R/elpd_transfer_utils.R")
@@ -30,7 +30,7 @@ line_ids <- if (tolower(trimws(LINE_ARG)) == "all") {
 
 directions <- vapply(parse_csv_arg(DIRECTION_ARG), normalize_transfer_direction, character(1))
 fit_types <- vapply(parse_csv_arg(FIT_ARG), normalize_fit_type, character(1))
-chain_ids <- as.integer(parse_csv_arg(CHAIN_ARG))
+start_ids <- as.integer(parse_csv_arg(START_ARG))
 
 rows <- list()
 idx <- 1L
@@ -44,13 +44,13 @@ for (line_id in line_ids) {
     )
 
     for (fit_type in fit_types) {
-      for (chain_id in chain_ids) {
+      for (start_id in start_ids) {
         rows[[idx]] <- data.frame(
           task_id = idx,
           line_id = as.integer(line_id),
           direction = direction,
           fit_type = fit_type,
-          chain_id = as.integer(chain_id),
+          start_id = as.integer(start_id),
           observed_value = split_meta$observed_value,
           holdout_value = split_meta$holdout_value,
           holdout_wells = length(split_meta$holdout_wells),

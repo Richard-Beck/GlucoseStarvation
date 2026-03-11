@@ -23,12 +23,12 @@ dirs <- list.dirs(base_dir, recursive = TRUE, full.names = TRUE)
 dirs <- dirs[dirs != base_dir]
 
 rows <- lapply(dirs, function(dir_path) {
-  chain_files <- list.files(dir_path, pattern = "^chain_summary_.*\\.Rds$", full.names = TRUE)
-  if (!length(chain_files)) {
+  start_files <- list.files(dir_path, pattern = "^start_summary_.*\\.Rds$", full.names = TRUE)
+  if (!length(start_files)) {
     return(NULL)
   }
 
-  do.call(rbind, lapply(chain_files, readRDS))
+  do.call(rbind, lapply(start_files, readRDS))
 })
 
 rows <- Filter(Negate(is.null), rows)
@@ -38,14 +38,14 @@ if (!length(rows)) {
 
 summary_df <- do.call(rbind, rows)
 
-agg <- aggregate(
-  elpd ~ line_id + direction + fit_type + holdout_value + observed_value + holdout_wells + holdout_obs,
-  data = summary_df,
-  FUN = mean
-)
+best_idx <- unlist(lapply(
+  split(seq_len(nrow(summary_df)), interaction(summary_df$line_id, summary_df$direction, summary_df$fit_type, drop = TRUE)),
+  function(idx) idx[which.max(summary_df$lp__[idx])]
+))
+best_df <- summary_df[sort(best_idx), ]
 
 wide <- reshape(
-  agg[, c("line_id", "direction", "fit_type", "elpd")],
+  best_df[, c("line_id", "direction", "fit_type", "elpd")],
   idvar = c("line_id", "direction"),
   timevar = "fit_type",
   direction = "wide"
@@ -55,7 +55,8 @@ names(wide) <- sub("^elpd\\.", "", names(wide))
 wide$transfer_gain <- wide$transfer - wide$null
 wide$transfer_regret <- wide$oracle - wide$transfer
 
-saveRDS(summary_df, file.path(base_dir, "transfer_chain_summaries.Rds"))
+saveRDS(summary_df, file.path(base_dir, "transfer_start_summaries.Rds"))
+saveRDS(best_df, file.path(base_dir, "transfer_best_start_summary.Rds"))
 saveRDS(wide, file.path(base_dir, "transfer_comparison_summary.Rds"))
 
 print(wide[order(wide$direction, wide$line_id), ], row.names = FALSE)

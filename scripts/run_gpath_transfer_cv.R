@@ -14,7 +14,7 @@ WASTE_MECH_FLAG <- if (length(args) >= 6) as.integer(args[6]) else 1L
 LINE_ID <- if (length(args) >= 7) as.integer(args[7]) else 1L
 DIRECTION <- if (length(args) >= 8) args[8] else "low_to_high"
 FIT_TYPE <- if (length(args) >= 9) args[9] else "transfer"
-CHAIN_ID <- if (length(args) >= 10) as.integer(args[10]) else 1L
+START_ID <- if (length(args) >= 10) as.integer(args[10]) else 1L
 ITER_WARMUP <- if (length(args) >= 11) as.integer(args[11]) else 500L
 ITER_SAMPLING <- if (length(args) >= 12) as.integer(args[12]) else 1000L
 ADAPT_DELTA <- if (length(args) >= 13) as.numeric(args[13]) else 0.9
@@ -44,13 +44,13 @@ STAN_DATA_PATH <- resolve_stan_data_path(STAN_DATA_PATH)
 cat(sprintf(">>> run_gpath_transfer_cv.R cwd: %s\n", getwd()))
 
 cat(sprintf(
-  ">>> Transfer CV | %s | %s | line=%d | direction=%s | fit=%s | chain=%d\n",
+  ">>> Transfer CV optimize | %s | %s | line=%d | direction=%s | fit=%s | start=%d\n",
   MODEL_NAME,
   run_id,
   LINE_ID,
   DIRECTION,
   FIT_TYPE,
-  CHAIN_ID
+  START_ID
 ))
 cat(sprintf(">>> Stan data: %s\n", STAN_DATA_PATH))
 
@@ -97,9 +97,10 @@ if (!file.exists(stan_file)) {
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
 posterior_dir <- file.path("ecology/model_selection/data", MODEL_NAME, run_id, "hier", "nuts")
-seed_init <- 1000000L + 1000L * LINE_ID + CHAIN_ID
-seed_fit <- 2000000L + 1000L * LINE_ID + CHAIN_ID
+seed_init <- 1000000L + 1000L * LINE_ID + START_ID
+seed_fit <- 2000000L + 1000L * LINE_ID + START_ID
 maxG0 <- max(as.numeric(stan_data$G0_per_well), na.rm = TRUE)
+cat(sprintf(">>> Optimization config: algorithm=lbfgs iter=%d seed=%d\n", ITER_SAMPLING, seed_fit))
 
 init_arg <- 2
 if (dir.exists(posterior_dir)) {
@@ -122,27 +123,22 @@ if (dir.exists(posterior_dir)) {
   cat(sprintf(">>> Posterior directory missing (%s); using init=2\n", posterior_dir))
 }
 
-fit <- mod$sample(
+fit <- mod$optimize(
   data = stan_data,
-  chains = 1,
-  parallel_chains = 1,
   threads_per_chain = NUM_THREADS,
   seed = seed_fit,
-  iter_warmup = ITER_WARMUP,
-  iter_sampling = ITER_SAMPLING,
-  adapt_delta = ADAPT_DELTA,
-  max_treedepth = MAX_TREED,
-  save_warmup = TRUE,
   init = init_arg,
-  metric = "dense_e",
-  refresh = 10
+  jacobian = TRUE,
+  refresh = 10,
+  algorithm = "lbfgs",
+  iter = ITER_SAMPLING
 )
 
 run_tag <- build_transfer_run_id(
   line_id = LINE_ID,
   direction = DIRECTION,
   fit_type = FIT_TYPE,
-  chain_id = CHAIN_ID
+  start_id = START_ID
 )
 output_dir <- build_transfer_output_dir(
   output_root = OUTPUT_ROOT,
@@ -159,12 +155,13 @@ paths <- save_transfer_run_outputs(
   split_meta = split_meta
 )
 
-chain_summary <- summarize_transfer_draws(fit$draws(), split_meta)
-chain_summary$run_tag <- run_tag
+start_summary <- summarize_transfer_draws(fit$draws(), split_meta)
+start_summary$run_tag <- run_tag
+start_summary$start_id <- START_ID
 saveRDS(
-  chain_summary,
-  file.path(output_dir, sprintf("chain_summary_%s.Rds", run_tag))
+  start_summary,
+  file.path(output_dir, sprintf("start_summary_%s.Rds", run_tag))
 )
 
-cat(sprintf(">>> Saved draws to %s\n", paths$draws_path))
-cat(sprintf(">>> Chain ELPD on held-out wells: %.3f\n", chain_summary$elpd))
+cat(sprintf(">>> Saved optimize draws to %s\n", paths$draws_path))
+cat(sprintf(">>> Start ELPD on held-out wells: %.3f\n", start_summary$elpd))

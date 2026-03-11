@@ -162,6 +162,10 @@ sample_posterior_init <- function(draws, seed, maxG0, param_names = NULL) {
   x_named <- x_named[is.finite(x_named)]
   x_named <- x_named[!is.na(x_named)]
 
+  if (is.null(param_names)) {
+    return(flat_to_init_list(x_named = x_named, maxG0 = maxG0))
+  }
+
   flat_to_init_list(
     x_named = x_named,
     param_names = param_names,

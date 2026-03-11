@@ -19,7 +19,23 @@ stan_data <- readRDS(stan_data_path)
 
 parse_csv_arg <- function(x) {
   vals <- trimws(unlist(strsplit(x, ",")))
-  vals[nzchar(vals)]
+  vals <- vals[nzchar(vals)]
+
+  expand_token <- function(tok) {
+    if (grepl("^[0-9]+:[0-9]+$", tok)) {
+      parts <- as.integer(strsplit(tok, ":", fixed = TRUE)[[1]])
+      return(as.character(seq(parts[1], parts[2])))
+    }
+
+    if (grepl("^[0-9]+-[0-9]+$", tok)) {
+      parts <- as.integer(strsplit(tok, "-", fixed = TRUE)[[1]])
+      return(as.character(seq(parts[1], parts[2])))
+    }
+
+    tok
+  }
+
+  unlist(lapply(vals, expand_token), use.names = FALSE)
 }
 
 line_ids <- if (tolower(trimws(LINE_ARG)) == "all") {

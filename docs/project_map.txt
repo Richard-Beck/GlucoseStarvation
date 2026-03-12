@@ -38,7 +38,9 @@
      null/transfer/oracle multi-start optimizations for low->high or high->low line-transfer evaluation using the
      existing gpath_hier.stan, with starts initialized from prior full-data NUTS draws, and
      scripts/summarize_gpath_transfer_cv.R picks the best start per condition before aggregating transfer-gain /
-     transfer-regret summaries.
+     transfer-regret summaries. Parameter-level transfer analysis now lives in R/parameter_transfer_utils.R and
+     scripts/summarize_gpath_parameter_transfer.R, which reconstruct held-out-line mechanistic parameters for the best
+     transfer and oracle fits and compare the inferred missing-state parameter values and ploidy-induced shifts.
      There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
      scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
      data/gpath_transfer_cv_nuts/.

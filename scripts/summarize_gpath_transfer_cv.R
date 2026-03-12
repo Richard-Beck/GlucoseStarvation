@@ -11,6 +11,7 @@ OUTPUT_ROOT <- if (length(args) >= 3) args[3] else "data/gpath_transfer_cv"
 source("R/gpath_run_utils.R")
 source("R/posterior_io_utils.R")
 source("R/elpd_transfer_utils.R")
+source("R/parameter_transfer_utils.R")
 
 cat(sprintf(">>> summarize_gpath_transfer_cv.R cwd: %s\n", getwd()))
 
@@ -58,5 +59,16 @@ wide$transfer_regret <- wide$oracle - wide$transfer
 saveRDS(summary_df, file.path(base_dir, "transfer_start_summaries.Rds"))
 saveRDS(best_df, file.path(base_dir, "transfer_best_start_summary.Rds"))
 saveRDS(wide, file.path(base_dir, "transfer_comparison_summary.Rds"))
+
+param_tables <- build_parameter_transfer_tables(
+  model_id = RUN_ID,
+  output_root = OUTPUT_ROOT,
+  stan_data_path = "ecology/stan_ready_data.Rds",
+  model_name = MODEL_NAME
+)
+saveRDS(param_tables$parameter_states, file.path(base_dir, "parameter_transfer_states.Rds"))
+saveRDS(param_tables$parameter_shifts, file.path(base_dir, "parameter_transfer_shifts.Rds"))
+saveRDS(param_tables$parameter_comparison, file.path(base_dir, "parameter_transfer_comparison.Rds"))
+saveRDS(param_tables$comparison_summary, file.path(base_dir, "parameter_transfer_summary.Rds"))
 
 print(wide[order(wide$direction, wide$line_id), ], row.names = FALSE)

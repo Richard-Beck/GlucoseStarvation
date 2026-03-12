@@ -237,6 +237,7 @@ build_parameter_transfer_tables <- function(
     missing_oracle <- fit_state_vals$oracle$holdout[common_params]
     observed_transfer <- fit_state_vals$transfer$observed[common_params]
     observed_oracle <- fit_state_vals$oracle$observed[common_params]
+    null_holdout <- observed_transfer
     shift_transfer <- missing_transfer - observed_transfer
     shift_oracle <- missing_oracle - observed_oracle
 
@@ -244,9 +245,13 @@ build_parameter_transfer_tables <- function(
       line_id = line_id,
       direction = direction,
       parameter = common_params,
+      null_holdout = as.numeric(null_holdout),
       transfer_holdout = as.numeric(missing_transfer),
       oracle_holdout = as.numeric(missing_oracle),
+      null_vs_oracle_diff = as.numeric(null_holdout - missing_oracle),
       holdout_diff = as.numeric(missing_transfer - missing_oracle),
+      transfer_improvement_over_null = as.numeric(abs(null_holdout - missing_oracle) - abs(missing_transfer - missing_oracle)),
+      null_shift = 0,
       transfer_shift = as.numeric(shift_transfer),
       oracle_shift = as.numeric(shift_oracle),
       shift_diff = as.numeric(shift_transfer - shift_oracle),
@@ -257,15 +262,23 @@ build_parameter_transfer_tables <- function(
     positive_mask <- (missing_transfer > 0) & (missing_oracle > 0)
     log_err <- rep(NA_real_, length(common_params))
     log_err[positive_mask] <- log(missing_transfer[positive_mask]) - log(missing_oracle[positive_mask])
+    null_positive_mask <- (null_holdout > 0) & (missing_oracle > 0)
+    null_log_err <- rep(NA_real_, length(common_params))
+    null_log_err[null_positive_mask] <- log(null_holdout[null_positive_mask]) - log(missing_oracle[null_positive_mask])
 
     summary_rows[[idx_summary]] <- data.frame(
       line_id = line_id,
       direction = direction,
       n_parameters = length(common_params),
+      mean_abs_null_vs_oracle_diff = mean(abs(null_holdout - missing_oracle), na.rm = TRUE),
       mean_abs_holdout_diff = mean(abs(missing_transfer - missing_oracle), na.rm = TRUE),
+      mean_transfer_improvement_over_null = mean(abs(null_holdout - missing_oracle) - abs(missing_transfer - missing_oracle), na.rm = TRUE),
+      prop_parameters_transfer_better_than_null = mean(abs(missing_transfer - missing_oracle) < abs(null_holdout - missing_oracle), na.rm = TRUE),
+      rmse_null_vs_oracle_diff = sqrt(mean((null_holdout - missing_oracle)^2, na.rm = TRUE)),
       rmse_holdout_diff = sqrt(mean((missing_transfer - missing_oracle)^2, na.rm = TRUE)),
       mean_abs_shift_diff = mean(abs(shift_transfer - shift_oracle), na.rm = TRUE),
       rmse_shift_diff = sqrt(mean((shift_transfer - shift_oracle)^2, na.rm = TRUE)),
+      mean_abs_log_null_holdout_ratio = mean(abs(null_log_err), na.rm = TRUE),
       mean_abs_log_holdout_ratio = mean(abs(log_err), na.rm = TRUE),
       stringsAsFactors = FALSE
     )

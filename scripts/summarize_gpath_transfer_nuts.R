@@ -9,6 +9,7 @@ RUN_ID <- if (length(args) >= 2) args[2] else "1R_1P_0W_C0_M1"
 OUTPUT_ROOT <- if (length(args) >= 3) args[3] else "data/gpath_transfer_cv_nuts"
 
 source("R/posterior_io_utils.R")
+source("R/elpd_transfer_utils.R")
 
 cat(sprintf(">>> summarize_gpath_transfer_nuts.R cwd: %s\n", getwd()))
 

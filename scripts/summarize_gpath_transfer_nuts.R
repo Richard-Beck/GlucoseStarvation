@@ -28,16 +28,32 @@ for (dir_path in dirs) {
   meta_files <- list.files(dir_path, pattern = "^split_meta_.*\\.Rds$", full.names = TRUE)
   if (!length(draw_files) || !length(meta_files)) next
 
-  dr <- bind_rds_draws(draw_files, along = "chain")
-  meta <- readRDS(meta_files[[1]])
-  ss <- summarize_transfer_draws(dr, meta)
-  ss$n_chains <- length(draw_files)
+  draw_tags <- sub("^nuts_draws_(.*)\\.Rds$", "\\1", basename(draw_files))
+  meta_tags <- sub("^split_meta_(.*)\\.Rds$", "\\1", basename(meta_files))
 
-  diags <- suppressWarnings(summarise_draws(dr, rhat = rhat, ess_bulk = ess_bulk))
-  ss$bad_rhat <- sum(diags$rhat > 1.01, na.rm = TRUE)
-  ss$bad_ess <- sum(diags$ess_bulk < 400, na.rm = TRUE)
+  common_tags <- intersect(draw_tags, meta_tags)
+  if (!length(common_tags)) {
+    next
+  }
 
-  condition_rows[[length(condition_rows) + 1L]] <- ss
+  group_keys <- sub("_chain[0-9]+$", "", common_tags)
+
+  for (group_key in unique(group_keys)) {
+    idx <- which(group_keys == group_key)
+    group_draw_files <- draw_files[match(common_tags[idx], draw_tags)]
+    group_meta_files <- meta_files[match(common_tags[idx], meta_tags)]
+
+    dr <- bind_rds_draws(group_draw_files, along = "chain")
+    meta <- readRDS(group_meta_files[[1]])
+    ss <- summarize_transfer_draws(dr, meta)
+    ss$n_chains <- length(group_draw_files)
+
+    diags <- suppressWarnings(summarise_draws(dr, rhat = rhat, ess_bulk = ess_bulk))
+    ss$bad_rhat <- sum(diags$rhat > 1.01, na.rm = TRUE)
+    ss$bad_ess <- sum(diags$ess_bulk < 400, na.rm = TRUE)
+
+    condition_rows[[length(condition_rows) + 1L]] <- ss
+  }
 }
 
 if (!length(condition_rows)) {

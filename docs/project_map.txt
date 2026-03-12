@@ -41,6 +41,8 @@
      transfer-regret summaries. Parameter-level transfer analysis now lives in R/parameter_transfer_utils.R and
      scripts/summarize_gpath_parameter_transfer.R, which reconstruct held-out-line mechanistic parameters for the best
      transfer and oracle fits and compare the inferred missing-state parameter values and ploidy-induced shifts.
+     Visualization helpers for this parameter-transfer output now live in R/parameter_transfer_plot_utils.R and
+     scripts/plot_gpath_parameter_transfer.R.
      There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
      scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
      data/gpath_transfer_cv_nuts/.

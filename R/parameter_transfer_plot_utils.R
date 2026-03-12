@@ -53,8 +53,12 @@ plot_parameter_transfer_improvement <- function(
   df <- dat$comparison
   df$family <- vapply(df$parameter, get_parameter_family, character(1))
   df$direction <- factor(df$direction, levels = c("low_to_high", "high_to_low"))
+  eps <- 1e-12
+  df$abs_null_err <- pmax(abs(df$null_vs_oracle_diff), eps)
+  df$abs_transfer_err <- pmax(abs(df$holdout_diff), eps)
+  df$log10_error_ratio <- log10(df$abs_transfer_err / df$abs_null_err)
 
-  ggplot(df, aes(x = family, y = transfer_improvement_over_null, color = direction)) +
+  ggplot(df, aes(x = family, y = log10_error_ratio, color = direction)) +
     geom_hline(yintercept = 0, linetype = 2, color = "grey50") +
     geom_jitter(width = 0.15, height = 0, alpha = 0.65, size = 1.6) +
     facet_wrap(~ line_id, scales = "free_x") +
@@ -63,7 +67,7 @@ plot_parameter_transfer_improvement <- function(
     labs(
       title = sprintf("Parameter Transfer Improvement Over Null | %s", model_id),
       x = "Parameter family",
-      y = "Improvement over null\n(abs(null-oracle) - abs(transfer-oracle))",
+      y = "log10(|transfer-oracle| / |null-oracle|)",
       color = "Direction"
     ) +
     theme(

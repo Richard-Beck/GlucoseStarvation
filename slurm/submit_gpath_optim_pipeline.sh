@@ -25,41 +25,68 @@ echo "PWD: $(pwd)"
 echo "Submitting optimisation batch from ${SPEC_PATH}"
 echo "Batch metadata directory: ${RUN_DIR}"
 
-row_index=0
-tail -n +2 "$SPEC_COPY" | while IFS=$'\t' read -r enabled model_name model_version run_id n_starts num_threads stan_data_path dataset_label run_label array_cpus array_mem_gb array_time combine_mem_gb combine_time qos delete_after; do
-  if [[ -z "${enabled}${model_name}${run_id}" ]]; then
-    continue
-  fi
+Rscript - "$SPEC_COPY" "$BATCH_LABEL" <<'EOF' | while IFS='|' read -r row_index enabled model_name model_version run_id n_starts num_threads stan_data_path dataset_label run_label array_cpus array_mem_gb array_time combine_mem_gb combine_time qos delete_after; do
+args <- commandArgs(trailingOnly = TRUE)
+spec_path <- args[1]
+batch_label <- args[2]
 
-  row_index=$((row_index + 1))
-  enabled=${enabled%$'\r'}
-  run_id=${run_id%$'\r'}
+spec <- read.delim(
+  spec_path,
+  sep = "\t",
+  header = TRUE,
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  quote = ""
+)
 
-  if [[ "$enabled" =~ ^# ]] || [[ "$run_id" =~ ^# ]]; then
-    continue
-  fi
+required_cols <- c(
+  "enabled", "model_name", "model_version", "run_id", "n_starts", "num_threads",
+  "stan_data_path", "dataset_label", "run_label", "array_cpus", "array_mem_gb",
+  "array_time", "combine_mem_gb", "combine_time", "qos", "delete_after"
+)
 
-  enabled=${enabled:-1}
-  if [[ "$enabled" == "0" ]]; then
-    echo "Skipping disabled spec row ${row_index}: ${run_id}"
-    continue
-  fi
+missing_cols <- setdiff(required_cols, names(spec))
+if (length(missing_cols)) {
+  stop(sprintf("Spec file is missing required columns: %s", paste(missing_cols, collapse = ", ")))
+}
 
-  model_name=${model_name:-gpath}
-  model_version=${model_version:-v1}
-  n_starts=${n_starts:-250}
-  num_threads=${num_threads:-8}
-  stan_data_path=${stan_data_path:-data/inputs/stan/gstarvation_v1/stan_ready_data.Rds}
-  dataset_label=${dataset_label:-gstarvation_v1}
-  run_label=${run_label:-$BATCH_LABEL}
-  array_cpus=${array_cpus:-$num_threads}
-  array_mem_gb=${array_mem_gb:-8}
-  array_time=${array_time:-00:15:00}
-  combine_mem_gb=${combine_mem_gb:-4}
-  combine_time=${combine_time:-00:15:00}
-  qos=${qos:-normal}
-  delete_after=${delete_after:-1}
+nz_or <- function(x, default) {
+  x <- trimws(as.character(x))
+  ifelse(is.na(x) | x == "", default, x)
+}
 
+for (i in seq_len(nrow(spec))) {
+  row <- spec[i, , drop = FALSE]
+
+  enabled <- nz_or(row$enabled, "1")
+  run_id <- nz_or(row$run_id, "")
+  if (enabled == "0" || run_id == "") {
+    next
+  }
+
+  vals <- c(
+    i,
+    enabled,
+    nz_or(row$model_name, "gpath"),
+    nz_or(row$model_version, "v1"),
+    run_id,
+    nz_or(row$n_starts, "250"),
+    nz_or(row$num_threads, "8"),
+    nz_or(row$stan_data_path, "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"),
+    nz_or(row$dataset_label, "gstarvation_v1"),
+    nz_or(row$run_label, batch_label),
+    nz_or(row$array_cpus, nz_or(row$num_threads, "8")),
+    nz_or(row$array_mem_gb, "8"),
+    nz_or(row$array_time, "00:15:00"),
+    nz_or(row$combine_mem_gb, "4"),
+    nz_or(row$combine_time, "00:15:00"),
+    nz_or(row$qos, "normal"),
+    nz_or(row$delete_after, "1")
+  )
+
+  cat(paste(vals, collapse = "|"), "\n", sep = "")
+}
+EOF
   output_dir=$(
     MODEL_NAME="$model_name" \
     MODEL_VERSION="$model_version" \

@@ -288,28 +288,34 @@ if (!nrow(ranking_df)) {
 }
 ```
 
-## Optimisation Stability For The Selected Model
+## Optimisation Stability Across Trusted Models
 
-```{r selected-model-neighborhood}
-if (is.na(selected_model_id)) {
-  announce_missing("No selected model available.")
+```{r optimisation-stability-all-models}
+if (!nrow(ranking_df)) {
+  announce_missing("No trusted optimisation outputs available for stability summary.")
 } else {
-  selected_run_dir <- ranking_df$run_dir[match(selected_model_id, ranking_df$model_id)][1]
-  optim_obj <- list(
-    lp = readRDS(file.path(selected_run_dir, "optim_lp_all.Rds")),
-    draws = readRDS(file.path(selected_run_dir, "optim_draws_all.Rds"))
-  )
-  nbhd <- summarize_lp_neighborhood(optim_obj$lp, near_cut = 5)
+  stability_df <- purrr::map_dfr(seq_len(nrow(ranking_df)), function(i) {
+    run_dir <- ranking_df$run_dir[i]
+    lp <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
+    nbhd <- summarize_lp_neighborhood(lp, near_cut = 5)
 
-  stability_df <- tibble(
-    model_id = selected_model_id,
-    n_total = length(optim_obj$lp),
-    n_finite = sum(nbhd$finite_mask),
-    best_lp = nbhd$best_lp,
-    n_within_1 = sum(nbhd$finite_mask & nbhd$lp_diff < 1),
-    n_within_5 = sum(nbhd$finite_mask & nbhd$lp_diff < 5),
-    n_within_10 = sum(nbhd$finite_mask & nbhd$lp_diff < 10)
-  )
+    tibble(
+      model_id = ranking_df$model_id[i],
+      alias = ranking_df$alias[i],
+      run_label = ranking_df$run_label[i],
+      n_total = length(lp),
+      n_finite = sum(nbhd$finite_mask),
+      best_lp = nbhd$best_lp,
+      n_within_1 = sum(nbhd$finite_mask & nbhd$lp_diff < 1),
+      n_within_5 = sum(nbhd$finite_mask & nbhd$lp_diff < 5),
+      n_within_10 = sum(nbhd$finite_mask & nbhd$lp_diff < 10),
+      prop_within_1 = mean(nbhd$finite_mask & nbhd$lp_diff < 1),
+      prop_within_5 = mean(nbhd$finite_mask & nbhd$lp_diff < 5),
+      prop_within_10 = mean(nbhd$finite_mask & nbhd$lp_diff < 10),
+      delta_AIC = ranking_df$delta_AIC[i]
+    )
+  }) %>%
+    arrange(desc(prop_within_5), desc(prop_within_1), delta_AIC)
 
   knitr::kable(stability_df)
 }

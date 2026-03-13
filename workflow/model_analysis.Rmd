@@ -47,13 +47,15 @@ source("R/transfer_cv_plot_utils.R")
 
 project_paths <- list(
   stan_data = resolve_stan_data_path(),
-  legacy_model_root = file.path("data", "runs", "gpath", "v1", "optim"),
+  assessment_run_ids = file.path("models", "gpath", "v1", "assessment_run_ids.txt"),
+  optim_root = file.path("data", "runs", "gpath", "v1", "optim"),
   transfer_optim_root = "data/gpath_transfer_cv/gpath",
   transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath"
 )
 
 cat("Current working directory:", getwd(), "\n")
 cat("stan_data path:", project_paths$stan_data, "\n")
+cat("assessment set:", project_paths$assessment_run_ids, "\n")
 ```
 
 ```{r helpers}
@@ -68,16 +70,36 @@ announce_missing <- function(...) {
   cat("SKIP:", sprintf(...), "\n")
 }
 
-discover_model_ids <- function(base_path) {
+read_run_id_file <- function(path) {
+  if (!file.exists(path)) {
+    return(character(0))
+  }
+
+  vals <- readLines(path, warn = FALSE)
+  vals <- trimws(vals)
+  vals <- vals[nzchar(vals)]
+  vals <- vals[!grepl("^#", vals)]
+  vals
+}
+
+discover_model_runs <- function(base_path) {
   if (!dir.exists(base_path)) {
     return(character(0))
   }
   run_dirs <- list.dirs(base_path, recursive = TRUE, full.names = TRUE)
-  run_dirs[file.exists(file.path(run_dirs, "optim_lp_all.Rds"))]
+  run_dirs[
+    file.exists(file.path(run_dirs, "optim_lp_all.Rds")) &
+    file.exists(file.path(run_dirs, "optim_draws_all.Rds")) &
+    file.exists(file.path(run_dirs, "run_manifest.json"))
+  ]
 }
 
-build_model_ranking <- function(base_path = project_paths$legacy_model_root, stan_data_path = project_paths$stan_data) {
-  run_dirs <- discover_model_ids(base_path)
+build_model_ranking <- function(
+  base_path = project_paths$optim_root,
+  stan_data_path = project_paths$stan_data,
+  assessment_ids = read_run_id_file(project_paths$assessment_run_ids)
+) {
+  run_dirs <- discover_model_runs(base_path)
   if (!length(run_dirs)) {
     return(tibble())
   }
@@ -97,13 +119,19 @@ build_model_ranking <- function(base_path = project_paths$legacy_model_root, sta
       return(NULL)
     }
 
+    manifest_path <- file.path(run_dir, "run_manifest.json")
+    manifest <- jsonlite::read_json(manifest_path, simplifyVector = TRUE)
+
     tibble(
       model_id = run_id,
       dataset_label = dataset_label,
       run_label = run_label,
       run_dir = run_dir,
+      manifest_path = manifest_path,
       best_lp = max(lp),
       k = get_hierarchical_k(run_id, N_lines = stan_data$N_lines),
+      manifest_stan_data = manifest$stan_data_path,
+      manifest_stan_file = manifest$stan_file_path,
       alias = {
         run_parts <- parse_run_id(run_id)
         w_str <- if (run_parts$W > 0) sprintf(", %dW (%s)", run_parts$W, ifelse(run_parts$M == 1, "Add", "Mult")) else ""
@@ -113,6 +141,7 @@ build_model_ranking <- function(base_path = project_paths$legacy_model_root, sta
   })
 
   bind_rows(rows) %>%
+    filter(model_id %in% assessment_ids) %>%
     group_by(model_id, alias, dataset_label, k) %>%
     slice_max(order_by = run_label, n = 1, with_ties = FALSE) %>%
     ungroup() %>%
@@ -122,6 +151,25 @@ build_model_ranking <- function(base_path = project_paths$legacy_model_root, sta
       delta_AIC = AIC - min(AIC)
     ) %>%
     arrange(delta_AIC)
+}
+
+summarize_manifest_status <- function(ranking_df) {
+  if (!nrow(ranking_df)) {
+    return(tibble())
+  }
+
+  ranking_df %>%
+    transmute(
+      model_id,
+      run_label,
+      run_dir,
+      manifest_present = file.exists(manifest_path),
+      optim_complete = file.exists(file.path(run_dir, "optim_lp_all.Rds")) &
+        file.exists(file.path(run_dir, "optim_draws_all.Rds")),
+      stan_data_matches_current = normalizePath(manifest_stan_data, winslash = "/", mustWork = FALSE) ==
+        normalizePath(project_paths$stan_data, winslash = "/", mustWork = FALSE)
+    ) %>%
+    arrange(model_id)
 }
 
 find_selected_model <- function(ranking_df) {
@@ -153,9 +201,12 @@ artifact_commands <- tribble(
   "Stan data", project_paths$stan_data,
   "Exact historical command not recorded in repo. Data are constructed by R/prepare_data.R.",
   "Known script, command not fixed in repo history.",
+  "Assessment model set", project_paths$assessment_run_ids,
+  "Tracked file read by scripts/make_gpath_optim_spec.R when generating rerun specs.",
+  "Canonical model-id set for current `gpath v1` assessment.",
   "Versioned hierarchical optimization", "data/runs/gpath/v1/optim/<DATASET_LABEL>/<RUN_ID>/<RUN_LABEL>",
   "bash slurm/submit_gpath_optim_pipeline.sh <SPEC_FILE.tsv> ; specs can be generated with Rscript scripts/make_gpath_optim_spec.R <SPEC_FILE.tsv> <RUN_IDS>",
-  "Current optimisation batch path with run manifest.",
+  "Trusted optimisation source. This notebook now ignores older non-manifest results.",
   "Versioned hierarchical NUTS", "not yet migrated",
   "No new versioned NUTS pipeline for legacy hierarchical fits yet.",
   "Transfer NUTS still seeds from the older legacy NUTS outputs for now.",
@@ -180,18 +231,29 @@ knitr::kable(artifact_commands)
 
 ```{r available-outputs}
 ranking_df <- build_model_ranking()
+manifest_df <- summarize_manifest_status(ranking_df)
 selected_model_id <- find_selected_model(ranking_df)
 
-cat("Available legacy gpath model IDs:\n")
+cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
 cat("\nSelected model for downstream reporting:", selected_model_id, "\n")
+```
+
+## Trusted Optimisation Runs
+
+```{r trusted-optimisation-runs}
+if (!nrow(manifest_df)) {
+  announce_missing("No manifest-backed optimisation outputs found under %s", project_paths$optim_root)
+} else {
+  knitr::kable(manifest_df)
+}
 ```
 
 ## Model Selection
 
 ```{r model-selection-table}
 if (!nrow(ranking_df)) {
-  announce_missing("No legacy optimisation outputs found under %s", project_paths$legacy_model_root)
+  announce_missing("No trusted optimisation outputs found under %s", project_paths$optim_root)
 } else {
   knitr::kable(ranking_df %>% select(model_id, alias, best_lp, k, AIC, delta_AIC))
 }

@@ -23,6 +23,9 @@ STAN_DATA_PATH=${16:-"data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"}
 OUTPUT_ROOT=${17:-"data/gpath_transfer_cv"}
 RUN_PREFIT=${18:-1}
 PREFIT_CHAINS=${19:-4}
+INIT_MODE=${20:-"auto"}
+QOS=${21:-"medium"}
+CLEAR_LOGS=${22:-1}
 
 CONTAINER_URI=${CONTAINER_URI:-"docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"}
 BINDS=${BINDS:-"-B /home/$USER,/share,/etc/passwd,/etc/group"}
@@ -38,7 +41,9 @@ SUMMARY_SCRIPT="slurm/jobs/gpath_transfer_summarize.sh"
 MANIFEST_SCRIPT="scripts/make_gpath_transfer_manifest.R"
 
 mkdir -p "$RUN_DIR" "slurm/logs"
-find slurm/logs -maxdepth 1 -type f -delete
+if [ "$CLEAR_LOGS" -eq 1 ]; then
+  find slurm/logs -maxdepth 1 -type f -delete
+fi
 export APPTAINER_NOHTTPS=1
 
 echo "PWD: $(pwd)"
@@ -70,6 +75,7 @@ if [ "$RUN_PREFIT" -eq 1 ]; then
   echo "Submitting prerequisite full-fit jobs for ${RUN_ID}"
 
   OPTIM_JOB_ID=$(sbatch --parsable \
+    --qos="${QOS}" \
     ecology/model_selection/submission_scripts/optim_gpath.sh \
     "$MODEL_NAME" \
     "$R_VAL" \
@@ -80,6 +86,7 @@ if [ "$RUN_PREFIT" -eq 1 ]; then
 
   COMBINE_JOB_ID=$(sbatch --parsable \
     --dependency="afterok:${OPTIM_JOB_ID}" \
+    --qos="${QOS}" \
     ecology/model_selection/submission_scripts/combine.sh \
     "$MODEL_NAME" \
     "$R_VAL" \
@@ -91,6 +98,7 @@ if [ "$RUN_PREFIT" -eq 1 ]; then
   PREFIT_NUTS_JOB_ID=$(sbatch --parsable \
     --dependency="afterok:${COMBINE_JOB_ID}" \
     --array="1-${PREFIT_CHAINS}" \
+    --qos="${QOS}" \
     ecology/model_selection/submission_scripts/nuts_gpath.sh \
     "$MODEL_NAME" \
     "$R_VAL" \
@@ -105,6 +113,7 @@ fi
 ARRAY_JOB_ID=$(sbatch --parsable \
   "${TRANSFER_DEPENDENCY_ARGS[@]}" \
   --array="1-${N_TASKS}" \
+  --qos="${QOS}" \
   "$ARRAY_SCRIPT" \
   "$MODEL_NAME" \
   "$R_VAL" \
@@ -119,10 +128,12 @@ ARRAY_JOB_ID=$(sbatch --parsable \
   "$ADAPT_DELTA" \
   "$MAX_TREED" \
   "$NUM_THREADS" \
-  "$OUTPUT_ROOT")
+  "$OUTPUT_ROOT" \
+  "$INIT_MODE")
 
 SUMMARY_JOB_ID=$(sbatch --parsable \
   --dependency="afterany:${ARRAY_JOB_ID}" \
+  --qos="${QOS}" \
   "$SUMMARY_SCRIPT" \
   "$MODEL_NAME" \
   "$RUN_ID" \
@@ -137,6 +148,7 @@ array_job_id=${ARRAY_JOB_ID}
 summary_job_id=${SUMMARY_JOB_ID}
 output_root=${OUTPUT_ROOT}
 run_prefit=${RUN_PREFIT}
+qos=${QOS}
 optim_job_id=${OPTIM_JOB_ID}
 combine_job_id=${COMBINE_JOB_ID}
 prefit_nuts_job_id=${PREFIT_NUTS_JOB_ID}
@@ -150,3 +162,6 @@ fi
 echo "Array job submitted: ${ARRAY_JOB_ID}"
 echo "Summary job submitted: ${SUMMARY_JOB_ID}"
 echo "Run metadata written to ${JOB_INFO_PATH}"
+echo "run_dir=${RUN_DIR}"
+echo "array_job_id=${ARRAY_JOB_ID}"
+echo "summary_job_id=${SUMMARY_JOB_ID}"

@@ -22,6 +22,7 @@ MAX_TREED <- if (length(args) >= 14) as.integer(args[14]) else 12L
 NUM_THREADS <- if (length(args) >= 15) as.integer(args[15]) else 4L
 STAN_DATA_PATH <- if (length(args) >= 16) args[16] else ""
 OUTPUT_ROOT <- if (length(args) >= 17) args[17] else "data/gpath_transfer_cv"
+INIT_MODE <- if (length(args) >= 18) args[18] else "auto"
 
 run_id <- sprintf(
   "%dR_%dP_%dW_C%d_M%d",
@@ -41,6 +42,11 @@ source("R/elpd_transfer_utils.R")
 DIRECTION <- normalize_transfer_direction(DIRECTION)
 FIT_TYPE <- normalize_fit_type(FIT_TYPE)
 STAN_DATA_PATH <- resolve_stan_data_path(STAN_DATA_PATH)
+INIT_MODE <- tolower(trimws(INIT_MODE))
+
+if (!(INIT_MODE %in% c("auto", "posterior", "random"))) {
+  stop(sprintf("Unsupported init mode '%s'", INIT_MODE))
+}
 
 cat(sprintf(">>> run_gpath_transfer_cv.R cwd: %s\n", getwd()))
 
@@ -54,6 +60,7 @@ cat(sprintf(
   START_ID
 ))
 cat(sprintf(">>> Stan data: %s\n", STAN_DATA_PATH))
+cat(sprintf(">>> Init mode: %s\n", INIT_MODE))
 
 stan_data <- prepare_gpath_stan_data(
   stan_data_path = STAN_DATA_PATH,
@@ -104,7 +111,13 @@ maxG0 <- max(as.numeric(stan_data$G0_per_well), na.rm = TRUE)
 cat(sprintf(">>> Optimization config: algorithm=lbfgs iter=%d seed=%d\n", ITER_SAMPLING, seed_fit))
 
 init_arg <- 2
-if (dir.exists(posterior_dir)) {
+if (INIT_MODE == "posterior" && !dir.exists(posterior_dir)) {
+  stop(sprintf("Posterior init requested but directory is missing: %s", posterior_dir))
+}
+
+if (INIT_MODE == "random") {
+  cat(">>> Using randomized CmdStan init=2\n")
+} else if (dir.exists(posterior_dir)) {
   init_list <- tryCatch(
     load_posterior_init_from_dir(
       path = posterior_dir,
@@ -118,6 +131,9 @@ if (dir.exists(posterior_dir)) {
     init_arg <- list(init_list)
     cat(sprintf(">>> Init from posterior draws in %s\n", posterior_dir))
   } else {
+    if (INIT_MODE == "posterior") {
+      stop("Posterior init requested but no usable posterior init could be loaded")
+    }
     cat(">>> Posterior init unavailable; using init=2\n")
   }
 } else {

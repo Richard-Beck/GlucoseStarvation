@@ -24,6 +24,7 @@ ADAPT_DELTA=${11:-0.99}
 MAX_TREED=${12:-12}
 NUM_THREADS=${13:-16}
 OUTPUT_ROOT=${14:-"data/gpath_transfer_cv"}
+INIT_MODE=${15:-"auto"}
 
 TASK_ID=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
 TASK_LINE=$(awk -v task_id="$TASK_ID" 'BEGIN { FS="\t" } NR == (task_id + 1) { print; exit }' "$MANIFEST_PATH")
@@ -51,6 +52,7 @@ echo "Slurm job: ${SLURM_JOB_ID} | array task: ${TASK_ID}"
 echo "Manifest: ${MANIFEST_PATH}"
 echo "Task: line=${LINE_ID} direction=${DIRECTION} fit=${FIT_TYPE} start=${START_ID}"
 echo "Held-out wells=${HOLDOUT_WELLS} held-out obs=${HOLDOUT_OBS}"
+echo "Init mode=${INIT_MODE}"
 
 id "$USER" > /dev/null 2>&1
 sleep 2
@@ -73,4 +75,5 @@ apptainer exec $BINDS $CONTAINER_URI \
   "$MAX_TREED" \
   "$NUM_THREADS" \
   "$STAN_DATA_PATH" \
-  "$OUTPUT_ROOT"
+  "$OUTPUT_ROOT" \
+  "$INIT_MODE"

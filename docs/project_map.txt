@@ -38,7 +38,7 @@
      The newer directional transfer CV path lives outside ecology: R/gpath_run_utils.R now has
      get_directional_transfer_split() / apply_directional_transfer_holdout(), scripts/run_gpath_transfer_cv.R runs
      null/transfer/oracle multi-start optimizations for low->high or high->low line-transfer evaluation using the
-     existing gpath_hier.stan, with starts initialized from prior full-data NUTS draws, and
+     existing gpath_hier.stan, with selectable init modes (`auto`, `posterior`, `random`), and
      scripts/summarize_gpath_transfer_cv.R picks the best start per condition before aggregating transfer-gain /
      transfer-regret summaries. Parameter-level transfer analysis now lives in R/parameter_transfer_utils.R and
      scripts/summarize_gpath_parameter_transfer.R, which reconstruct held-out-line mechanistic parameters for the best
@@ -65,7 +65,11 @@
      manifests/job metadata. The directional transfer workflows currently use this new path via
      slurm/submit_gpath_transfer_pipeline.sh and slurm/submit_gpath_transfer_nuts_pipeline.sh plus their
      corresponding `slurm/jobs/gpath_transfer*.sh` job scripts. These submit wrappers now clear `slurm/logs/` before a
-     new batch submission to keep log volume manageable.
+     new batch submission to keep log volume manageable. There is now also a batch screening wrapper for optimization
+     transfer, driven by scripts/make_gpath_transfer_screen_spec.R and
+     slurm/submit_gpath_transfer_screen_pipeline.sh, intended for random-init screening across the canonical assessment
+     model set without any NUTS dependence. A ready-to-use assessment screening spec now lives at
+     data/specs/gpath_transfer_screen_assessment.tsv.
      The versioned optimisation rerun path is now spec-driven: generate a TSV with
      scripts/make_gpath_optim_spec.R, submit it with slurm/submit_gpath_optim_pipeline.sh, and the job layer uses
      slurm/jobs/gpath_optim_{array,combine}.sh. Each run writes under data/runs/... and includes a run_manifest.json;

@@ -120,8 +120,7 @@ find_selected_model <- function(ranking_df) {
     return(NA_character_)
   }
 
-  preferred <- c("2R_2P_0W_C0_M1", "2R_2P_1W_C0_M1", ranking_df$model_id[1])
-  preferred[preferred %in% ranking_df$model_id][1]
+  ranking_df$model_id[which.min(ranking_df$delta_AIC)]
 }
 
 load_transfer_outputs <- function(model_id, output_root) {

@@ -23,6 +23,8 @@
      pipelines/gpath/optim/combine.R. It loads stan_ready_data via R/gpath_run_utils.R, compiles the versioned Stan
      file, runs per-start optimisation, and writes outputs plus a run_manifest.json under
      data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/.
+     The canonical assessment set of `gpath` model IDs now lives at models/gpath/v1/assessment_run_ids.txt; the
+     spec generator scripts/make_gpath_optim_spec.R can read that file directly when constructing batch rerun specs.
 
      Older legacy optimisation/NUTS code still exists under ecology/model_selection/models/gpath/, but that is now a
      reference path rather than the intended home for active development.

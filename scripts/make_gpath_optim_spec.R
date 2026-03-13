@@ -19,14 +19,21 @@ qos <- if (length(args) >= 14) args[14] else "normal"
 delete_after <- if (length(args) >= 15) as.integer(args[15]) else 1L
 
 read_run_ids <- function(x) {
+  clean_vals <- function(vals) {
+    vals <- trimws(vals)
+    vals <- vals[nzchar(vals)]
+    vals <- vals[!grepl("^#", vals)]
+    vals <- gsub('^"(.*)"$', "\\1", vals)
+    vals <- gsub("^'(.*)'$", "\\1", vals)
+    vals[nzchar(vals)]
+  }
+
   if (file.exists(x)) {
     vals <- readLines(x, warn = FALSE)
-    vals <- trimws(vals)
-    vals[nzchar(vals)]
+    clean_vals(vals)
   } else {
     vals <- strsplit(x, ",", fixed = TRUE)[[1]]
-    vals <- trimws(vals)
-    vals[nzchar(vals)]
+    clean_vals(vals)
   }
 }
 

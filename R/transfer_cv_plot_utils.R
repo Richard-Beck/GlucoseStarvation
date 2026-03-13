@@ -4,7 +4,8 @@ library(tidyr)
 library(ggplot2)
 library(patchwork)
 
-source("ecology/model_selection/models/gpath/gpath.R")
+source("R/project_paths.R")
+source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
 
 load_transfer_best_fit <- function(
@@ -110,7 +111,7 @@ simulate_transfer_fit <- function(
   direction,
   fit_type,
   output_root = "data/gpath_transfer_cv",
-  stan_data_path = "ecology/stan_ready_data.Rds",
+  stan_data_path = "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds",
   times = NULL
 ) {
   dims <- parse_run_id(model_id)
@@ -212,7 +213,7 @@ generate_transfer_overlay_data <- function(
   directions = c("low_to_high", "high_to_low"),
   fit_types = c("null", "transfer", "oracle"),
   output_root = "data/gpath_transfer_cv",
-  stan_data_path = "ecology/stan_ready_data.Rds",
+  stan_data_path = "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds",
   times = NULL
 ) {
   runs <- list()
@@ -249,7 +250,7 @@ plot_transfer_line_trajectories <- function(
   line_name = NULL
 ) {
   if (is.null(line_name)) {
-    stan_data <- readRDS(resolve_stan_data_path("ecology/stan_ready_data.Rds"))
+    stan_data <- readRDS(resolve_stan_data_path("data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"))
     line_name <- if (!is.null(stan_data$line_map)) names(stan_data$line_map)[line_id] else sprintf("line %d", line_id)
   }
 

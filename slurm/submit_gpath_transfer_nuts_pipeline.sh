@@ -19,7 +19,7 @@ ITER_SAMPLING=${12:-1000}
 ADAPT_DELTA=${13:-0.99}
 MAX_TREED=${14:-12}
 NUM_THREADS=${15:-16}
-STAN_DATA_PATH=${16:-"ecology/stan_ready_data.Rds"}
+STAN_DATA_PATH=${16:-"data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"}
 OUTPUT_ROOT=${17:-"data/gpath_transfer_cv_nuts"}
 
 CONTAINER_URI=${CONTAINER_URI:-"docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"}

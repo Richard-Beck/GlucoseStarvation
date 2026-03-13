@@ -25,7 +25,8 @@ OUTPUT_ROOT <- if (length(args) >= 17) args[17] else "data/gpath_transfer_cv_nut
 
 run_id <- sprintf("%dR_%dP_%dW_C%d_M%d", R_VAL, P_VAL, W_VAL, CONSTRAINT_FLAG, WASTE_MECH_FLAG)
 
-source("ecology/model_selection/models/gpath/gpath.R")
+source("R/project_paths.R")
+source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
 source("R/posterior_io_utils.R")
 source("R/elpd_transfer_utils.R")
@@ -66,7 +67,7 @@ split_meta$model_name <- MODEL_NAME
 split_meta$run_id <- run_id
 split_meta$stan_data_path <- STAN_DATA_PATH
 
-stan_file <- file.path("ecology/model_selection/models", MODEL_NAME, paste0(MODEL_NAME, "_hier.stan"))
+stan_file <- get_model_stan_path(MODEL_NAME, "v1")
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
 posterior_dir <- file.path("ecology/model_selection/data", MODEL_NAME, run_id, "hier", "nuts")

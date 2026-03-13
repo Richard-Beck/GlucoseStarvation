@@ -1,4 +1,5 @@
-source("ecology/model_selection/models/gpath/gpath.R")
+source("R/project_paths.R")
+source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
 source("R/elpd_transfer_utils.R")
 
@@ -137,7 +138,7 @@ reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploid
 build_parameter_transfer_tables <- function(
   model_id,
   output_root = "data/gpath_transfer_cv",
-  stan_data_path = "ecology/stan_ready_data.Rds",
+  stan_data_path = "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds",
   model_name = "gpath"
 ) {
   best_path <- file.path(output_root, model_name, model_id, "transfer_best_start_summary.Rds")

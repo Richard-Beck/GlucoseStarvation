@@ -1,7 +1,14 @@
 resolve_stan_data_path <- function(
   stan_data_path = NULL,
-  candidates = c("data/stan_ready_data.Rds", "ecology/stan_ready_data.Rds")
+  candidates = NULL
 ) {
+  if (is.null(candidates)) {
+    if (!exists("default_stan_data_candidates")) {
+      source("R/project_paths.R")
+    }
+    candidates <- default_stan_data_candidates()
+  }
+
   paths <- unique(c(stan_data_path, candidates))
   paths <- paths[!is.na(paths) & nzchar(paths)]
 

@@ -4,7 +4,7 @@ args <- commandArgs(trailingOnly = TRUE)
 
 MODEL_ID <- if (length(args) >= 1) args[1] else "1R_1P_0W_C0_M1"
 OUTPUT_ROOT <- if (length(args) >= 2) args[2] else "data/gpath_transfer_cv"
-STAN_DATA_PATH <- if (length(args) >= 3) args[3] else "ecology/stan_ready_data.Rds"
+STAN_DATA_PATH <- if (length(args) >= 3) args[3] else "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"
 MODEL_NAME <- if (length(args) >= 4) args[4] else "gpath"
 
 source("R/parameter_transfer_utils.R")

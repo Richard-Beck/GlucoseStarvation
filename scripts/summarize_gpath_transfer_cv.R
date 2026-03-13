@@ -60,10 +60,10 @@ saveRDS(summary_df, file.path(base_dir, "transfer_start_summaries.Rds"))
 saveRDS(best_df, file.path(base_dir, "transfer_best_start_summary.Rds"))
 saveRDS(wide, file.path(base_dir, "transfer_comparison_summary.Rds"))
 
-param_tables <- build_parameter_transfer_tables(
+  param_tables <- build_parameter_transfer_tables(
   model_id = RUN_ID,
   output_root = OUTPUT_ROOT,
-  stan_data_path = "ecology/stan_ready_data.Rds",
+  stan_data_path = "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds",
   model_name = MODEL_NAME
 )
 saveRDS(param_tables$parameter_states, file.path(base_dir, "parameter_transfer_states.Rds"))

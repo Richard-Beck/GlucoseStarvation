@@ -11,7 +11,7 @@ knitr::opts_chunk$set(
   warning = FALSE,
   message = FALSE
 )
-knitr::opts_knit$set(root.dir = normalizePath("."))
+knitr::opts_knit$set(root.dir = normalizePath("../"))
 ```
 
 ## Purpose
@@ -36,7 +36,8 @@ library(tibble)
 library(posterior)
 library(patchwork)
 
-source("ecology/model_selection/models/gpath/gpath.R")
+source("R/project_paths.R")
+source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
 source("R/posterior_io_utils.R")
 source("R/elpd_transfer_utils.R")
@@ -46,7 +47,7 @@ source("R/transfer_cv_plot_utils.R")
 
 project_paths <- list(
   stan_data = resolve_stan_data_path(),
-  legacy_model_root = "ecology/model_selection/data/gpath",
+  legacy_model_root = file.path("data", "runs", "gpath", "v1", "optim"),
   transfer_optim_root = "data/gpath_transfer_cv/gpath",
   transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath"
 )
@@ -71,42 +72,50 @@ discover_model_ids <- function(base_path) {
   if (!dir.exists(base_path)) {
     return(character(0))
   }
-  list.dirs(base_path, recursive = FALSE, full.names = FALSE)
+  run_dirs <- list.dirs(base_path, recursive = TRUE, full.names = TRUE)
+  run_dirs[file.exists(file.path(run_dirs, "optim_lp_all.Rds"))]
 }
 
 build_model_ranking <- function(base_path = project_paths$legacy_model_root, stan_data_path = project_paths$stan_data) {
-  model_ids <- discover_model_ids(base_path)
-  if (!length(model_ids)) {
+  run_dirs <- discover_model_ids(base_path)
+  if (!length(run_dirs)) {
     return(tibble())
   }
 
   stan_data <- readRDS(stan_data_path)
 
-  rows <- lapply(model_ids, function(model_id) {
-    lp_path <- file.path(base_path, model_id, "hier", "optim_lp_all.Rds")
-    if (!file.exists(lp_path)) {
-      return(NULL)
-    }
+  rows <- lapply(run_dirs, function(run_dir) {
+    parts <- strsplit(normalizePath(run_dir, winslash = "/"), "/", fixed = TRUE)[[1]]
+    n <- length(parts)
+    run_label <- parts[n]
+    run_id <- parts[n - 1]
+    dataset_label <- parts[n - 2]
 
-    lp <- readRDS(lp_path)
+    lp <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
     lp <- lp[is.finite(lp)]
     if (!length(lp)) {
       return(NULL)
     }
 
     tibble(
-      model_id = model_id,
+      model_id = run_id,
+      dataset_label = dataset_label,
+      run_label = run_label,
+      run_dir = run_dir,
       best_lp = max(lp),
-      k = get_hierarchical_k(model_id, N_lines = stan_data$N_lines),
+      k = get_hierarchical_k(run_id, N_lines = stan_data$N_lines),
       alias = {
-        parts <- parse_run_id(model_id)
-        w_str <- if (parts$W > 0) sprintf(", %dW (%s)", parts$W, ifelse(parts$M == 1, "Add", "Mult")) else ""
-        sprintf("%dR-%dP %s%s", parts$R, parts$P, ifelse(parts$C == 1, "Specialized", "Dense"), w_str)
+        run_parts <- parse_run_id(run_id)
+        w_str <- if (run_parts$W > 0) sprintf(", %dW (%s)", run_parts$W, ifelse(run_parts$M == 1, "Add", "Mult")) else ""
+        sprintf("%dR-%dP %s%s", run_parts$R, run_parts$P, ifelse(run_parts$C == 1, "Specialized", "Dense"), w_str)
       }
     )
   })
 
   bind_rows(rows) %>%
+    group_by(model_id, alias, dataset_label, k) %>%
+    slice_max(order_by = run_label, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
     mutate(
       deviance = -2 * best_lp,
       AIC = 2 * k - 2 * best_lp,
@@ -144,12 +153,12 @@ artifact_commands <- tribble(
   "Stan data", project_paths$stan_data,
   "Exact historical command not recorded in repo. Data are constructed by R/prepare_data.R.",
   "Known script, command not fixed in repo history.",
-  "Legacy hierarchical optimization", "ecology/model_selection/data/gpath/<RUN_ID>/hier",
-  "Historically submitted via ecology/model_selection/submission_scripts/optim_gpath.sh followed by combine.sh.",
-  "Legacy path; still used for model selection and for posterior-seeded starts.",
-  "Legacy hierarchical NUTS", "ecology/model_selection/data/gpath/<RUN_ID>/hier/nuts",
-  "Historically submitted via ecology/model_selection/submission_scripts/nuts_gpath.sh.",
-  "Legacy path; still used for NUTS diagnostics and as seed source.",
+  "Versioned hierarchical optimization", "data/runs/gpath/v1/optim/<DATASET_LABEL>/<RUN_ID>/<RUN_LABEL>",
+  "bash slurm/submit_gpath_optim_pipeline.sh <SPEC_FILE.tsv> ; specs can be generated with Rscript scripts/make_gpath_optim_spec.R <SPEC_FILE.tsv> <RUN_IDS>",
+  "Current optimisation batch path with run manifest.",
+  "Versioned hierarchical NUTS", "not yet migrated",
+  "No new versioned NUTS pipeline for legacy hierarchical fits yet.",
+  "Transfer NUTS still seeds from the older legacy NUTS outputs for now.",
   "Directional transfer (optimization)", "data/gpath_transfer_cv/gpath/<RUN_ID>",
   "bash slurm/submit_gpath_transfer_pipeline.sh MODEL R P W C M all low_to_high,high_to_low null,transfer,oracle 1:K 500 1000 0.99 12 16 ecology/stan_ready_data.Rds data/gpath_transfer_cv 0",
   "Current optimization transfer path.",
@@ -223,7 +232,11 @@ if (!nrow(ranking_df)) {
 if (is.na(selected_model_id)) {
   announce_missing("No selected model available.")
 } else {
-  optim_obj <- load_optim_outputs(selected_model_id, base_path = project_paths$legacy_model_root)
+  selected_run_dir <- ranking_df$run_dir[match(selected_model_id, ranking_df$model_id)][1]
+  optim_obj <- list(
+    lp = readRDS(file.path(selected_run_dir, "optim_lp_all.Rds")),
+    draws = readRDS(file.path(selected_run_dir, "optim_draws_all.Rds"))
+  )
   nbhd <- summarize_lp_neighborhood(optim_obj$lp, near_cut = 5)
 
   stability_df <- tibble(

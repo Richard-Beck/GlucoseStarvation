@@ -15,17 +15,17 @@
      prepare_data.R:72, merges glucose calibration/data CSVs, constructs the stan_data list at R/prepare_data.R:333, and
      saves data/stan_ready_data.Rds at R/prepare_data.R:388.
   4. Model configuration, compilation, optimization, sampling
-     The active model family is gpath under ecology/model_selection/models/gpath/gpath.R. Core helpers are
-     parse_run_id(), get_hierarchical_k(), generate_stan_config(), get_param_names(), and reconstruct_parms(). All fit
-     scripts compile ecology/model_selection/models/gpath/gpath_hier.stan.
+     The active model family is gpath and has now been versioned outside ecology. The current code version is
+     models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. Core helpers are parse_run_id(),
+     get_hierarchical_k(), generate_stan_config(), get_param_names(), and reconstruct_parms().
 
-     Optimization is ecology/model_selection/models/gpath/optim.R: load stan_ready_data.Rds at line 30, add config at
-     line 37, compile at line 50, run mod$optimize() at line 57, save per-start draws/LP at lines 73-74. Results are
-     consolidated by ecology/model_selection/models/gpath/combine.R:20, which writes optim_draws_all.Rds and
-     optim_lp_all.Rds.
+     The current versioned optimisation pipeline is pipelines/gpath/optim/run_start.R plus
+     pipelines/gpath/optim/combine.R. It loads stan_ready_data via R/gpath_run_utils.R, compiles the versioned Stan
+     file, runs per-start optimisation, and writes outputs plus a run_manifest.json under
+     data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/.
 
-     NUTS is ecology/model_selection/models/gpath/nuts.R: load data at line 42, add config at line 50, compile at line
-     78, convert best optimization draw to init, run mod$sample() at line 210, save summaries/draws at lines 228-229.
+     Older legacy optimisation/NUTS code still exists under ecology/model_selection/models/gpath/, but that is now a
+     reference path rather than the intended home for active development.
 
      Pathfinder is ecology/model_selection/models/gpath/pathfinder.R: same data/config path, compile at line 71, run
      mod$pathfinder() at line 174, save outputs at lines 194-198.
@@ -64,6 +64,10 @@
      slurm/submit_gpath_transfer_pipeline.sh and slurm/submit_gpath_transfer_nuts_pipeline.sh plus their
      corresponding `slurm/jobs/gpath_transfer*.sh` job scripts. These submit wrappers now clear `slurm/logs/` before a
      new batch submission to keep log volume manageable.
+     The versioned optimisation rerun path is now spec-driven: generate a TSV with
+     scripts/make_gpath_optim_spec.R, submit it with slurm/submit_gpath_optim_pipeline.sh, and the job layer uses
+     slurm/jobs/gpath_optim_{array,combine}.sh. Each run writes under data/runs/... and includes a run_manifest.json;
+     scripts/verify_gpath_run_manifest.R compares that manifest against the current Stan/data/script files.
 
   Image-derived feature branch
 

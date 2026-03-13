@@ -69,7 +69,8 @@
      The versioned optimisation rerun path is now spec-driven: generate a TSV with
      scripts/make_gpath_optim_spec.R, submit it with slurm/submit_gpath_optim_pipeline.sh, and the job layer uses
      slurm/jobs/gpath_optim_{array,combine}.sh. Each run writes under data/runs/... and includes a run_manifest.json;
-     scripts/verify_gpath_run_manifest.R compares that manifest against the current Stan/data/script files.
+     scripts/verify_gpath_run_manifest.R compares that manifest against the current Stan/data/script files. Aborted
+     optimisation batches can be cleaned by batch label with scripts/cleanup_gpath_optim_batch.R.
 
   Image-derived feature branch
 

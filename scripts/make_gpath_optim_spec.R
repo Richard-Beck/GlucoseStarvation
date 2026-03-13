@@ -15,7 +15,7 @@ array_mem_gb <- if (length(args) >= 10) as.integer(args[10]) else 8L
 array_time <- if (length(args) >= 11) args[11] else "00:15:00"
 combine_mem_gb <- if (length(args) >= 12) as.integer(args[12]) else 4L
 combine_time <- if (length(args) >= 13) args[13] else "00:15:00"
-qos <- if (length(args) >= 14) args[14] else "normal"
+qos <- if (length(args) >= 14) args[14] else "medium"
 delete_after <- if (length(args) >= 15) as.integer(args[15]) else 1L
 
 read_run_ids <- function(x) {

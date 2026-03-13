@@ -119,7 +119,7 @@ EOF
 
   combine_job_id=$(
     sbatch --parsable \
-      --dependency="afterok:${array_job_id}" \
+      --dependency="afterany:${array_job_id}" \
       --mem="${combine_mem_gb}G" \
       --time="${combine_time}" \
       --qos="${qos}" \

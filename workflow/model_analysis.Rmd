@@ -234,7 +234,10 @@ collect_parameter_family_transfer <- function(model_ids, output_root = project_p
     pc %>%
       mutate(
         model_id = model_id,
-        family = vapply(parameter, get_parameter_family, character(1)),
+        family = vapply(parameter, get_parameter_family, character(1))
+      ) %>%
+      filter(!is.na(family)) %>%
+      mutate(
         abs_null_err = pmax(abs(null_vs_oracle_diff), 1e-12),
         abs_transfer_err = pmax(abs(holdout_diff), 1e-12),
         log10_error_ratio = log10(abs_transfer_err / abs_null_err),

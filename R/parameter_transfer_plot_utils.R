@@ -6,7 +6,11 @@ library(patchwork)
 get_parameter_family <- function(parameter) {
   base <- sub("\\[.*$", "", parameter)
 
-  if (base %in% c("ae", "ah", "Y_R", "m", "R", "P", "W")) {
+  if (base %in% c("R", "P", "W", "waste_mech")) {
+    return(NA_character_)
+  }
+
+  if (base %in% c("ae", "ah", "Y_R", "m")) {
     return(base)
   }
 
@@ -54,6 +58,7 @@ plot_parameter_transfer_improvement <- function(
 
   df <- dat$comparison
   df$family <- vapply(df$parameter, get_parameter_family, character(1))
+  df <- df[!is.na(df$family), , drop = FALSE]
   df$direction <- factor(df$direction, levels = c("low_to_high", "high_to_low"))
   eps <- 1e-12
   df$abs_null_err <- pmax(abs(df$null_vs_oracle_diff), eps)
@@ -91,6 +96,7 @@ prepare_parameter_transfer_comparison <- function(
 
   df <- dat$comparison
   df$family <- vapply(df$parameter, get_parameter_family, character(1))
+  df <- df[!is.na(df$family), , drop = FALSE]
   df$direction <- factor(df$direction, levels = c("low_to_high", "high_to_low"))
   eps <- 1e-12
   df$abs_null_err <- pmax(abs(df$null_vs_oracle_diff), eps)

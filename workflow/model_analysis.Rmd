@@ -382,8 +382,7 @@ derive_glucose_transfer_summaries <- function(state_df) {
   wide <- state_df %>%
     filter(parameter %in% names(glucose_name_map), fit_type %in% c("transfer", "oracle")) %>%
     mutate(parameter_key = unname(glucose_name_map[parameter])) %>%
-    select(line_id, direction, fit_type, state, parameter, value) %>%
-    select(-parameter) %>%
+    select(line_id, direction, fit_type, state, parameter_key, value) %>%
     tidyr::pivot_wider(names_from = parameter_key, values_from = value)
 
   needed <- c("ae1", "ah1", "YR1", "m")

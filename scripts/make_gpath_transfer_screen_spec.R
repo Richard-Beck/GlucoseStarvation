@@ -12,6 +12,7 @@ iter_sampling <- if (length(args) >= 7) as.integer(args[7]) else 1000L
 max_treedepth <- if (length(args) >= 8) as.integer(args[8]) else 12L
 init_mode <- if (length(args) >= 9) args[9] else "random"
 qos <- if (length(args) >= 10) args[10] else "medium"
+ploidy_effect_mask_spec <- if (length(args) >= 11) args[11] else "all"
 
 read_run_ids <- function(path_or_csv) {
   clean_vals <- function(vals) {
@@ -51,6 +52,7 @@ spec <- data.frame(
   num_threads = num_threads,
   stan_data_path = stan_data_path,
   output_root = output_root,
+  ploidy_effect_mask_spec = ploidy_effect_mask_spec,
   run_prefit = 0L,
   prefit_chains = 4L,
   init_mode = init_mode,

@@ -51,6 +51,7 @@ apply_gpath_run_config <- function(
   constraint_flag,
   waste_mech_flag,
   base_priors,
+  ploidy_effect_mask_spec = NULL,
   drop_character = TRUE
 ) {
   config <- generate_stan_config(
@@ -65,6 +66,18 @@ apply_gpath_run_config <- function(
   for (nm in names(config)) {
     stan_data[[nm]] <- config[[nm]]
   }
+
+  mask_info <- build_ploidy_effect_mask(
+    R = R_val,
+    P = P_val,
+    W = W_val,
+    C = constraint_flag,
+    M = waste_mech_flag,
+    target_spec = ploidy_effect_mask_spec,
+    priors = base_priors
+  )
+  stan_data$ploidy_effect_mask <- as.numeric(mask_info$mask)
+  attr(stan_data, "ploidy_effect_mask_info") <- mask_info
 
   stan_data$waste_mech <- if (W_val > 0) {
     rep(as.numeric(waste_mech_flag), W_val)
@@ -234,6 +247,7 @@ prepare_gpath_stan_data <- function(
   constraint_flag,
   waste_mech_flag,
   base_priors,
+  ploidy_effect_mask_spec = NULL,
   holdout_high_ploidy = FALSE,
   cv_fold_id = NULL,
   transfer_line_id = NULL,
@@ -251,6 +265,7 @@ prepare_gpath_stan_data <- function(
     constraint_flag = constraint_flag,
     waste_mech_flag = waste_mech_flag,
     base_priors = base_priors,
+    ploidy_effect_mask_spec = ploidy_effect_mask_spec,
     drop_character = drop_character
   )
 

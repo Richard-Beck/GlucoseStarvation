@@ -22,6 +22,7 @@ MAX_TREED <- if (length(args) >= 14) as.integer(args[14]) else 12L
 NUM_THREADS <- if (length(args) >= 15) as.integer(args[15]) else 4L
 STAN_DATA_PATH <- if (length(args) >= 16) args[16] else ""
 OUTPUT_ROOT <- if (length(args) >= 17) args[17] else "data/gpath_transfer_cv_nuts"
+PLOIDY_EFFECT_MASK_SPEC <- if (length(args) >= 18) args[18] else ""
 
 run_id <- sprintf("%dR_%dP_%dW_C%d_M%d", R_VAL, P_VAL, W_VAL, CONSTRAINT_FLAG, WASTE_MECH_FLAG)
 
@@ -47,8 +48,10 @@ stan_data <- prepare_gpath_stan_data(
   W_val = W_VAL,
   constraint_flag = CONSTRAINT_FLAG,
   waste_mech_flag = WASTE_MECH_FLAG,
-  base_priors = base_priors
+  base_priors = base_priors,
+  ploidy_effect_mask_spec = PLOIDY_EFFECT_MASK_SPEC
 )
+mask_info <- attr(stan_data, "ploidy_effect_mask_info")
 
 split_meta <- get_directional_transfer_split(stan_data = stan_data, line_id = LINE_ID, direction = DIRECTION)
 
@@ -66,6 +69,9 @@ split_meta$fit_type <- FIT_TYPE
 split_meta$model_name <- MODEL_NAME
 split_meta$run_id <- run_id
 split_meta$stan_data_path <- STAN_DATA_PATH
+split_meta$ploidy_effect_mask_spec <- if (nzchar(trimws(PLOIDY_EFFECT_MASK_SPEC))) PLOIDY_EFFECT_MASK_SPEC else "all"
+split_meta$ploidy_effect_mask_label <- if (!is.null(mask_info$label)) mask_info$label else "all"
+split_meta$ploidy_effect_mask <- stan_data$ploidy_effect_mask
 
 stan_file <- get_model_stan_path(MODEL_NAME, "v1")
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))

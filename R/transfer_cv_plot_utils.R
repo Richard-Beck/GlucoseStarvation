@@ -169,7 +169,8 @@ simulate_transfer_fit <- function(
       base_priors = base_priors,
       raw_theta_line = raw_theta_line,
       raw_theta_ploidy = raw_theta_ploidy,
-      ploidy_metric = p_metric
+      ploidy_metric = p_metric,
+      ploidy_effect_mask = best_fit$split_meta$ploidy_effect_mask
     )
 
     y0 <- c(N = max(as.numeric(N0), 1e-6), R1 = as.numeric(G1_0))

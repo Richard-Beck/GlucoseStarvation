@@ -170,11 +170,111 @@ get_param_names <- function(R, P, W, C, M, priors = base_priors) {
   return(labels)
 }
 
+normalize_ploidy_target_label <- function(label) {
+  sub("\\[1\\]$", "", label)
+}
+
+build_ploidy_effect_mask <- function(
+  R,
+  P,
+  W,
+  C,
+  M,
+  target_spec = NULL,
+  priors = base_priors
+) {
+  labels <- get_param_names(R, P, W, C, M, priors = priors)
+  L <- length(labels)
+
+  if (is.null(target_spec) || !length(target_spec) || all(is.na(target_spec)) || all(!nzchar(trimws(target_spec)))) {
+    return(list(
+      mask = rep(1.0, L),
+      selected = labels,
+      label = "all"
+    ))
+  }
+
+  tokens <- unique(trimws(unlist(strsplit(paste(target_spec, collapse = ","), ",", fixed = TRUE))))
+  tokens <- tokens[nzchar(tokens)]
+  if (!length(tokens)) {
+    return(list(
+      mask = rep(1.0, L),
+      selected = labels,
+      label = "all"
+    ))
+  }
+
+  token_key <- tolower(tokens)
+  if (length(token_key) == 1L && token_key %in% c("all", "*")) {
+    return(list(
+      mask = rep(1.0, L),
+      selected = labels,
+      label = "all"
+    ))
+  }
+  if (length(token_key) == 1L && token_key %in% c("none", "null")) {
+    return(list(
+      mask = rep(0.0, L),
+      selected = character(0),
+      label = "none"
+    ))
+  }
+
+  norm_labels <- normalize_ploidy_target_label(labels)
+  selected_idx <- integer(0)
+
+  for (tok in tokens) {
+    if (grepl("^[0-9]+$", tok)) {
+      idx <- as.integer(tok)
+      if (is.na(idx) || idx < 1L || idx > L) {
+        stop(sprintf("Ploidy target index out of range: %s", tok))
+      }
+      selected_idx <- c(selected_idx, idx)
+      next
+    }
+
+    exact_idx <- which(labels == tok)
+    if (length(exact_idx) == 1L) {
+      selected_idx <- c(selected_idx, exact_idx)
+      next
+    }
+
+    alias_idx <- which(norm_labels == tok)
+    if (length(alias_idx) == 1L) {
+      selected_idx <- c(selected_idx, alias_idx)
+      next
+    }
+
+    if (length(alias_idx) > 1L) {
+      stop(sprintf("Ambiguous ploidy target '%s'; matches: %s", tok, paste(labels[alias_idx], collapse = ", ")))
+    }
+
+    stop(sprintf("Unknown ploidy target '%s'", tok))
+  }
+
+  selected_idx <- sort(unique(selected_idx))
+  mask <- rep(0.0, L)
+  mask[selected_idx] <- 1.0
+
+  safe_label <- gsub("[^A-Za-z0-9]+", "-", paste(labels[selected_idx], collapse = "_"))
+  safe_label <- gsub("(^-+|-+$)", "", safe_label)
+  if (!nzchar(safe_label)) {
+    safe_label <- "none"
+  }
+
+  list(
+    mask = mask,
+    selected = labels[selected_idx],
+    label = safe_label
+  )
+}
+
 reconstruct_parms <- function(R, P, W, strict_spec, M, 
                               base_priors, 
                               raw_theta_line, 
                               raw_theta_ploidy, 
-                              ploidy_metric) {
+                              ploidy_metric,
+                              ploidy_effect_mask = NULL) {
   
   # 1. Generate structural maps, masks, centers, and scales
   config <- generate_stan_config(R, P, W, strict_spec, M, base_priors)
@@ -183,10 +283,13 @@ reconstruct_parms <- function(R, P, W, strict_spec, M,
   prior_scales <- config$prior_scales
   param_map <- config$param_map
   param_mask <- config$param_mask
+  if (is.null(ploidy_effect_mask)) {
+    ploidy_effect_mask <- rep(1.0, length(raw_theta_ploidy))
+  }
   
   # 2. Reconstruct physical parameters exactly as in Stan
   # Combine line and ploidy effects
-  raw_w <- raw_theta_line + raw_theta_ploidy * ploidy_metric
+  raw_w <- raw_theta_line + (raw_theta_ploidy * ploidy_effect_mask) * ploidy_metric
   
   # Transform to physical space
   theta_phys <- exp(log(prior_centers) + raw_w * prior_scales)

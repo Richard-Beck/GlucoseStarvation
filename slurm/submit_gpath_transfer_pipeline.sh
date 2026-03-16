@@ -25,7 +25,8 @@ RUN_PREFIT=${18:-1}
 PREFIT_CHAINS=${19:-4}
 INIT_MODE=${20:-"auto"}
 QOS=${21:-"medium"}
-CLEAR_LOGS=${22:-1}
+PLOIDY_EFFECT_MASK_SPEC=${22:-"all"}
+CLEAR_LOGS=${23:-1}
 
 CONTAINER_URI=${CONTAINER_URI:-"docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"}
 BINDS=${BINDS:-"-B /home/$USER,/share,/etc/passwd,/etc/group"}
@@ -56,7 +57,8 @@ apptainer exec $BINDS $CONTAINER_URI \
   "$LINE_SPEC" \
   "$DIRECTION_SPEC" \
   "$FIT_SPEC" \
-  "$CHAIN_SPEC"
+  "$CHAIN_SPEC" \
+  "$PLOIDY_EFFECT_MASK_SPEC"
 
 N_TASKS=$(awk 'END { print NR - 1 }' "$MANIFEST_PATH")
 if [ "$N_TASKS" -le 0 ]; then
@@ -129,7 +131,8 @@ ARRAY_JOB_ID=$(sbatch --parsable \
   "$MAX_TREED" \
   "$NUM_THREADS" \
   "$OUTPUT_ROOT" \
-  "$INIT_MODE")
+  "$INIT_MODE" \
+  "$PLOIDY_EFFECT_MASK_SPEC")
 
 SUMMARY_JOB_ID=$(sbatch --parsable \
   --dependency="afterany:${ARRAY_JOB_ID}" \
@@ -147,6 +150,7 @@ manifest_path=${MANIFEST_PATH}
 array_job_id=${ARRAY_JOB_ID}
 summary_job_id=${SUMMARY_JOB_ID}
 output_root=${OUTPUT_ROOT}
+ploidy_effect_mask_spec=${PLOIDY_EFFECT_MASK_SPEC}
 run_prefit=${RUN_PREFIT}
 qos=${QOS}
 optim_job_id=${OPTIM_JOB_ID}

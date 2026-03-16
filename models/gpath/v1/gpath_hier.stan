@@ -82,6 +82,7 @@ functions {
       // Mapping and Priors
       array[] int line_id,
       vector ploidy_metric,
+      vector ploidy_effect_mask,
       array[] int group_id,
       vector prior_centers,
       vector prior_scales,
@@ -121,7 +122,7 @@ functions {
           
             real N0_w = exp(log(500) + raw_N0[group_id[w]] * 1.0);
             
-            vector[L] raw_w = raw_theta_line[, line_id[w]] + raw_theta_ploidy * ploidy_metric[w];
+            vector[L] raw_w = raw_theta_line[, line_id[w]] + (raw_theta_ploidy .* ploidy_effect_mask) * ploidy_metric[w];
             vector[L] theta_phys = exp(log(prior_centers) + raw_w .* prior_scales);
             
             vector[L] theta_mapped;
@@ -291,6 +292,7 @@ data {
   vector<lower=0>[L] prior_scales;
   array[L] int<lower=1, upper=L> param_map; 
   vector[L] param_mask; 
+  vector[L] ploidy_effect_mask;
   
   //CV masks
   array[N_wells] int<lower=0, upper=1> is_train;
@@ -352,7 +354,7 @@ model {
   target += reduce_sum(
       partial_sum_likelihood, well_indices, 1, 
       raw_theta_line, raw_theta_ploidy, raw_N0, nu_N,sigma_N,
-      line_id, ploidy_metric, group_id,
+      line_id, ploidy_metric, ploidy_effect_mask, group_id,
       prior_centers, prior_scales, param_map, param_mask,
       R, P, W, L, waste_mech, G1_0,g1_id, R_init_base, exp_id, t_grid, N_grid,
       N_obs_count, well_idx_count, grid_idx_count, N_obs,
@@ -370,7 +372,7 @@ generated quantities {
   for (w in 1:N_wells) {
       real N0_w = exp(log(500) + raw_N0[group_id[w]] * 1.0);
           
-      vector[L] raw_w = raw_theta_line[, line_id[w]] + raw_theta_ploidy * ploidy_metric[w];
+      vector[L] raw_w = raw_theta_line[, line_id[w]] + (raw_theta_ploidy .* ploidy_effect_mask) * ploidy_metric[w];
       vector[L] theta_phys = exp(log(prior_centers) + raw_w .* prior_scales);
       
       vector[L] theta_mapped;

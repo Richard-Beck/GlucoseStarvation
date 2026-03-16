@@ -108,7 +108,7 @@ extract_draw_vector <- function(draws) {
   stop("Unsupported draws format for parameter extraction")
 }
 
-reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploidy_metric) {
+reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploidy_metric, ploidy_effect_mask = NULL) {
   dims <- parse_run_id(model_id)
   R <- dims$R
   P <- dims$P
@@ -129,7 +129,8 @@ reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploid
     base_priors = base_priors,
     raw_theta_line = raw_theta_line,
     raw_theta_ploidy = raw_theta_ploidy,
-    ploidy_metric = ploidy_metric
+    ploidy_metric = ploidy_metric,
+    ploidy_effect_mask = ploidy_effect_mask
   )
 
   flatten_numeric_object(parms)
@@ -190,6 +191,7 @@ build_parameter_transfer_tables <- function(
     fit_state_vals <- list()
     for (fit_type in names(fits)) {
       draw_vec <- extract_draw_vector(fits[[fit_type]]$draws)
+      fit_mask <- fits[[fit_type]]$split_meta$ploidy_effect_mask %||% NULL
       fit_state_vals[[fit_type]] <- list()
 
       for (state_name in names(state_map)) {
@@ -197,7 +199,8 @@ build_parameter_transfer_tables <- function(
           draw_vec = draw_vec,
           model_id = model_id,
           line_id = line_id,
-          ploidy_metric = state_map[[state_name]]
+          ploidy_metric = state_map[[state_name]],
+          ploidy_effect_mask = fit_mask
         )
         fit_state_vals[[fit_type]][[state_name]] <- vals
 

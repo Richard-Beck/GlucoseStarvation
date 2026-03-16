@@ -25,6 +25,7 @@ MAX_TREED=${12:-12}
 NUM_THREADS=${13:-16}
 OUTPUT_ROOT=${14:-"data/gpath_transfer_cv"}
 INIT_MODE=${15:-"auto"}
+PLOIDY_EFFECT_MASK_SPEC=${16:-"all"}
 
 TASK_ID=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
 TASK_LINE=$(awk -v task_id="$TASK_ID" 'BEGIN { FS="\t" } NR == (task_id + 1) { print; exit }' "$MANIFEST_PATH")
@@ -34,7 +35,10 @@ if [ -z "$TASK_LINE" ]; then
   exit 1
 fi
 
-IFS=$'\t' read -r _TASK LINE_ID DIRECTION FIT_TYPE START_ID OBSERVED_VALUE HOLDOUT_VALUE HOLDOUT_WELLS HOLDOUT_OBS STAN_DATA_PATH <<< "$TASK_LINE"
+IFS=$'\t' read -r _TASK LINE_ID DIRECTION FIT_TYPE START_ID OBSERVED_VALUE HOLDOUT_VALUE HOLDOUT_WELLS HOLDOUT_OBS STAN_DATA_PATH TASK_MASK_SPEC <<< "$TASK_LINE"
+if [ -n "${TASK_MASK_SPEC:-}" ]; then
+  PLOIDY_EFFECT_MASK_SPEC="$TASK_MASK_SPEC"
+fi
 
 CONTAINER_URI=${CONTAINER_URI:-"docker://dockerhub.moffitt.org/hpc/rocker-rstudio:4.4.2"}
 BINDS=${BINDS:-"-B /home/$USER,/share,/etc/passwd,/etc/group"}
@@ -53,6 +57,7 @@ echo "Manifest: ${MANIFEST_PATH}"
 echo "Task: line=${LINE_ID} direction=${DIRECTION} fit=${FIT_TYPE} start=${START_ID}"
 echo "Held-out wells=${HOLDOUT_WELLS} held-out obs=${HOLDOUT_OBS}"
 echo "Init mode=${INIT_MODE}"
+echo "Ploidy mask=${PLOIDY_EFFECT_MASK_SPEC}"
 
 id "$USER" > /dev/null 2>&1
 sleep 2
@@ -76,4 +81,5 @@ apptainer exec $BINDS $CONTAINER_URI \
   "$NUM_THREADS" \
   "$STAN_DATA_PATH" \
   "$OUTPUT_ROOT" \
-  "$INIT_MODE"
+  "$INIT_MODE" \
+  "$PLOIDY_EFFECT_MASK_SPEC"

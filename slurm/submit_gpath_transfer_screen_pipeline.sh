@@ -25,7 +25,7 @@ echo "PWD: $(pwd)"
 echo "Submitting transfer screening batch from ${SPEC_PATH}"
 echo "Batch metadata directory: ${RUN_DIR}"
 
-Rscript - "$SPEC_COPY" <<'EOF' | while IFS='|' read -r row_index model_name run_id line_spec direction_spec fit_spec start_spec iter_warmup iter_sampling adapt_delta max_treedepth num_threads stan_data_path output_root run_prefit prefit_chains init_mode qos; do
+Rscript - "$SPEC_COPY" <<'EOF' | while IFS='|' read -r row_index model_name run_id line_spec direction_spec fit_spec start_spec iter_warmup iter_sampling adapt_delta max_treedepth num_threads stan_data_path output_root ploidy_effect_mask_spec run_prefit prefit_chains init_mode qos; do
 args <- commandArgs(trailingOnly = TRUE)
 spec_path <- args[1]
 
@@ -41,7 +41,7 @@ spec <- read.delim(
 required_cols <- c(
   "enabled", "model_name", "run_id", "line_spec", "direction_spec", "fit_spec", "start_spec",
   "iter_warmup", "iter_sampling", "adapt_delta", "max_treedepth", "num_threads",
-  "stan_data_path", "output_root", "run_prefit", "prefit_chains", "init_mode", "qos"
+  "stan_data_path", "output_root", "ploidy_effect_mask_spec", "run_prefit", "prefit_chains", "init_mode", "qos"
 )
 
 missing_cols <- setdiff(required_cols, names(spec))
@@ -76,6 +76,7 @@ for (i in seq_len(nrow(spec))) {
     nz_or(row$num_threads, "16"),
     nz_or(row$stan_data_path, "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"),
     nz_or(row$output_root, "data/gpath_transfer_cv"),
+    nz_or(row$ploidy_effect_mask_spec, "all"),
     nz_or(row$run_prefit, "0"),
     nz_or(row$prefit_chains, "4"),
     nz_or(row$init_mode, "random"),
@@ -92,7 +93,7 @@ EOF
   run_parts=$(Rscript -e "source('models/gpath/v1/model.R'); x <- parse_run_id('$run_id'); cat(x\$R, x\$P, x\$W, x\$C, x\$M)")
   read -r r_val p_val w_val c_val m_val <<< "$run_parts"
 
-  echo "Submitting transfer screening row ${row_index}: ${run_id} (${start_spec}, init_mode=${init_mode}, qos=${qos})"
+  echo "Submitting transfer screening row ${row_index}: ${run_id} (${start_spec}, init_mode=${init_mode}, qos=${qos}, mask=${ploidy_effect_mask_spec})"
 
   submit_output=$(bash slurm/submit_gpath_transfer_pipeline.sh \
     "$model_name" \
@@ -112,6 +113,7 @@ EOF
     "$num_threads" \
     "$stan_data_path" \
     "$output_root" \
+    "$ploidy_effect_mask_spec" \
     "$run_prefit" \
     "$prefit_chains" \
     "$init_mode" \

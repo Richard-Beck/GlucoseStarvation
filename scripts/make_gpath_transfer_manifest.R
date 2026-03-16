@@ -8,6 +8,7 @@ LINE_ARG <- if (length(args) >= 3) args[3] else "all"
 DIRECTION_ARG <- if (length(args) >= 4) args[4] else "low_to_high,high_to_low"
 FIT_ARG <- if (length(args) >= 5) args[5] else "null,transfer,oracle"
 START_ARG <- if (length(args) >= 6) args[6] else "1,2,3,4"
+PLOIDY_EFFECT_MASK_SPEC <- if (length(args) >= 7) args[7] else ""
 
 source("R/gpath_run_utils.R")
 source("R/elpd_transfer_utils.R")
@@ -72,6 +73,7 @@ for (line_id in line_ids) {
           holdout_wells = length(split_meta$holdout_wells),
           holdout_obs = split_meta$holdout_total_obs,
           stan_data_path = stan_data_path,
+          ploidy_effect_mask_spec = if (nzchar(trimws(PLOIDY_EFFECT_MASK_SPEC))) PLOIDY_EFFECT_MASK_SPEC else "all",
           stringsAsFactors = FALSE
         )
         idx <- idx + 1L

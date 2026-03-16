@@ -184,6 +184,7 @@ load_transfer_outputs <- function(model_id, output_root) {
   base_dir <- file.path(output_root, model_id)
   list(
     transfer_summary = safe_read_rds(file.path(base_dir, "transfer_comparison_summary.Rds")),
+    parameter_states = safe_read_rds(file.path(base_dir, "parameter_transfer_states.Rds")),
     parameter_summary = safe_read_rds(file.path(base_dir, "parameter_transfer_summary.Rds")),
     parameter_comparison = safe_read_rds(file.path(base_dir, "parameter_transfer_comparison.Rds")),
     best_start = safe_read_rds(file.path(base_dir, "transfer_best_start_summary.Rds"))
@@ -355,6 +356,133 @@ rank_parameter_families <- function(model_family_df) {
     ) %>%
     arrange(direction, desc(mean_log_error_improvement), desc(mean_win_rate))
 }
+
+derive_glucose_transfer_summaries <- function(state_df) {
+  if (is.null(state_df) || !nrow(state_df)) {
+    return(tibble())
+  }
+
+  req <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
+  wide <- state_df %>%
+    filter(parameter %in% req, fit_type %in% c("transfer", "oracle")) %>%
+    select(line_id, direction, fit_type, state, parameter, value) %>%
+    tidyr::pivot_wider(names_from = parameter, values_from = value)
+
+  needed <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
+  if (!all(needed %in% names(wide))) {
+    return(tibble())
+  }
+
+  wide %>%
+    transmute(
+      line_id,
+      direction,
+      fit_type,
+      state,
+      Umax_1 = `ae[1]`,
+      Khalf_1 = `ah[1]`,
+      Efflow_1 = `ae[1]` / `ah[1]`,
+      YieldCap_1 = `Y_R[1]` * `ae[1]`,
+      NetGrow_1 = (`Y_R[1]` * `ae[1]`) - m
+    ) %>%
+    tidyr::pivot_longer(
+      cols = c(Umax_1, Khalf_1, Efflow_1, YieldCap_1, NetGrow_1),
+      names_to = "summary_name",
+      values_to = "summary_value"
+    )
+}
+
+collect_derived_transfer_summaries <- function(model_ids, output_root = project_paths$transfer_optim_root) {
+  rows <- lapply(model_ids, function(model_id) {
+    x <- load_transfer_outputs(model_id, output_root = output_root)
+    ds <- derive_glucose_transfer_summaries(x$parameter_states)
+
+    if (is.null(ds) || !nrow(ds)) {
+      return(NULL)
+    }
+
+    ds$model_id <- model_id
+    ds
+  })
+
+  bind_rows(rows)
+}
+
+build_derived_transfer_comparison <- function(derived_df) {
+  if (!nrow(derived_df)) {
+    return(tibble())
+  }
+
+  transfer_obs <- derived_df %>%
+    filter(fit_type == "transfer", state == "observed") %>%
+    select(model_id, line_id, direction, summary_name, observed_transfer = summary_value)
+
+  transfer_holdout <- derived_df %>%
+    filter(fit_type == "transfer", state == "holdout") %>%
+    select(model_id, line_id, direction, summary_name, transfer_holdout = summary_value)
+
+  oracle_holdout <- derived_df %>%
+    filter(fit_type == "oracle", state == "holdout") %>%
+    select(model_id, line_id, direction, summary_name, oracle_holdout = summary_value)
+
+  oracle_obs <- derived_df %>%
+    filter(fit_type == "oracle", state == "observed") %>%
+    select(model_id, line_id, direction, summary_name, observed_oracle = summary_value)
+
+  transfer_obs %>%
+    left_join(transfer_holdout, by = c("model_id", "line_id", "direction", "summary_name")) %>%
+    left_join(oracle_holdout, by = c("model_id", "line_id", "direction", "summary_name")) %>%
+    left_join(oracle_obs, by = c("model_id", "line_id", "direction", "summary_name")) %>%
+    mutate(
+      null_holdout = observed_transfer,
+      null_vs_oracle_diff = null_holdout - oracle_holdout,
+      holdout_diff = transfer_holdout - oracle_holdout,
+      abs_null_err = pmax(abs(null_vs_oracle_diff), 1e-12),
+      abs_transfer_err = pmax(abs(holdout_diff), 1e-12),
+      log10_error_ratio = log10(abs_transfer_err / abs_null_err),
+      log_error_improvement = log(abs_null_err) - log(abs_transfer_err),
+      transfer_better_than_null = abs_transfer_err < abs_null_err,
+      oracle_shift = oracle_holdout - observed_oracle,
+      transfer_shift = transfer_holdout - observed_transfer,
+      shift_diff = transfer_shift - oracle_shift
+    )
+}
+
+summarize_derived_transfer <- function(derived_cmp_df) {
+  if (!nrow(derived_cmp_df)) {
+    return(tibble())
+  }
+
+  derived_cmp_df %>%
+    group_by(model_id, direction, summary_name) %>%
+    summarise(
+      mean_log_error_improvement = mean(log_error_improvement, na.rm = TRUE),
+      median_log10_error_ratio = median(log10_error_ratio, na.rm = TRUE),
+      mean_win_rate = mean(transfer_better_than_null, na.rm = TRUE),
+      prop_lines_positive = mean(log_error_improvement > 0, na.rm = TRUE),
+      mean_abs_shift_diff = mean(abs(shift_diff), na.rm = TRUE),
+      n_line_cases = dplyr::n(),
+      .groups = "drop"
+    )
+}
+
+rank_derived_transfer <- function(derived_summary_df) {
+  if (!nrow(derived_summary_df)) {
+    return(tibble())
+  }
+
+  derived_summary_df %>%
+    group_by(direction, summary_name) %>%
+    summarise(
+      mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+      mean_win_rate = mean(mean_win_rate, na.rm = TRUE),
+      prop_models_positive = mean(mean_log_error_improvement > 0, na.rm = TRUE),
+      mean_abs_shift_diff = mean(mean_abs_shift_diff, na.rm = TRUE),
+      n_models = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(direction, desc(mean_log_error_improvement), desc(mean_win_rate))
+}
 ```
 
 ## Upstream Commands
@@ -498,6 +626,10 @@ family_parameter_df <- collect_parameter_family_transfer(ranking_df$model_id)
 family_parameter_summary_df <- summarize_parameter_family_transfer(family_parameter_df)
 model_family_summary_df <- summarize_parameter_family_across_models(family_parameter_summary_df)
 family_ranking_df <- rank_parameter_families(model_family_summary_df)
+derived_transfer_df <- collect_derived_transfer_summaries(ranking_df$model_id)
+derived_transfer_cmp_df <- build_derived_transfer_comparison(derived_transfer_df)
+derived_transfer_summary_df <- summarize_derived_transfer(derived_transfer_cmp_df)
+derived_transfer_ranking_df <- rank_derived_transfer(derived_transfer_summary_df)
 
 predictive_screen_summary <- summarize_predictive_screening(screen_transfer_df)
 parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
@@ -715,6 +847,115 @@ if (!nrow(family_parameter_summary_df)) {
     )
 
   p1 / p2
+}
+```
+
+## Cross-Model Derived Glucose Summaries
+
+These plots summarize five glucose-focused derived quantities reconstructed from the parameter states:
+`Umax_1 = ae1`, `Khalf_1 = ah1`, `Efflow_1 = ae1 / ah1`, `YieldCap_1 = Y_R1 * ae1`, and `NetGrow_1 = Y_R1 * ae1 - m`.
+
+```{r derived-transfer-ranking, fig.height=8, fig.width=12}
+if (!nrow(derived_transfer_summary_df)) {
+  announce_missing("No derived transfer summaries could be built from parameter-transfer states.")
+} else {
+  plot_df <- derived_transfer_ranking_df %>%
+    mutate(direction = factor(direction, levels = c("low_to_high", "high_to_low")))
+
+  p1 <- ggplot(plot_df, aes(x = reorder(summary_name, mean_log_error_improvement), y = mean_log_error_improvement, color = direction)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey70") +
+    geom_point(size = 3) +
+    coord_flip() +
+    facet_wrap(~ direction, scales = "free_y") +
+    theme_bw() +
+    labs(x = "", y = "Cross-model mean log-error improvement")
+
+  p2 <- ggplot(plot_df, aes(x = reorder(summary_name, mean_win_rate), y = mean_win_rate, color = direction)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey70") +
+    geom_point(size = 3) +
+    coord_flip() +
+    facet_wrap(~ direction, scales = "free_y") +
+    coord_cartesian(ylim = c(0, 1)) +
+    theme_bw() +
+    labs(x = "", y = "Cross-model mean win rate")
+
+  p1 | p2
+}
+```
+
+```{r derived-transfer-heatmaps, fig.height=10, fig.width=12}
+if (!nrow(derived_transfer_summary_df)) {
+  announce_missing("No derived transfer summaries available for cross-model heatmaps.")
+} else {
+  heat_df <- derived_transfer_summary_df %>%
+    mutate(direction = factor(direction, levels = c("low_to_high", "high_to_low")))
+
+  p1 <- ggplot(heat_df, aes(x = summary_name, y = model_id, fill = mean_log_error_improvement)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ direction) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0) +
+    theme_minimal() +
+    labs(
+      x = "Derived glucose summary",
+      y = "Model ID",
+      fill = "Mean log-error\nimprovement"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p2 <- ggplot(heat_df, aes(x = summary_name, y = model_id, fill = mean_win_rate)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ direction) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0.5, limits = c(0, 1)) +
+    theme_minimal() +
+    labs(
+      x = "Derived glucose summary",
+      y = "Model ID",
+      fill = "Mean\nwin rate"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p1 / p2
+}
+```
+
+```{r derived-transfer-selected-model, fig.height=9, fig.width=10}
+if (is.na(selected_model_id)) {
+  announce_missing("No selected model available for derived transfer plots.")
+} else {
+  selected_df <- derived_transfer_cmp_df %>%
+    filter(model_id == selected_model_id) %>%
+    mutate(direction = factor(direction, levels = c("low_to_high", "high_to_low")))
+
+  if (!nrow(selected_df)) {
+    announce_missing("No derived transfer comparison rows found for %s", selected_model_id)
+  } else {
+    p1 <- ggplot(selected_df, aes(x = summary_name, y = log_error_improvement, color = direction)) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "grey70") +
+      geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+      stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+      facet_wrap(~ line_id) +
+      theme_bw() +
+      labs(x = "Derived glucose summary", y = "Line-level log-error improvement") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    p2 <- ggplot(selected_df, aes(x = summary_name, y = as.numeric(transfer_better_than_null), color = direction)) +
+      geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey70") +
+      geom_point(position = position_jitter(width = 0.15, height = 0.03), alpha = 0.8, size = 2) +
+      stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+      facet_wrap(~ line_id) +
+      coord_cartesian(ylim = c(0, 1)) +
+      theme_bw() +
+      labs(x = "Derived glucose summary", y = "Transfer beats null") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    p1 / p2
+  }
 }
 ```
 

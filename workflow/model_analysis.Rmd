@@ -222,6 +222,30 @@ collect_parameter_screening <- function(model_ids, output_root = project_paths$t
   bind_rows(rows)
 }
 
+collect_parameter_family_transfer <- function(model_ids, output_root = project_paths$transfer_optim_root) {
+  rows <- lapply(model_ids, function(model_id) {
+    x <- load_transfer_outputs(model_id, output_root = output_root)
+    pc <- x$parameter_comparison
+
+    if (is.null(pc) || !nrow(pc)) {
+      return(NULL)
+    }
+
+    pc %>%
+      mutate(
+        model_id = model_id,
+        family = vapply(parameter, get_parameter_family, character(1)),
+        abs_null_err = pmax(abs(null_vs_oracle_diff), 1e-12),
+        abs_transfer_err = pmax(abs(holdout_diff), 1e-12),
+        log10_error_ratio = log10(abs_transfer_err / abs_null_err),
+        log_error_improvement = log(abs_null_err) - log(abs_transfer_err),
+        transfer_better_than_null = abs_transfer_err < abs_null_err
+      )
+  })
+
+  bind_rows(rows)
+}
+
 summarize_predictive_screening <- function(screen_df) {
   if (!nrow(screen_df)) {
     return(tibble())
@@ -277,6 +301,56 @@ summarize_parameter_screening <- function(screen_df) {
       )
     ) %>%
     arrange(desc(mean_log_error_improvement_low_to_high), desc(mean_log_error_improvement_high_to_low))
+}
+
+summarize_parameter_family_transfer <- function(family_df) {
+  if (!nrow(family_df)) {
+    return(tibble())
+  }
+
+  family_df %>%
+    group_by(model_id, line_id, direction, family) %>%
+    summarise(
+      median_log10_error_ratio = median(log10_error_ratio, na.rm = TRUE),
+      mean_log_error_improvement = mean(log_error_improvement, na.rm = TRUE),
+      prop_transfer_better_than_null = mean(transfer_better_than_null, na.rm = TRUE),
+      n_parameters = dplyr::n(),
+      .groups = "drop"
+    )
+}
+
+summarize_parameter_family_across_models <- function(family_summary_df) {
+  if (!nrow(family_summary_df)) {
+    return(tibble())
+  }
+
+  family_summary_df %>%
+    group_by(model_id, direction, family) %>%
+    summarise(
+      mean_family_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+      median_family_log10_error_ratio = median(median_log10_error_ratio, na.rm = TRUE),
+      mean_family_win_rate = mean(prop_transfer_better_than_null, na.rm = TRUE),
+      n_line_cases = dplyr::n(),
+      .groups = "drop"
+    )
+}
+
+rank_parameter_families <- function(model_family_df) {
+  if (!nrow(model_family_df)) {
+    return(tibble())
+  }
+
+  model_family_df %>%
+    group_by(direction, family) %>%
+    summarise(
+      mean_log_error_improvement = mean(mean_family_log_error_improvement, na.rm = TRUE),
+      median_log10_error_ratio = median(median_family_log10_error_ratio, na.rm = TRUE),
+      mean_win_rate = mean(mean_family_win_rate, na.rm = TRUE),
+      prop_models_positive = mean(mean_family_log_error_improvement > 0, na.rm = TRUE),
+      n_models = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(direction, desc(mean_log_error_improvement), desc(mean_win_rate))
 }
 ```
 
@@ -417,6 +491,10 @@ This section treats transfer as a predictive benchmark. It is useful, but the pa
 ```{r transfer-screening-setup}
 screen_transfer_df <- collect_transfer_screening(ranking_df$model_id)
 screen_parameter_df <- collect_parameter_screening(ranking_df$model_id)
+family_parameter_df <- collect_parameter_family_transfer(ranking_df$model_id)
+family_parameter_summary_df <- summarize_parameter_family_transfer(family_parameter_df)
+model_family_summary_df <- summarize_parameter_family_across_models(family_parameter_summary_df)
+family_ranking_df <- rank_parameter_families(model_family_summary_df)
 
 predictive_screen_summary <- summarize_predictive_screening(screen_transfer_df)
 parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
@@ -502,6 +580,138 @@ if (is.na(selected_model_id)) {
     cat("NUTS transfer summary\n")
     print(nuts_transfer)
   }
+}
+```
+
+## Cross-Model Family Transfer
+
+This section asks a narrower question than overall model transfer: whether particular parameter families repeatedly move closer to the oracle than the null baseline does across models, lines, and transfer directions.
+
+```{r parameter-family-ranking, fig.height=8, fig.width=12}
+if (!nrow(model_family_summary_df)) {
+  announce_missing("No parameter-comparison outputs found for family-level transfer analysis.")
+} else {
+  plot_df <- family_ranking_df %>%
+    mutate(
+      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
+      family = reorder(family, mean_log_error_improvement)
+    )
+
+  p1 <- ggplot(plot_df, aes(x = family, y = mean_log_error_improvement, color = direction)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey70") +
+    geom_point(size = 3) +
+    coord_flip() +
+    facet_wrap(~ direction, scales = "free_y") +
+    theme_bw() +
+    labs(x = "", y = "Cross-model mean log-error improvement")
+
+  p2 <- ggplot(plot_df, aes(x = family, y = mean_win_rate, color = direction)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey70") +
+    geom_point(size = 3) +
+    coord_flip() +
+    facet_wrap(~ direction, scales = "free_y") +
+    coord_cartesian(ylim = c(0, 1)) +
+    theme_bw() +
+    labs(x = "", y = "Cross-model mean family win rate")
+
+  p1 | p2
+}
+```
+
+```{r parameter-family-consistency-heatmaps, fig.height=10, fig.width=12}
+if (!nrow(model_family_summary_df)) {
+  announce_missing("No parameter-comparison outputs found for family-level heatmaps.")
+} else {
+  heat_df <- model_family_summary_df %>%
+    mutate(direction = factor(direction, levels = c("low_to_high", "high_to_low")))
+
+  p1 <- ggplot(heat_df, aes(x = family, y = model_id, fill = mean_family_log_error_improvement)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ direction) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0) +
+    theme_minimal() +
+    labs(
+      x = "Parameter family",
+      y = "Model ID",
+      fill = "Mean log-error\nimprovement"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p2 <- ggplot(heat_df, aes(x = family, y = model_id, fill = mean_family_win_rate)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ direction) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0.5, limits = c(0, 1)) +
+    theme_minimal() +
+    labs(
+      x = "Parameter family",
+      y = "Model ID",
+      fill = "Mean family\nwin rate"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p1 / p2
+}
+```
+
+```{r parameter-family-line-heatmaps, fig.height=10, fig.width=12}
+if (!nrow(family_parameter_summary_df)) {
+  announce_missing("No parameter-comparison outputs found for line-level family heatmaps.")
+} else {
+  top_families <- family_ranking_df %>%
+    group_by(family) %>%
+    summarise(
+      mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+      mean_win_rate = mean(mean_win_rate, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(mean_log_error_improvement), desc(mean_win_rate)) %>%
+    slice_head(n = 4) %>%
+    pull(family)
+
+  line_heat_df <- family_parameter_summary_df %>%
+    filter(family %in% top_families) %>%
+    mutate(
+      line_direction = sprintf("line %d | %s", line_id, direction),
+      family = factor(family, levels = top_families)
+    )
+
+  p1 <- ggplot(line_heat_df, aes(x = family, y = line_direction, fill = mean_log_error_improvement)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ model_id) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0) +
+    theme_minimal() +
+    labs(
+      x = "Top parameter families",
+      y = "",
+      fill = "Mean log-error\nimprovement"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p2 <- ggplot(line_heat_df, aes(x = family, y = line_direction, fill = prop_transfer_better_than_null)) +
+    geom_tile(color = "white") +
+    facet_wrap(~ model_id) +
+    scale_fill_gradient2(low = "#d95f02", mid = "white", high = "#1b9e77", midpoint = 0.5, limits = c(0, 1)) +
+    theme_minimal() +
+    labs(
+      x = "Top parameter families",
+      y = "",
+      fill = "Family\nwin rate"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA)
+    )
+
+  p1 / p2
 }
 ```
 

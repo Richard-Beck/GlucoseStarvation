@@ -359,18 +359,43 @@ rank_parameter_families <- function(model_family_df) {
 
 derive_glucose_transfer_summaries <- function(state_df) {
   if (is.null(state_df) || !nrow(state_df)) {
-    return(tibble())
+    return(tibble(
+      line_id = integer(),
+      direction = character(),
+      fit_type = character(),
+      state = character(),
+      summary_name = character(),
+      summary_value = numeric()
+    ))
   }
 
-  req <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
-  wide <- state_df %>%
-    filter(parameter %in% req, fit_type %in% c("transfer", "oracle")) %>%
-    select(line_id, direction, fit_type, state, parameter, value) %>%
-    tidyr::pivot_wider(names_from = parameter, values_from = value)
+  glucose_name_map <- c(
+    "ae[1]" = "ae1",
+    "ae" = "ae1",
+    "ah[1]" = "ah1",
+    "ah" = "ah1",
+    "Y_R[1]" = "YR1",
+    "Y_R" = "YR1",
+    "m" = "m"
+  )
 
-  needed <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
+  wide <- state_df %>%
+    filter(parameter %in% names(glucose_name_map), fit_type %in% c("transfer", "oracle")) %>%
+    mutate(parameter_key = unname(glucose_name_map[parameter])) %>%
+    select(line_id, direction, fit_type, state, parameter, value) %>%
+    select(-parameter) %>%
+    tidyr::pivot_wider(names_from = parameter_key, values_from = value)
+
+  needed <- c("ae1", "ah1", "YR1", "m")
   if (!all(needed %in% names(wide))) {
-    return(tibble())
+    return(tibble(
+      line_id = integer(),
+      direction = character(),
+      fit_type = character(),
+      state = character(),
+      summary_name = character(),
+      summary_value = numeric()
+    ))
   }
 
   wide %>%
@@ -379,11 +404,11 @@ derive_glucose_transfer_summaries <- function(state_df) {
       direction,
       fit_type,
       state,
-      Umax_1 = `ae[1]`,
-      Khalf_1 = `ah[1]`,
-      Efflow_1 = `ae[1]` / `ah[1]`,
-      YieldCap_1 = `Y_R[1]` * `ae[1]`,
-      NetGrow_1 = (`Y_R[1]` * `ae[1]`) - m
+      Umax_1 = ae1,
+      Khalf_1 = ah1,
+      Efflow_1 = ae1 / ah1,
+      YieldCap_1 = YR1 * ae1,
+      NetGrow_1 = (YR1 * ae1) - m
     ) %>%
     tidyr::pivot_longer(
       cols = c(Umax_1, Khalf_1, Efflow_1, YieldCap_1, NetGrow_1),
@@ -405,12 +430,44 @@ collect_derived_transfer_summaries <- function(model_ids, output_root = project_
     ds
   })
 
-  bind_rows(rows)
+  out <- bind_rows(rows)
+  if (!nrow(out)) {
+    return(tibble(
+      line_id = integer(),
+      direction = character(),
+      fit_type = character(),
+      state = character(),
+      summary_name = character(),
+      summary_value = numeric(),
+      model_id = character()
+    ))
+  }
+  out
 }
 
 build_derived_transfer_comparison <- function(derived_df) {
   if (!nrow(derived_df)) {
-    return(tibble())
+    return(tibble(
+      model_id = character(),
+      line_id = integer(),
+      direction = character(),
+      summary_name = character(),
+      observed_transfer = numeric(),
+      transfer_holdout = numeric(),
+      oracle_holdout = numeric(),
+      observed_oracle = numeric(),
+      null_holdout = numeric(),
+      null_vs_oracle_diff = numeric(),
+      holdout_diff = numeric(),
+      abs_null_err = numeric(),
+      abs_transfer_err = numeric(),
+      log10_error_ratio = numeric(),
+      log_error_improvement = numeric(),
+      transfer_better_than_null = logical(),
+      oracle_shift = numeric(),
+      transfer_shift = numeric(),
+      shift_diff = numeric()
+    ))
   }
 
   transfer_obs <- derived_df %>%
@@ -450,7 +507,17 @@ build_derived_transfer_comparison <- function(derived_df) {
 
 summarize_derived_transfer <- function(derived_cmp_df) {
   if (!nrow(derived_cmp_df)) {
-    return(tibble())
+    return(tibble(
+      model_id = character(),
+      direction = character(),
+      summary_name = character(),
+      mean_log_error_improvement = numeric(),
+      median_log10_error_ratio = numeric(),
+      mean_win_rate = numeric(),
+      prop_lines_positive = numeric(),
+      mean_abs_shift_diff = numeric(),
+      n_line_cases = integer()
+    ))
   }
 
   derived_cmp_df %>%
@@ -468,7 +535,15 @@ summarize_derived_transfer <- function(derived_cmp_df) {
 
 rank_derived_transfer <- function(derived_summary_df) {
   if (!nrow(derived_summary_df)) {
-    return(tibble())
+    return(tibble(
+      direction = character(),
+      summary_name = character(),
+      mean_log_error_improvement = numeric(),
+      mean_win_rate = numeric(),
+      prop_models_positive = numeric(),
+      mean_abs_shift_diff = numeric(),
+      n_models = integer()
+    ))
   }
 
   derived_summary_df %>%

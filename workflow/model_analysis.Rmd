@@ -256,28 +256,27 @@ summarize_parameter_screening <- function(screen_df) {
   }
 
   screen_df %>%
+    mutate(
+      mean_log_error_improvement = mean_abs_log_null_holdout_ratio - mean_abs_log_holdout_ratio
+    ) %>%
     group_by(model_id, direction) %>%
     summarise(
-      mean_parameter_improvement = mean(mean_transfer_improvement_over_null, na.rm = TRUE),
-      median_parameter_improvement = median(mean_transfer_improvement_over_null, na.rm = TRUE),
+      mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+      median_log_error_improvement = median(mean_log_error_improvement, na.rm = TRUE),
       mean_prop_parameters_better = mean(prop_parameters_transfer_better_than_null, na.rm = TRUE),
-      mean_abs_transfer_error = mean(mean_abs_holdout_diff, na.rm = TRUE),
-      mean_abs_null_error = mean(mean_abs_null_vs_oracle_diff, na.rm = TRUE),
       n_cases = dplyr::n(),
       .groups = "drop"
     ) %>%
     tidyr::pivot_wider(
       names_from = direction,
       values_from = c(
-        mean_parameter_improvement,
-        median_parameter_improvement,
+        mean_log_error_improvement,
+        median_log_error_improvement,
         mean_prop_parameters_better,
-        mean_abs_transfer_error,
-        mean_abs_null_error,
         n_cases
       )
     ) %>%
-    arrange(desc(mean_parameter_improvement_low_to_high), desc(mean_parameter_improvement_high_to_low))
+    arrange(desc(mean_log_error_improvement_low_to_high), desc(mean_log_error_improvement_high_to_low))
 }
 ```
 
@@ -425,26 +424,16 @@ parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
 
 ## Transfer Screening Across Models
 
-```{r transfer-screening-table}
-if (!nrow(predictive_screen_summary)) {
-  announce_missing("No optimisation transfer summaries found for the trusted model set.")
-} else {
-  knitr::kable(predictive_screen_summary)
-}
-```
-
-```{r parameter-transfer-screening-table}
-if (!nrow(parameter_screen_summary)) {
-  announce_missing("No parameter-transfer summaries found for the trusted model set.")
-} else {
-  knitr::kable(parameter_screen_summary)
-}
-```
-
-```{r screening-plots, fig.height=7, fig.width=12}
+```{r screening-plots, fig.height=10, fig.width=12}
 if (!nrow(screen_transfer_df) || !nrow(screen_parameter_df)) {
   announce_missing("Need both predictive and parameter-transfer screening outputs to draw compact model-screening plots.")
 } else {
+  screen_parameter_df <- screen_parameter_df %>%
+    mutate(
+      mean_log_error_improvement = mean_abs_log_null_holdout_ratio - mean_abs_log_holdout_ratio,
+      direction = factor(direction, levels = c("low_to_high", "high_to_low"))
+    )
+
   p_pred <- ggplot(
     screen_transfer_df,
     aes(x = reorder(model_id, transfer_gain, FUN = mean), y = transfer_gain, color = direction)
@@ -456,19 +445,31 @@ if (!nrow(screen_transfer_df) || !nrow(screen_parameter_df)) {
     theme_bw() +
     labs(x = "", y = "Predictive transfer gain over null")
 
-  p_param <- ggplot(
+  p_param_log <- ggplot(
     screen_parameter_df,
-    aes(x = reorder(model_id, mean_transfer_improvement_over_null, FUN = mean), y = mean_transfer_improvement_over_null, color = direction)
+    aes(x = reorder(model_id, mean_log_error_improvement, FUN = mean), y = mean_log_error_improvement, color = direction)
   ) +
     geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
     geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
     stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
     coord_flip() +
     theme_bw() +
-    labs(x = "", y = "Parameter transfer improvement over null")
+    labs(x = "", y = "Mean log-error improvement over null")
 
-  p_pred + p_param
-}
+  p_param_win <- ggplot(
+    screen_parameter_df,
+    aes(x = reorder(model_id, prop_parameters_transfer_better_than_null, FUN = mean), y = prop_parameters_transfer_better_than_null, color = direction)
+  ) +
+    geom_hline(yintercept = 0.5, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    coord_cartesian(ylim = c(0, 1)) +
+    theme_bw() +
+    labs(x = "", y = "Proportion of parameters transfer beats null")
+
+  (p_pred | p_param_log) / p_param_win
+  }
 ```
 
 ```{r transfer-optim-summary}
@@ -480,8 +481,10 @@ if (is.na(selected_model_id)) {
   if (is.null(optim_transfer$transfer_summary)) {
     announce_missing("No optimisation transfer summary found for %s", selected_model_id)
   } else {
-    cat("Optimisation transfer summary\n")
-    print(optim_transfer$transfer_summary)
+    optim_transfer$transfer_summary %>%
+      select(line_id, direction, transfer_gain, transfer_regret, transfer, null, oracle) %>%
+      arrange(direction, desc(transfer_gain)) %>%
+      print()
   }
 }
 ```
@@ -515,7 +518,20 @@ if (is.na(selected_model_id)) {
   if (is.null(optim_transfer$parameter_summary)) {
     announce_missing("No parameter transfer summary found for %s", selected_model_id)
   } else {
-    print(optim_transfer$parameter_summary)
+    optim_transfer$parameter_summary %>%
+      mutate(
+        mean_log_error_improvement = mean_abs_log_null_holdout_ratio - mean_abs_log_holdout_ratio
+      ) %>%
+      select(
+        line_id,
+        direction,
+        mean_log_error_improvement,
+        prop_parameters_transfer_better_than_null,
+        mean_abs_log_holdout_ratio,
+        mean_abs_log_null_holdout_ratio
+      ) %>%
+      arrange(direction, desc(mean_log_error_improvement)) %>%
+      print()
   }
 }
 ```
@@ -537,7 +553,7 @@ if (is.na(selected_model_id)) {
 }
 ```
 
-```{r parameter-transfer-plot-2, fig.height=5, fig.width=9}
+```{r parameter-transfer-plot-2, fig.height=8, fig.width=10}
 if (is.na(selected_model_id)) {
   announce_missing("No selected model available for parameter transfer plots.")
 } else {
@@ -554,9 +570,26 @@ if (is.na(selected_model_id)) {
 }
 ```
 
+```{r parameter-transfer-plot-3, fig.height=9, fig.width=10}
+if (is.na(selected_model_id)) {
+  announce_missing("No selected model available for parameter transfer plots.")
+} else {
+    comparison_path <- file.path(project_paths$transfer_optim_root, selected_model_id, "parameter_transfer_comparison.Rds")
+    if (!file.exists(comparison_path)) {
+      announce_missing("No parameter transfer comparison found at %s", comparison_path)
+    } else {
+      plot_parameter_transfer_family_summary(
+        model_id = selected_model_id,
+        output_root = "data/gpath_transfer_cv",
+        model_name = "gpath"
+      )
+    }
+}
+```
+
 ## Transfer Fits For A Representative Line
 
-This section overlays the best optimisation `null`, `transfer`, and `oracle` fits for one selected line. A line is chosen from the parameter-transfer summary by maximal mean improvement over null; if that summary is absent, line 1 is used.
+This section overlays the best optimisation `null`, `transfer`, and `oracle` fits for one selected line. A line is chosen from the parameter-transfer summary by maximal mean log-error improvement over null; if that summary is absent, line 1 is used.
 
 ```{r transfer-overlay-plot, fig.height=6, fig.width=12}
 if (is.na(selected_model_id)) {
@@ -567,7 +600,8 @@ if (is.na(selected_model_id)) {
 
   target_line <- 1L
   if (!is.null(parameter_summary_df) && nrow(parameter_summary_df)) {
-    target_line <- parameter_summary_df$line_id[which.max(parameter_summary_df$mean_transfer_improvement_over_null)]
+    score <- parameter_summary_df$mean_abs_log_null_holdout_ratio - parameter_summary_df$mean_abs_log_holdout_ratio
+    target_line <- parameter_summary_df$line_id[which.max(score)]
   }
 
   best_start_path <- file.path(project_paths$transfer_optim_root, selected_model_id, "transfer_best_start_summary.Rds")
@@ -602,6 +636,9 @@ if (is.na(selected_model_id)) {
     announce_missing("Need both predictive and parameter-transfer summaries to build the interpretation table.")
   } else {
     interpretation_df <- optim_transfer$parameter_summary %>%
+      mutate(
+        mean_log_error_improvement = mean_abs_log_null_holdout_ratio - mean_abs_log_holdout_ratio
+      ) %>%
       left_join(
         optim_transfer$transfer_summary %>% rename(model_direction = direction),
         by = c("line_id" = "line_id", "direction" = "model_direction")
@@ -614,8 +651,10 @@ if (is.na(selected_model_id)) {
         oracle,
         transfer_gain,
         transfer_regret,
-        mean_transfer_improvement_over_null,
-        prop_parameters_transfer_better_than_null
+        mean_log_error_improvement,
+        prop_parameters_transfer_better_than_null,
+        mean_abs_log_holdout_ratio,
+        mean_abs_log_null_holdout_ratio
       )
 
     print(interpretation_df)
@@ -637,5 +676,5 @@ Recommended next steps:
 1. Treat the selected `gpath` model as primary and stop comparing many model IDs throughout the downstream biological analysis.
 2. Use the predictive transfer summaries as a benchmark, but make the parameter-transfer section the primary scientific result.
 3. Add one compact comparison of optimisation-based versus NUTS-based transfer for the same selected model to quantify how much posterior averaging changes the conclusion.
-4. If the parameter-transfer summaries are still hard to interpret, add family-level summaries for `ae`, `ah`, `Y_R`, `A_mat`, and `m` rather than only per-parameter outputs.
+4. If the parameter-transfer summaries are still hard to interpret, lean on the family-level heatmaps and relative-error summaries rather than raw-scale averages.
 5. Keep legacy or exploratory analysis blocks outside this notebook unless they are directly needed for the current `gpath` narrative.

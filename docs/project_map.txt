@@ -58,7 +58,9 @@
      generate_line_data(), plot_line_trajectories(), and prep_line_diag_exact() for simulated-vs-observed fit plots.
      Transfer-CV plotting now lives in R/transfer_cv_plot_utils.R and scripts/plot_gpath_transfer_cv.R, which load the
      best optimization start per null/transfer/oracle condition, simulate the held-out line, and overlay fits with
-     color by fit type and linetype by transfer direction.
+     color by fit type and linetype by transfer direction. Batch export of annotated transfer overlays now lives in
+     scripts/export_gpath_transfer_overlays.R, which writes per-model/per-line PNGs plus a manifest under
+     data/gpath_transfer_cv_overlays/.
 
      Cluster submission is beginning to move outside ecology. slurm/README.md defines the target structure:
      `slurm/jobs/` for stable job scripts, `slurm/submit_*.sh` for one-shot wrappers, and `slurm/runs/...` for generated

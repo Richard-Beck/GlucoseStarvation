@@ -7,6 +7,7 @@ library(patchwork)
 source("R/project_paths.R")
 source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
+source("R/elpd_transfer_utils.R")
 
 load_transfer_best_fit <- function(
   model_id,
@@ -243,11 +244,60 @@ generate_transfer_overlay_data <- function(
   )
 }
 
+load_transfer_comparison_summary <- function(
+  model_id,
+  output_root = "data/gpath_transfer_cv",
+  model_name = "gpath"
+) {
+  summary_path <- file.path(output_root, model_name, model_id, "transfer_comparison_summary.Rds")
+  if (!file.exists(summary_path)) {
+    stop(sprintf("Transfer comparison summary not found: %s", summary_path))
+  }
+
+  readRDS(summary_path)
+}
+
+format_transfer_overlay_scores <- function(
+  model_id,
+  line_id,
+  output_root = "data/gpath_transfer_cv",
+  model_name = "gpath",
+  digits = 2
+) {
+  df <- load_transfer_comparison_summary(
+    model_id = model_id,
+    output_root = output_root,
+    model_name = model_name
+  )
+
+  df <- df[df$line_id == line_id, , drop = FALSE]
+  if (!nrow(df)) {
+    return(NULL)
+  }
+
+  df$direction <- factor(df$direction, levels = c("low_to_high", "high_to_low"))
+  df <- df[order(df$direction), , drop = FALSE]
+
+  apply(df, 1, function(row) {
+    sprintf(
+      "%s: null=%.*f | transfer=%.*f | oracle=%.*f | gain=%.*f | regret=%.*f",
+      row[["direction"]],
+      digits, as.numeric(row[["null"]]),
+      digits, as.numeric(row[["transfer"]]),
+      digits, as.numeric(row[["oracle"]]),
+      digits, as.numeric(row[["transfer_gain"]]),
+      digits, as.numeric(row[["transfer_regret"]])
+    )
+  }) %>%
+    paste(collapse = "\n")
+}
+
 plot_transfer_line_trajectories <- function(
   transfer_data,
   line_id,
   model_id,
-  line_name = NULL
+  line_name = NULL,
+  score_text = NULL
 ) {
   if (is.null(line_name)) {
     stan_data <- readRDS(resolve_stan_data_path("data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"))
@@ -308,6 +358,7 @@ plot_transfer_line_trajectories <- function(
   combined_plot <- wrap_plots(plot_list, nrow = 1) +
     plot_annotation(
       title = sprintf("Transfer CV Fits | Model: %s | Cell Line: %s", model_id, line_name),
+      subtitle = score_text,
       theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
     )
 

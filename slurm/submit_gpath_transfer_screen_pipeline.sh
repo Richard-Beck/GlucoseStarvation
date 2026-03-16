@@ -113,11 +113,11 @@ EOF
     "$num_threads" \
     "$stan_data_path" \
     "$output_root" \
-    "$ploidy_effect_mask_spec" \
     "$run_prefit" \
     "$prefit_chains" \
     "$init_mode" \
     "$qos" \
+    "$ploidy_effect_mask_spec" \
     0)
 
   transfer_run_dir=$(printf "%s\n" "$submit_output" | awk -F= '/^run_dir=/{print $2; exit}')

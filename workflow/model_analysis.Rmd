@@ -557,6 +557,140 @@ rank_derived_transfer <- function(derived_summary_df) {
     ) %>%
     arrange(direction, desc(mean_log_error_improvement), desc(mean_win_rate))
 }
+
+compute_point_loglik_subset <- function(draws, well_idx) {
+  ll <- get_well_loglik_draws(draws, well_idx)
+  if (!length(ll)) {
+    return(NA_real_)
+  }
+  as.numeric(ll[1])
+}
+
+build_transfer_subset_diagnostics <- function(
+  model_ids,
+  output_root = project_paths$transfer_optim_root,
+  stan_data_path = project_paths$stan_data
+) {
+  if (!length(model_ids)) {
+    return(tibble(
+      model_id = character(),
+      line_id = integer(),
+      direction = character(),
+      fit_type = character(),
+      return_code = numeric(),
+      lp__ = numeric(),
+      ll_transfer_train = numeric(),
+      ll_transfer_holdout = numeric(),
+      n_transfer_train_wells = integer(),
+      n_transfer_holdout_wells = integer()
+    ))
+  }
+
+  stan_data <- readRDS(resolve_stan_data_path(stan_data_path))
+  all_wells <- seq_len(stan_data$N_wells)
+  rows <- list()
+  idx <- 1L
+
+  for (model_id in model_ids) {
+    best_path <- file.path(output_root, model_id, "transfer_best_start_summary.Rds")
+    if (!file.exists(best_path)) {
+      next
+    }
+
+    best_df <- readRDS(best_path)
+    keys <- unique(best_df[, c("line_id", "direction")])
+
+    for (k in seq_len(nrow(keys))) {
+      line_id <- keys$line_id[k]
+      direction <- keys$direction[k]
+      split_meta <- get_directional_transfer_split(stan_data, line_id, direction)
+      transfer_train_wells <- setdiff(all_wells, split_meta$holdout_wells)
+      transfer_holdout_wells <- split_meta$holdout_wells
+
+      for (fit_type in c("null", "transfer", "oracle")) {
+        fit_obj <- tryCatch(
+          load_transfer_best_fit(
+            model_id = model_id,
+            line_id = line_id,
+            direction = direction,
+            fit_type = fit_type,
+            output_root = dirname(output_root),
+            model_name = "gpath"
+          ),
+          error = function(e) NULL
+        )
+
+        if (is.null(fit_obj)) {
+          next
+        }
+
+        rows[[idx]] <- data.frame(
+          model_id = model_id,
+          line_id = as.integer(line_id),
+          direction = direction,
+          fit_type = fit_type,
+          return_code = as.numeric(fit_obj$summary$return_code[[1]]),
+          lp__ = as.numeric(fit_obj$summary$lp__[[1]]),
+          ll_transfer_train = compute_point_loglik_subset(fit_obj$draws, transfer_train_wells),
+          ll_transfer_holdout = compute_point_loglik_subset(fit_obj$draws, transfer_holdout_wells),
+          n_transfer_train_wells = length(transfer_train_wells),
+          n_transfer_holdout_wells = length(transfer_holdout_wells),
+          stringsAsFactors = FALSE
+        )
+        idx <- idx + 1L
+      }
+    }
+  }
+
+  if (!length(rows)) {
+    return(tibble(
+      model_id = character(),
+      line_id = integer(),
+      direction = character(),
+      fit_type = character(),
+      return_code = numeric(),
+      lp__ = numeric(),
+      ll_transfer_train = numeric(),
+      ll_transfer_holdout = numeric(),
+      n_transfer_train_wells = integer(),
+      n_transfer_holdout_wells = integer()
+    ))
+  }
+
+  bind_rows(rows)
+}
+
+summarize_transfer_subset_diagnostics <- function(diag_df) {
+  if (!nrow(diag_df)) {
+    return(tibble(
+      model_id = character(),
+      line_id = integer(),
+      direction = character(),
+      transfer_minus_oracle_train = numeric(),
+      transfer_minus_null_train = numeric(),
+      transfer_minus_oracle_holdout = numeric(),
+      transfer_minus_null_holdout = numeric()
+    ))
+  }
+
+  wide <- diag_df %>%
+    select(model_id, line_id, direction, fit_type, ll_transfer_train, ll_transfer_holdout) %>%
+    tidyr::pivot_wider(
+      names_from = fit_type,
+      values_from = c(ll_transfer_train, ll_transfer_holdout)
+    )
+
+  wide %>%
+    transmute(
+      model_id,
+      line_id,
+      direction,
+      transfer_minus_oracle_train = ll_transfer_train_transfer - ll_transfer_train_oracle,
+      transfer_minus_null_train = ll_transfer_train_transfer - ll_transfer_train_null,
+      transfer_minus_oracle_holdout = ll_transfer_holdout_transfer - ll_transfer_holdout_oracle,
+      transfer_minus_null_holdout = ll_transfer_holdout_transfer - ll_transfer_holdout_null
+    )
+}
 ```
 
 ## Upstream Commands
@@ -704,6 +838,8 @@ derived_transfer_df <- collect_derived_transfer_summaries(ranking_df$model_id)
 derived_transfer_cmp_df <- build_derived_transfer_comparison(derived_transfer_df)
 derived_transfer_summary_df <- summarize_derived_transfer(derived_transfer_cmp_df)
 derived_transfer_ranking_df <- rank_derived_transfer(derived_transfer_summary_df)
+transfer_subset_diag_df <- build_transfer_subset_diagnostics(ranking_df$model_id)
+transfer_subset_summary_df <- summarize_transfer_subset_diagnostics(transfer_subset_diag_df)
 
 predictive_screen_summary <- summarize_predictive_screening(screen_transfer_df)
 parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
@@ -757,6 +893,108 @@ if (!nrow(screen_transfer_df) || !nrow(screen_parameter_df)) {
 
   (p_pred | p_param_log) / p_param_win
   }
+```
+
+## Transfer Fit Diagnostics On Common Well Subsets
+
+These diagnostics evaluate each best `null`, `transfer`, and `oracle` fit on the same transfer-defined well subsets, rather than comparing each fit on its own training set.
+
+```{r transfer-subset-diagnostics, fig.height=10, fig.width=12}
+if (!nrow(transfer_subset_summary_df)) {
+  announce_missing("No common-subset transfer diagnostics could be built from saved best-start fits.")
+} else {
+  diag_df <- transfer_subset_summary_df %>%
+    mutate(direction = factor(direction, levels = c("low_to_high", "high_to_low")))
+
+  p1 <- ggplot(
+    diag_df,
+    aes(x = reorder(model_id, transfer_minus_oracle_train, FUN = mean), y = transfer_minus_oracle_train, color = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Transfer - Oracle on transfer-training wells")
+
+  p2 <- ggplot(
+    diag_df,
+    aes(x = reorder(model_id, transfer_minus_null_train, FUN = mean), y = transfer_minus_null_train, color = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Transfer - Null on transfer-training wells")
+
+  p3 <- ggplot(
+    diag_df,
+    aes(x = reorder(model_id, transfer_minus_oracle_holdout, FUN = mean), y = transfer_minus_oracle_holdout, color = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Transfer - Oracle on transfer-holdout wells")
+
+  p4 <- ggplot(
+    diag_df,
+    aes(x = reorder(model_id, transfer_minus_null_holdout, FUN = mean), y = transfer_minus_null_holdout, color = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2) +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Transfer - Null on transfer-holdout wells")
+
+  (p1 | p2) / (p3 | p4)
+}
+```
+
+```{r transfer-direction-asymmetry, fig.height=6, fig.width=10}
+if (!nrow(transfer_subset_summary_df)) {
+  announce_missing("No common-subset transfer diagnostics available for direction-asymmetry plot.")
+} else {
+  asym_df <- transfer_subset_summary_df %>%
+    select(model_id, line_id, direction, transfer_minus_oracle_train, transfer_minus_null_train) %>%
+    tidyr::pivot_wider(
+      names_from = direction,
+      values_from = c(transfer_minus_oracle_train, transfer_minus_null_train)
+    ) %>%
+    mutate(
+      asym_transfer_minus_oracle_train =
+        transfer_minus_oracle_train_low_to_high - transfer_minus_oracle_train_high_to_low,
+      asym_transfer_minus_null_train =
+        transfer_minus_null_train_low_to_high - transfer_minus_null_train_high_to_low
+    )
+
+  p1 <- ggplot(
+    asym_df,
+    aes(x = reorder(model_id, asym_transfer_minus_oracle_train, FUN = mean), y = asym_transfer_minus_oracle_train)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2, color = "#1b9e77") +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Low->High minus High->Low\nfor Transfer - Oracle on training wells")
+
+  p2 <- ggplot(
+    asym_df,
+    aes(x = reorder(model_id, asym_transfer_minus_null_train, FUN = mean), y = asym_transfer_minus_null_train)
+  ) +
+    geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.8, size = 2, color = "#d95f02") +
+    stat_summary(fun = mean, geom = "point", shape = 95, size = 7, color = "black") +
+    coord_flip() +
+    theme_bw() +
+    labs(x = "", y = "Low->High minus High->Low\nfor Transfer - Null on training wells")
+
+  p1 | p2
+}
 ```
 
 ```{r transfer-optim-summary}

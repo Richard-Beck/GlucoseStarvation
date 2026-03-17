@@ -1,6 +1,6 @@
 args <- commandArgs(trailingOnly = TRUE)
 
-feature_panel_path <- if (length(args) >= 1 && nzchar(args[1])) args[1] else file.path("data", "model_free_ploidy", "feature_panel.Rds")
+signature_panel_path <- if (length(args) >= 1 && nzchar(args[1])) args[1] else file.path("data", "model_free_ploidy", "signature_panel.Rds")
 output_dir <- if (length(args) >= 2 && nzchar(args[2])) args[2] else file.path("data", "model_free_ploidy")
 
 if (!dir.exists(output_dir)) {
@@ -9,8 +9,8 @@ if (!dir.exists(output_dir)) {
 
 source("R/model_free_ploidy_utils.R")
 
-feature_panel <- readRDS(feature_panel_path)
-transfer <- evaluate_transfer_predictions(feature_panel)
+signature_panel <- readRDS(signature_panel_path)
+transfer <- evaluate_transfer_predictions(signature_panel)
 
 write.csv(transfer$predictions, file.path(output_dir, "transfer_predictions.csv"), row.names = FALSE)
 write.csv(transfer$feature_summary, file.path(output_dir, "transfer_feature_summary.csv"), row.names = FALSE)

@@ -258,7 +258,10 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
       (dplyr::last(count_df$dead_cells) - count_df$dead_cells[1]) / max(glucose_df$glucose_hat[1] - dplyr::last(glucose_df$glucose_hat), 1e-8)
     } else {
       NA_real_
-    }
+    },
+    total_peak = if (nrow(count_df)) max(count_df$total_cells, na.rm = TRUE) else NA_real_,
+    total_peak_time = if (nrow(count_df)) count_df$hours[which.max(count_df$total_cells)] else NA_real_,
+    total_auc = safe_trapz(count_df$hours, count_df$total_cells)
   )
 
   out
@@ -286,15 +289,125 @@ build_feature_panel <- function(stan_data_path = NULL, glucose_floor = 0.1) {
   )
 }
 
-compute_empirical_effects <- function(feature_panel) {
-  feature_cols <- names(feature_panel)[vapply(feature_panel, is.numeric, logical(1))]
+fit_log_glucose_response <- function(g0, y, pred_grid = c(0, 0.1, 0.25, 1, 5, 25)) {
+  pred_names <- c("pred_0", "pred_0p1", "pred_0p25", "pred_1", "pred_5", "pred_25")
+  ok <- is.finite(g0) & is.finite(y)
+  g0 <- g0[ok]
+  y <- y[ok]
+
+  if (!length(y)) {
+    return(list(
+      intercept = NA_real_,
+      slope = NA_real_,
+      r_squared = NA_real_,
+      n = 0L,
+      pred = setNames(rep(NA_real_, length(pred_grid)), pred_names)
+    ))
+  }
+
+  if (length(unique(g0)) < 2L || length(y) < 3L) {
+    med <- median(y, na.rm = TRUE)
+    return(list(
+      intercept = med,
+      slope = 0,
+      r_squared = NA_real_,
+      n = length(y),
+      pred = setNames(rep(med, length(pred_grid)), pred_names)
+    ))
+  }
+
+  fit <- lm(y ~ log1p(g0))
+  pred <- stats::predict(fit, newdata = data.frame(g0 = pred_grid))
+
+  list(
+    intercept = unname(coef(fit)[1]),
+    slope = unname(coef(fit)[2]),
+    r_squared = summary(fit)$r.squared,
+    n = length(y),
+    pred = setNames(as.numeric(pred), pred_names)
+  )
+}
+
+median_in_g0_band <- function(g0, y, lower = -Inf, upper = Inf) {
+  keep <- is.finite(g0) & is.finite(y) & g0 >= lower & g0 <= upper
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  median(y[keep], na.rm = TRUE)
+}
+
+summarize_glucose_signatures <- function(feature_panel) {
+  groups <- split(feature_panel, paste(feature_panel$cellLine, feature_panel$ploidy_metric, sep = "||"))
+
+  sig_rows <- lapply(groups, function(df) {
+    df <- df %>% arrange(G0)
+    g0 <- df$G0
+
+    fit_alive_auc <- fit_log_glucose_response(g0, df$live_auc)
+    fit_dead_auc <- fit_log_glucose_response(g0, df$dead_auc)
+    fit_total_peak <- fit_log_glucose_response(g0, df$total_peak)
+    fit_total_auc <- fit_log_glucose_response(g0, df$total_auc)
+    fit_live_peak <- fit_log_glucose_response(g0, df$live_peak)
+
+    tibble(
+      cellLine = df$cellLine[1],
+      line_id = df$line_id[1],
+      ploidy_metric = df$ploidy_metric[1],
+      ploidy_abs = df$ploidy_abs[1],
+      has_starvation = df$has_starvation[1],
+      n_glucose_conditions = nrow(df),
+      growth_lowG_median = median_in_g0_band(g0, df$max_growth_rate, upper = 0.25),
+      growth_highG_median = median_in_g0_band(g0, df$max_growth_rate, lower = 1),
+      growth_logG_slope = fit_log_glucose_response(g0, df$max_growth_rate)$slope,
+      growth_peak_time_highG = median_in_g0_band(g0, df$time_max_growth_rate, lower = 1),
+      death_lowG_median = median_in_g0_band(g0, df$max_death_rate, upper = 0.25),
+      death_highG_median = median_in_g0_band(g0, df$max_death_rate, lower = 1),
+      death_logG_slope = fit_log_glucose_response(g0, df$max_death_rate)$slope,
+      dead_fraction_lowG = median_in_g0_band(g0, df$dead_fraction_peak, upper = 0.25),
+      dead_fraction_highG = median_in_g0_band(g0, df$dead_fraction_peak, lower = 1),
+      glucose_floor_time_lowG = median_in_g0_band(g0, df$time_to_glucose_floor, upper = 0.25),
+      glucose_drawdown_fraction_highG = median_in_g0_band(g0, df$glucose_drawdown_fraction, lower = 1),
+      glucose_drawdown_rate_highG = median_in_g0_band(g0, df$max_glucose_drawdown_rate, lower = 1),
+      yield_alive_auc_intercept = fit_alive_auc$intercept,
+      yield_alive_auc_slope = fit_alive_auc$slope,
+      yield_alive_auc_pred_0 = fit_alive_auc$pred[["pred_0"]],
+      yield_alive_auc_pred_1 = fit_alive_auc$pred[["pred_1"]],
+      yield_alive_auc_pred_25 = fit_alive_auc$pred[["pred_25"]],
+      yield_dead_auc_intercept = fit_dead_auc$intercept,
+      yield_dead_auc_slope = fit_dead_auc$slope,
+      yield_dead_auc_pred_0 = fit_dead_auc$pred[["pred_0"]],
+      yield_dead_auc_pred_1 = fit_dead_auc$pred[["pred_1"]],
+      yield_dead_auc_pred_25 = fit_dead_auc$pred[["pred_25"]],
+      yield_total_peak_intercept = fit_total_peak$intercept,
+      yield_total_peak_slope = fit_total_peak$slope,
+      yield_total_peak_pred_0 = fit_total_peak$pred[["pred_0"]],
+      yield_total_peak_pred_1 = fit_total_peak$pred[["pred_1"]],
+      yield_total_peak_pred_25 = fit_total_peak$pred[["pred_25"]],
+      yield_total_auc_intercept = fit_total_auc$intercept,
+      yield_total_auc_slope = fit_total_auc$slope,
+      yield_total_auc_pred_0 = fit_total_auc$pred[["pred_0"]],
+      yield_total_auc_pred_1 = fit_total_auc$pred[["pred_1"]],
+      yield_total_auc_pred_25 = fit_total_auc$pred[["pred_25"]],
+      live_peak_intercept = fit_live_peak$intercept,
+      live_peak_slope = fit_live_peak$slope,
+      live_peak_pred_0 = fit_live_peak$pred[["pred_0"]],
+      live_peak_pred_1 = fit_live_peak$pred[["pred_1"]],
+      live_peak_pred_25 = fit_live_peak$pred[["pred_25"]]
+    )
+  })
+
+  bind_rows(sig_rows) %>% arrange(cellLine, ploidy_metric)
+}
+
+compute_empirical_effects <- function(signature_panel) {
+  feature_cols <- names(signature_panel)[vapply(signature_panel, is.numeric, logical(1))]
   feature_cols <- setdiff(
     feature_cols,
-    c("well_idx", "line_id", "ploidy_metric", "ploidy_abs", "G0", "exp_id", "has_starvation", "n_count_times", "n_glucose_times")
+    c("line_id", "ploidy_metric", "ploidy_abs", "has_starvation", "n_glucose_conditions")
   )
 
-  paired <- feature_panel %>%
-    group_by(cellLine, G0) %>%
+  paired <- signature_panel %>%
+    group_by(cellLine) %>%
     filter(n() == 2L) %>%
     arrange(ploidy_metric, .by_group = TRUE) %>%
     summarise(
@@ -317,9 +430,9 @@ compute_empirical_effects <- function(feature_panel) {
     )
 
   effect_matrix <- long %>%
-    select(cellLine, G0, feature, effect_per_ploidy) %>%
+    select(cellLine, feature, effect_per_ploidy) %>%
     tidyr::pivot_wider(names_from = feature, values_from = effect_per_ploidy) %>%
-    arrange(cellLine, G0)
+    arrange(cellLine)
 
   pca <- NULL
   score_df <- tibble()
@@ -327,7 +440,7 @@ compute_empirical_effects <- function(feature_panel) {
 
   mat <- effect_matrix %>%
     ungroup() %>%
-    select(-cellLine, -G0) %>%
+    select(-cellLine) %>%
     as.matrix()
 
   keep_cols <- apply(mat, 2, function(x) all(is.finite(x)) && stats::sd(x) > 0)
@@ -335,7 +448,7 @@ compute_empirical_effects <- function(feature_panel) {
     mat_sub <- mat[, keep_cols, drop = FALSE]
     pca <- prcomp(mat_sub, center = TRUE, scale. = TRUE)
     score_df <- bind_cols(
-      effect_matrix %>% select(cellLine, G0),
+      effect_matrix %>% select(cellLine),
       as_tibble(pca$x, .name_repair = "minimal")
     )
     loading_df <- tibble(
@@ -356,18 +469,18 @@ compute_empirical_effects <- function(feature_panel) {
   )
 }
 
-evaluate_transfer_predictions <- function(feature_panel) {
-  feature_cols <- names(feature_panel)[vapply(feature_panel, is.numeric, logical(1))]
+evaluate_transfer_predictions <- function(signature_panel) {
+  feature_cols <- names(signature_panel)[vapply(signature_panel, is.numeric, logical(1))]
   feature_cols <- setdiff(
     feature_cols,
-    c("well_idx", "line_id", "ploidy_metric", "ploidy_abs", "G0", "exp_id", "has_starvation", "n_count_times", "n_glucose_times")
+    c("line_id", "ploidy_metric", "ploidy_abs", "has_starvation", "n_glucose_conditions")
   )
 
   rows <- list()
   idx <- 1L
 
-  for (line_name in sort(unique(feature_panel$cellLine))) {
-    line_df <- feature_panel %>% filter(cellLine == line_name)
+  for (line_name in sort(unique(signature_panel$cellLine))) {
+    line_df <- signature_panel %>% filter(cellLine == line_name)
     states <- sort(unique(line_df$ploidy_metric))
 
     if (length(states) != 2L) {
@@ -379,17 +492,15 @@ evaluate_transfer_predictions <- function(feature_panel) {
       holdout_ploidy <- if (direction == "low_to_high") states[2] else states[1]
       delta_ploidy <- holdout_ploidy - observed_ploidy
 
-      obs_df <- feature_panel %>%
-        filter(cellLine == line_name, abs(ploidy_metric - observed_ploidy) < 1e-12) %>%
-        arrange(G0)
+      obs_row <- signature_panel %>%
+        filter(cellLine == line_name, abs(ploidy_metric - observed_ploidy) < 1e-12)
 
-      hold_df <- feature_panel %>%
-        filter(cellLine == line_name, abs(ploidy_metric - holdout_ploidy) < 1e-12) %>%
-        arrange(G0)
+      hold_row <- signature_panel %>%
+        filter(cellLine == line_name, abs(ploidy_metric - holdout_ploidy) < 1e-12)
 
-      train_pairs <- feature_panel %>%
+      train_pairs <- signature_panel %>%
         filter(cellLine != line_name) %>%
-        group_by(cellLine, G0) %>%
+        group_by(cellLine) %>%
         filter(n() == 2L) %>%
         summarise(
           low_ploidy = min(ploidy_metric),
@@ -400,58 +511,58 @@ evaluate_transfer_predictions <- function(feature_panel) {
           .groups = "drop"
         )
 
-      for (g0 in sort(unique(obs_df$G0))) {
-        obs_row <- obs_df %>% filter(abs(G0 - g0) < 1e-12)
-        hold_row <- hold_df %>% filter(abs(G0 - g0) < 1e-12)
-        train_row <- train_pairs %>% filter(abs(G0 - g0) < 1e-12)
+      if (!nrow(obs_row) || !nrow(hold_row) || !nrow(train_pairs)) {
+        next
+      }
 
-        if (!nrow(obs_row) || !nrow(hold_row) || !nrow(train_row)) {
+      for (feature in feature_cols) {
+        obs_val <- obs_row[[feature]][1]
+        true_val <- hold_row[[feature]][1]
+
+        low_col <- paste0("low__", feature)
+        high_col <- paste0("high__", feature)
+        low_vals <- train_pairs[[low_col]]
+        high_vals <- train_pairs[[high_col]]
+        slope_vals <- (high_vals - low_vals) / train_pairs$delta_ploidy_train
+
+        effect_hat <- median(slope_vals[is.finite(slope_vals)], na.rm = TRUE)
+        if (!is.finite(effect_hat) || !is.finite(obs_val) || !is.finite(true_val)) {
           next
         }
 
-        for (feature in feature_cols) {
-          obs_val <- obs_row[[feature]][1]
-          true_val <- hold_row[[feature]][1]
+        pred_null <- obs_val
+        pred_transfer <- obs_val + effect_hat * delta_ploidy
+        true_effect <- (true_val - obs_val) / delta_ploidy
+        scale_ref <- median(abs(c(low_vals, high_vals, obs_val, true_val)), na.rm = TRUE)
+        scale_ref <- max(scale_ref, 1e-8)
+        abs_err_null <- abs(pred_null - true_val)
+        abs_err_transfer <- abs(pred_transfer - true_val)
 
-          low_col <- paste0("low__", feature)
-          high_col <- paste0("high__", feature)
-          low_vals <- train_row[[low_col]]
-          high_vals <- train_row[[high_col]]
-          slope_vals <- (high_vals - low_vals) / train_row$delta_ploidy_train
-
-          effect_hat <- median(slope_vals[is.finite(slope_vals)], na.rm = TRUE)
-          if (!is.finite(effect_hat)) {
-            next
-          }
-
-          pred_null <- obs_val
-          pred_transfer <- obs_val + effect_hat * delta_ploidy
-          true_effect <- (true_val - obs_val) / delta_ploidy
-
-          rows[[idx]] <- tibble(
-            cellLine = line_name,
-            G0 = g0,
-            direction = direction,
-            feature = feature,
-            observed_ploidy = observed_ploidy,
-            holdout_ploidy = holdout_ploidy,
-            delta_ploidy = delta_ploidy,
-            observed_value = obs_val,
-            true_value = true_val,
-            true_effect = true_effect,
-            transfer_effect = effect_hat,
-            pred_null = pred_null,
-            pred_transfer = pred_transfer,
-            abs_err_null = abs(pred_null - true_val),
-            abs_err_transfer = abs(pred_transfer - true_val),
-            sq_err_null = (pred_null - true_val) ^ 2,
-            sq_err_transfer = (pred_transfer - true_val) ^ 2,
-            abs_err_improvement = abs(pred_null - true_val) - abs(pred_transfer - true_val),
-            sign_match = as.integer(sign(true_effect) == sign(effect_hat)),
-            n_training_lines = sum(is.finite(slope_vals))
-          )
-          idx <- idx + 1L
-        }
+        rows[[idx]] <- tibble(
+          cellLine = line_name,
+          direction = direction,
+          feature = feature,
+          observed_ploidy = observed_ploidy,
+          holdout_ploidy = holdout_ploidy,
+          delta_ploidy = delta_ploidy,
+          observed_value = obs_val,
+          true_value = true_val,
+          true_effect = true_effect,
+          transfer_effect = effect_hat,
+          pred_null = pred_null,
+          pred_transfer = pred_transfer,
+          abs_err_null = abs_err_null,
+          abs_err_transfer = abs_err_transfer,
+          scaled_abs_err_null = abs_err_null / scale_ref,
+          scaled_abs_err_transfer = abs_err_transfer / scale_ref,
+          sq_err_null = (pred_null - true_val) ^ 2,
+          sq_err_transfer = (pred_transfer - true_val) ^ 2,
+          abs_err_improvement = abs_err_null - abs_err_transfer,
+          scaled_abs_err_improvement = (abs_err_null - abs_err_transfer) / scale_ref,
+          sign_match = as.integer(sign(true_effect) == sign(effect_hat)),
+          n_training_lines = sum(is.finite(slope_vals))
+        )
+        idx <- idx + 1L
       }
     }
   }
@@ -464,26 +575,31 @@ evaluate_transfer_predictions <- function(feature_panel) {
       n_cases = n(),
       mae_null = mean(abs_err_null, na.rm = TRUE),
       mae_transfer = mean(abs_err_transfer, na.rm = TRUE),
+      scaled_mae_null = mean(scaled_abs_err_null, na.rm = TRUE),
+      scaled_mae_transfer = mean(scaled_abs_err_transfer, na.rm = TRUE),
       rmse_null = sqrt(mean(sq_err_null, na.rm = TRUE)),
       rmse_transfer = sqrt(mean(sq_err_transfer, na.rm = TRUE)),
       mean_abs_err_improvement = mean(abs_err_improvement, na.rm = TRUE),
       median_abs_err_improvement = median(abs_err_improvement, na.rm = TRUE),
+      mean_scaled_err_improvement = mean(scaled_abs_err_improvement, na.rm = TRUE),
+      median_scaled_err_improvement = median(scaled_abs_err_improvement, na.rm = TRUE),
       transfer_win_rate = mean(abs_err_transfer < abs_err_null, na.rm = TRUE),
       sign_accuracy = mean(sign_match, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    arrange(desc(mean_abs_err_improvement), mae_transfer)
+    arrange(desc(mean_scaled_err_improvement), scaled_mae_transfer)
 
   case_summary <- predictions %>%
-    group_by(cellLine, direction, G0) %>%
+    group_by(cellLine, direction) %>%
     summarise(
       n_features = n(),
       mean_abs_err_improvement = mean(abs_err_improvement, na.rm = TRUE),
+      mean_scaled_err_improvement = mean(scaled_abs_err_improvement, na.rm = TRUE),
       transfer_win_rate = mean(abs_err_transfer < abs_err_null, na.rm = TRUE),
       sign_accuracy = mean(sign_match, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    arrange(cellLine, direction, G0)
+    arrange(cellLine, direction)
 
   list(
     feature_cols = feature_cols,

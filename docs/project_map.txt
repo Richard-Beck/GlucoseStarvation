@@ -91,14 +91,16 @@
 
   This branch uses the same `stan_ready_data` object but does not fit the ODE. R/model_free_ploidy_utils.R reconstructs
   count/glucose trajectories per well from `stan_ready_data`, converts glucose luminescence to estimated glucose using
-  the stored calibration parameters, and derives per-condition summary features such as peak live counts, growth/death
-  slopes, glucose drawdown, and timing metrics.
+  the stored calibration parameters, and derives per-condition summary features such as peak live counts, alive/dead
+  AUCs, max(total) yield, growth/death slopes, glucose drawdown, and timing metrics.
 
   scripts/extract_model_free_ploidy_features.R writes those derived tables under data/model_free_ploidy/ including
-  feature_panel.Rds/CSV, count_summary.Rds/CSV, glucose_summary.Rds/CSV, paired ploidy-effect summaries, and a PCA of
-  the empirical per-feature ploidy effects. scripts/evaluate_model_free_ploidy_transfer.R then performs a leave-one-line
-  directional transfer benchmark on the derived features, using the median cross-line effect at matched G0 as the
-  transferred ploidy effect, and writes prediction/summary artefacts under the same root. workflow/
+  feature_panel.Rds/CSV plus a second-layer signature_panel.Rds/CSV. That signature layer aggregates across initial
+  glucose with feature-specific rules: e.g. low/high-glucose medians for rate-like quantities and log1p(G0)
+  regressions for yield-like quantities such as alive AUC and max(total). Paired ploidy-effect summaries and PCA are
+  computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R then performs a leave-one-line
+  directional transfer benchmark on the signature panel, using the median cross-line ploidy effect per signature as the
+  transferred effect and reporting scaled error summaries so large-magnitude yield terms do not dominate. workflow/
   model_free_ploidy_analysis.Rmd is the reporting notebook for this branch.
 
   Image-derived feature branch

@@ -103,16 +103,16 @@ feature_catalog
 
 Two yield quantities are central here:
 
-- `live_auc`: trapezoidal area under the alive-cell curve
-- `peak_total_yield_per_glucose`: `max(live + dead)` up to the last glucose measurement, divided by `initial_glucose - final_glucose`
+- `live_auc_glucose_window`: trapezoidal area under the alive-cell curve over the interval bounded by the first and last glucose measurements
+- `peak_total_yield_per_glucose`: net gain in `live + dead` up to the last glucose measurement, divided by `initial_glucose - final_glucose`
 
 ```{r per-condition-preview}
 feature_panel %>%
   select(
     cellLine, ploidy_metric, G0,
     max_growth_rate, max_death_rate,
-    live_auc,
-    total_peak_to_glucose_end,
+    live_auc_glucose_window,
+    total_net_gain_to_glucose_end,
     glucose_initial, glucose_final,
     peak_total_yield_per_glucose
   ) %>%
@@ -150,35 +150,45 @@ plot_feature_scatter <- function(raw_col, title, ylab) {
     geom_point(size = 2) +
     geom_line(aes(group = interaction(cellLine, ploidy_metric)), alpha = 0.5) +
     facet_wrap(~cellLine, scales = "free_y") +
-    scale_x_continuous(trans = pseudo_log_trans(base = 10)) +
+    scale_x_continuous(
+      trans = pseudo_log_trans(base = 10),
+      breaks = c(0, 0.1, 0.25, 0.5, 1, 5, 25)
+    ) +
     scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(title = title, x = "initial glucose (G0)", y = ylab) +
+    labs(title = title, x = "initial glucose (G0, log-like scale)", y = ylab) +
     theme_bw()
 }
 
-build_fit_df <- function(raw_col) {
+build_fit_df <- function(raw_col, max_g0 = Inf) {
   feature_panel %>%
+    filter(is.finite(.data[[raw_col]]), G0 <= max_g0) %>%
     group_by(cellLine, ploidy_metric) %>%
     group_modify(~ {
+      if (nrow(.x) < 2) {
+        return(tibble())
+      }
       fit <- lm(reformulate("log1p(G0)", response = raw_col), data = .x)
       tibble(
-        G0 = seq(0, 25, length.out = 100),
-        fitted = predict(fit, newdata = data.frame(G0 = seq(0, 25, length.out = 100)))
+        G0 = seq(min(.x$G0, na.rm = TRUE), max(.x$G0, na.rm = TRUE), length.out = 100),
+        fitted = predict(fit, newdata = data.frame(G0 = seq(min(.x$G0, na.rm = TRUE), max(.x$G0, na.rm = TRUE), length.out = 100)))
       )
     }) %>%
     ungroup()
 }
 
-plot_feature_regression <- function(raw_col, title, ylab) {
-  fit_df <- build_fit_df(raw_col)
+plot_feature_regression <- function(raw_col, title, ylab, max_g0 = Inf) {
+  fit_df <- build_fit_df(raw_col, max_g0 = max_g0)
 
-  ggplot(feature_panel, aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
+  ggplot(feature_panel %>% filter(is.finite(.data[[raw_col]]), G0 <= max_g0), aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
     geom_point(size = 2) +
     geom_line(data = fit_df, aes(x = G0, y = fitted, color = factor(ploidy_metric)), linewidth = 0.8) +
     facet_wrap(~cellLine, scales = "free_y") +
-    scale_x_continuous(trans = pseudo_log_trans(base = 10)) +
+    scale_x_continuous(
+      trans = pseudo_log_trans(base = 10),
+      breaks = c(0, 0.1, 0.25, 0.5, 1, 5, 25)
+    ) +
     scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(title = title, x = "initial glucose (G0)", y = ylab) +
+    labs(title = title, x = "initial glucose (G0, log-like scale)", y = ylab) +
     theme_bw()
 }
 
@@ -192,39 +202,18 @@ plot_signature_values <- function(sig_col, title, ylab) {
 }
 ```
 
-### Growth Low G
+### Growth Features
 
 ```{r growth-lowg-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "growth_lowG_median")
 cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
 cat("2. Computation: ", row$computation, "\n", sep = "")
-```
-
-```{r growth-lowg-plot, fig.height=6, fig.width=10}
-plot_feature_scatter(
-  raw_col = "max_growth_rate",
-  title = "Per-Condition Max Growth Rate Across Initial Glucose",
-  ylab = "max growth rate"
-)
-```
-
-```{r growth-lowg-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "growth_lowG_median",
-  title = "Aggregated Feature: Growth Low G Median",
-  ylab = "median max growth rate at G0 <= 0.25"
-)
-```
-
-### Growth High G
-
-```{r growth-highg-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "growth_highG_median")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
+cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
-```{r growth-highg-plot, fig.height=6, fig.width=10}
+```{r growth-plot, fig.height=6, fig.width=10}
 plot_feature_scatter(
   raw_col = "max_growth_rate",
   title = "Per-Condition Max Growth Rate Across Initial Glucose",
@@ -232,47 +221,23 @@ plot_feature_scatter(
 )
 ```
 
-```{r growth-highg-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "growth_highG_median",
-  title = "Aggregated Feature: Growth High G Median",
-  ylab = "median max growth rate at G0 >= 1"
-)
+```{r growth-signatures, fig.height=7, fig.width=10}
+plot_signature_values("growth_lowG_median", "Aggregated Feature: Growth Low G Median", "median max growth rate at G0 <= 0.25") /
+  plot_signature_values("growth_highG_median", "Aggregated Feature: Growth High G Median", "median max growth rate at G0 >= 1")
 ```
 
-### Death Low G
+### Death Features
 
 ```{r death-lowg-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "death_lowG_median")
 cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
 cat("2. Computation: ", row$computation, "\n", sep = "")
-```
-
-```{r death-lowg-plot, fig.height=6, fig.width=10}
-plot_feature_scatter(
-  raw_col = "max_death_rate",
-  title = "Per-Condition Max Death Rate Across Initial Glucose",
-  ylab = "max death rate"
-)
-```
-
-```{r death-lowg-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "death_lowG_median",
-  title = "Aggregated Feature: Death Low G Median",
-  ylab = "median max death rate at G0 <= 0.25"
-)
-```
-
-### Death High G
-
-```{r death-highg-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "death_highG_median")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
+cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
-```{r death-highg-plot, fig.height=6, fig.width=10}
+```{r death-plot, fig.height=6, fig.width=10}
 plot_feature_scatter(
   raw_col = "max_death_rate",
   title = "Per-Condition Max Death Rate Across Initial Glucose",
@@ -280,108 +245,58 @@ plot_feature_scatter(
 )
 ```
 
-```{r death-highg-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "death_highG_median",
-  title = "Aggregated Feature: Death High G Median",
-  ylab = "median max death rate at G0 >= 1"
-)
+```{r death-signatures, fig.height=7, fig.width=10}
+plot_signature_values("death_lowG_median", "Aggregated Feature: Death Low G Median", "median max death rate at G0 <= 0.25") /
+  plot_signature_values("death_highG_median", "Aggregated Feature: Death High G Median", "median max death rate at G0 >= 1")
 ```
 
-### Alive AUC Baseline
+### Alive AUC Features
 
 ```{r aliveauc-int-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "yield_alive_auc_intercept")
 cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
 cat("2. Computation: ", row$computation, "\n", sep = "")
+row <- feature_catalog %>% filter(feature == "yield_alive_auc_slope")
+cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
 ```{r aliveauc-reg-plot, fig.height=6, fig.width=10}
 plot_feature_regression(
-  raw_col = "live_auc",
-  title = "Alive AUC Regressed Against Initial Glucose",
-  ylab = "alive AUC"
+  raw_col = "live_auc_glucose_window",
+  title = "Alive AUC Over The Glucose-Measurement Window vs Initial Glucose",
+  ylab = "alive AUC over glucose window",
+  max_g0 = 1
 )
 ```
 
-```{r aliveauc-int-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "yield_alive_auc_intercept",
-  title = "Aggregated Feature: Alive AUC Regression Intercept",
-  ylab = "intercept of alive AUC ~ log1p(G0)"
-)
+```{r aliveauc-signatures, fig.height=7, fig.width=10}
+plot_signature_values("yield_alive_auc_intercept", "Aggregated Feature: Alive AUC Regression Intercept", "intercept of alive AUC ~ log1p(G0), fit on G0 <= 1") /
+  plot_signature_values("yield_alive_auc_slope", "Aggregated Feature: Alive AUC Regression Slope", "slope of alive AUC ~ log1p(G0), fit on G0 <= 1")
 ```
 
-### Alive AUC Glucose Response
-
-```{r aliveauc-slope-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "yield_alive_auc_slope")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-```
-
-```{r aliveauc-slope-plot, fig.height=6, fig.width=10}
-plot_feature_regression(
-  raw_col = "live_auc",
-  title = "Alive AUC Regressed Against Initial Glucose",
-  ylab = "alive AUC"
-)
-```
-
-```{r aliveauc-slope-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "yield_alive_auc_slope",
-  title = "Aggregated Feature: Alive AUC Regression Slope",
-  ylab = "slope of alive AUC ~ log1p(G0)"
-)
-```
-
-### Peak Yield Baseline
+### Peak Yield Features
 
 ```{r peakyield-int-text, results='asis'}
 row <- feature_catalog %>% filter(feature == "peak_total_yield_intercept")
 cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
 cat("2. Computation: ", row$computation, "\n", sep = "")
+row <- feature_catalog %>% filter(feature == "peak_total_yield_slope")
+cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
 ```{r peakyield-reg-plot, fig.height=6, fig.width=10}
 plot_feature_regression(
   raw_col = "peak_total_yield_per_glucose",
   title = "Peak Total Yield Per Glucose Regressed Against Initial Glucose",
-  ylab = "max(live + dead) / glucose drawdown"
+  ylab = "net gain in total cells / glucose drawdown"
 )
 ```
 
-```{r peakyield-int-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "peak_total_yield_intercept",
-  title = "Aggregated Feature: Peak Yield Regression Intercept",
-  ylab = "intercept of peak yield ~ log1p(G0)"
-)
-```
-
-### Peak Yield Glucose Response
-
-```{r peakyield-slope-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "peak_total_yield_slope")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-```
-
-```{r peakyield-slope-plot, fig.height=6, fig.width=10}
-plot_feature_regression(
-  raw_col = "peak_total_yield_per_glucose",
-  title = "Peak Total Yield Per Glucose Regressed Against Initial Glucose",
-  ylab = "max(live + dead) / glucose drawdown"
-)
-```
-
-```{r peakyield-slope-signature, fig.height=4, fig.width=10}
-plot_signature_values(
-  sig_col = "peak_total_yield_slope",
-  title = "Aggregated Feature: Peak Yield Regression Slope",
-  ylab = "slope of peak yield ~ log1p(G0)"
-)
+```{r peakyield-signatures, fig.height=7, fig.width=10}
+plot_signature_values("peak_total_yield_intercept", "Aggregated Feature: Peak Yield Regression Intercept", "intercept of peak yield ~ log1p(G0)") /
+  plot_signature_values("peak_total_yield_slope", "Aggregated Feature: Peak Yield Regression Slope", "slope of peak yield ~ log1p(G0)")
 ```
 
 ## Transfer Summary
@@ -417,6 +332,7 @@ transfer_case_summary %>%
 
 ## Notes
 
-- `peak_total_yield_per_glucose` uses `max(live + dead)` only up to the final glucose measurement time, as requested.
+- `live_auc_glucose_window` is computed only over the interval covered by glucose measurements and is fit only on `G0 <= 1`.
+- `peak_total_yield_per_glucose` uses net gain in `live + dead` over the glucose-measurement window, divided by glucose drawdown, with negative net gains floored at zero before conversion to yield.
 - Transfer is now evaluated only on the curated eight-feature panel.
 - Cross-feature comparisons use scaled errors, so large-magnitude yield features no longer dominate the summary.

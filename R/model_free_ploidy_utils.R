@@ -8,6 +8,27 @@ suppressPackageStartupMessages({
   library(purrr)
 })
 
+nearest_value_at_or_after <- function(hours, values, target_time) {
+  ok <- is.finite(hours) & is.finite(values)
+  hours <- hours[ok]
+  values <- values[ok]
+
+  if (!length(hours)) {
+    return(NA_real_)
+  }
+
+  ord <- order(hours)
+  hours <- hours[ord]
+  values <- values[ord]
+
+  idx <- which(hours >= target_time)
+  if (length(idx)) {
+    return(values[min(idx)])
+  }
+
+  values[length(values)]
+}
+
 safe_trapz <- function(x, y) {
   ok <- is.finite(x) & is.finite(y)
   x <- x[ok]
@@ -186,7 +207,7 @@ build_model_free_tables <- function(stan_data_path = NULL) {
   )
 }
 
-summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glucose_floor = 0.1) {
+summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glucose_floor = 0.1, min_glucose_drawdown_for_yield = 0.05) {
   count_df <- count_df %>% arrange(hours)
   glucose_df <- glucose_df %>% arrange(hours)
 
@@ -199,14 +220,30 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
   nadir_live_idx <- if (nrow(count_df)) which.min(count_df$live_cells) else integer(0)
   peak_dead_idx <- if (nrow(count_df)) which.max(count_df$dead_cells) else integer(0)
   min_glucose_idx <- if (nrow(glucose_df)) which.min(glucose_df$glucose_hat) else integer(0)
+  glucose_start_time <- if (nrow(glucose_df)) min(glucose_df$hours, na.rm = TRUE) else NA_real_
   glucose_end_time <- if (nrow(glucose_df)) max(glucose_df$hours, na.rm = TRUE) else NA_real_
-  count_until_glucose_end <- if (is.finite(glucose_end_time)) {
-    count_df %>% filter(hours <= glucose_end_time)
+  count_glucose_window <- if (is.finite(glucose_start_time) && is.finite(glucose_end_time)) {
+    count_df %>% filter(hours >= glucose_start_time, hours <= glucose_end_time)
   } else {
     count_df[0, ]
   }
-  total_peak_to_glucose_end <- if (nrow(count_until_glucose_end)) {
-    max(count_until_glucose_end$total_cells, na.rm = TRUE)
+  total_peak_to_glucose_end <- if (nrow(count_glucose_window)) {
+    max(count_glucose_window$total_cells, na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+  total_initial_at_glucose_start <- if (nrow(count_glucose_window)) {
+    nearest_value_at_or_after(count_glucose_window$hours, count_glucose_window$total_cells, glucose_start_time)
+  } else {
+    NA_real_
+  }
+  total_net_gain_to_glucose_end <- if (is.finite(total_peak_to_glucose_end) && is.finite(total_initial_at_glucose_start)) {
+    total_peak_to_glucose_end - total_initial_at_glucose_start
+  } else {
+    NA_real_
+  }
+  live_auc_glucose_window <- if (nrow(count_glucose_window)) {
+    safe_trapz(count_glucose_window$hours, count_glucose_window$live_cells)
   } else {
     NA_real_
   }
@@ -231,6 +268,7 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     live_net_change = if (nrow(count_df)) dplyr::last(count_df$live_cells) - count_df$live_cells[1] else NA_real_,
     live_fold_change = if (nrow(count_df)) (dplyr::last(count_df$live_cells) + 1) / (count_df$live_cells[1] + 1) else NA_real_,
     live_auc = safe_trapz(count_df$hours, count_df$live_cells),
+    live_auc_glucose_window = live_auc_glucose_window,
     max_growth_rate = live_rate$max_rate,
     max_decline_rate = live_rate$min_rate,
     time_max_growth_rate = live_rate$time_at_max_rate,
@@ -273,10 +311,18 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     total_peak = if (nrow(count_df)) max(count_df$total_cells, na.rm = TRUE) else NA_real_,
     total_peak_time = if (nrow(count_df)) count_df$hours[which.max(count_df$total_cells)] else NA_real_,
     total_auc = safe_trapz(count_df$hours, count_df$total_cells),
+    glucose_start_time = glucose_start_time,
     glucose_end_time = glucose_end_time,
     total_peak_to_glucose_end = total_peak_to_glucose_end,
+    total_initial_at_glucose_start = total_initial_at_glucose_start,
+    total_net_gain_to_glucose_end = total_net_gain_to_glucose_end,
     peak_total_yield_per_glucose = if (nrow(glucose_df)) {
-      total_peak_to_glucose_end / max(glucose_df$glucose_hat[1] - dplyr::last(glucose_df$glucose_hat), 1e-8)
+      drawdown <- glucose_df$glucose_hat[1] - dplyr::last(glucose_df$glucose_hat)
+      if (is.finite(drawdown) && drawdown >= min_glucose_drawdown_for_yield) {
+        pmax(total_net_gain_to_glucose_end, 0) / drawdown
+      } else {
+        NA_real_
+      }
     } else {
       NA_real_
     }
@@ -285,7 +331,7 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
   out
 }
 
-build_feature_panel <- function(stan_data_path = NULL, glucose_floor = 0.1) {
+build_feature_panel <- function(stan_data_path = NULL, glucose_floor = 0.1, min_glucose_drawdown_for_yield = 0.05) {
   tables <- build_model_free_tables(stan_data_path = stan_data_path)
 
   feature_panel <- tables$well_meta %>%
@@ -294,7 +340,13 @@ build_feature_panel <- function(stan_data_path = NULL, glucose_floor = 0.1) {
       well_idx <- meta_row$well_idx[[1]]
       count_df <- tables$count_summary %>% filter(well_idx == !!well_idx)
       glucose_df <- tables$glucose_summary %>% filter(well_idx == !!well_idx)
-      summarize_one_well_features(meta_row[1, ], count_df, glucose_df, glucose_floor = glucose_floor)
+      summarize_one_well_features(
+        meta_row[1, ],
+        count_df,
+        glucose_df,
+        glucose_floor = glucose_floor,
+        min_glucose_drawdown_for_yield = min_glucose_drawdown_for_yield
+      )
     }) %>%
     arrange(cellLine, ploidy_metric, G0)
 
@@ -307,9 +359,9 @@ build_feature_panel <- function(stan_data_path = NULL, glucose_floor = 0.1) {
   )
 }
 
-fit_log_glucose_response <- function(g0, y, pred_grid = c(0, 0.1, 0.25, 1, 5, 25)) {
+fit_log_glucose_response <- function(g0, y, pred_grid = c(0, 0.1, 0.25, 1, 5, 25), max_g0 = Inf) {
   pred_names <- c("pred_0", "pred_0p1", "pred_0p25", "pred_1", "pred_5", "pred_25")
-  ok <- is.finite(g0) & is.finite(y)
+  ok <- is.finite(g0) & is.finite(y) & g0 <= max_g0
   g0 <- g0[ok]
   y <- y[ok]
 
@@ -393,8 +445,8 @@ get_model_free_feature_catalog <- function() {
       "Median of per-condition max_growth_rate across G0 >= 1.",
       "Median of per-condition max_death_rate across G0 <= 0.25.",
       "Median of per-condition max_death_rate across G0 >= 1.",
-      "Intercept from lm(live_auc ~ log1p(G0)).",
-      "Slope from lm(live_auc ~ log1p(G0)).",
+      "Intercept from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
+      "Slope from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
       "Intercept from lm(peak_total_yield_per_glucose ~ log1p(G0)).",
       "Slope from lm(peak_total_yield_per_glucose ~ log1p(G0))."
     )
@@ -416,7 +468,7 @@ summarize_glucose_signatures <- function(feature_panel) {
     df <- df %>% arrange(G0)
     g0 <- df$G0
 
-    fit_alive_auc <- fit_log_glucose_response(g0, df$live_auc)
+    fit_alive_auc <- fit_log_glucose_response(g0, df$live_auc_glucose_window, max_g0 = 1)
     fit_peak_total_yield <- fit_log_glucose_response(g0, df$peak_total_yield_per_glucose)
 
     tibble(

@@ -16,12 +16,14 @@ knitr::opts_knit$set(root.dir = normalizePath("../"))
 
 ## Purpose
 
-This notebook reports a model-free ploidy analysis built directly from the curated `stan_ready_data` object rather than from fitted ODE parameters. The workflow has two stages:
+This notebook reports a reduced model-free ploidy analysis built from `stan_ready_data` without fitting the ODE. The analysis now focuses on eight curated features only:
 
-1. extract per-condition features from observed count and glucose trajectories,
-2. test whether a shared ploidy effect estimated from other lines improves held-out prediction of the missing ploidy state.
+1. two growth features,
+2. two death features,
+3. two alive-yield features from `AUC_alive ~ log1p(G0)`,
+4. two glucose-to-total-cell yield features from `peak_total_yield_per_glucose ~ log1p(G0)`.
 
-The notebook is a reporting layer. It expects the scripts below to have been run first:
+The notebook expects these scripts to have been run first:
 
 ```bash
 Rscript scripts/extract_model_free_ploidy_features.R
@@ -38,6 +40,7 @@ library(ggplot2)
 library(scales)
 library(patchwork)
 library(forcats)
+library(purrr)
 
 source("R/project_paths.R")
 source("R/gpath_run_utils.R")
@@ -49,11 +52,7 @@ paths <- list(
   stan_data = resolve_stan_data_path(),
   feature_panel = file.path(analysis_root, "feature_panel.Rds"),
   signature_panel = file.path(analysis_root, "signature_panel.Rds"),
-  count_summary = file.path(analysis_root, "count_summary.Rds"),
-  glucose_summary = file.path(analysis_root, "glucose_summary.Rds"),
   signature_effects = file.path(analysis_root, "signature_effects_long.Rds"),
-  signature_pca_scores = file.path(analysis_root, "signature_pca_scores.Rds"),
-  signature_pca_loadings = file.path(analysis_root, "signature_pca_loadings.Rds"),
   transfer_predictions = file.path(analysis_root, "transfer_predictions.Rds"),
   transfer_feature_summary = file.path(analysis_root, "transfer_feature_summary.Rds"),
   transfer_case_summary = file.path(analysis_root, "transfer_case_summary.Rds")
@@ -68,14 +67,16 @@ safe_read_rds <- function(path) {
 
 feature_panel <- safe_read_rds(paths$feature_panel)
 signature_panel <- safe_read_rds(paths$signature_panel)
-count_summary <- safe_read_rds(paths$count_summary)
-glucose_summary <- safe_read_rds(paths$glucose_summary)
 signature_effects <- safe_read_rds(paths$signature_effects)
-signature_pca_scores <- safe_read_rds(paths$signature_pca_scores)
-signature_pca_loadings <- safe_read_rds(paths$signature_pca_loadings)
 transfer_predictions <- safe_read_rds(paths$transfer_predictions)
 transfer_feature_summary <- safe_read_rds(paths$transfer_feature_summary)
 transfer_case_summary <- safe_read_rds(paths$transfer_case_summary)
+feature_catalog <- get_model_free_feature_catalog()
+
+required_paths <- unlist(paths[c("feature_panel", "signature_panel", "signature_effects", "transfer_predictions", "transfer_feature_summary")])
+if (!all(file.exists(required_paths))) {
+  stop("Required outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
+}
 
 cat("Working directory:", getwd(), "\n")
 cat("stan_data path:", paths$stan_data, "\n")
@@ -85,191 +86,323 @@ cat("analysis root:", analysis_root, "\n")
 ## Output Check
 
 ```{r output-check}
-output_status <- tibble(
+tibble(
   artifact = names(paths),
   path = unlist(paths),
   exists = file.exists(unlist(paths))
 )
-
-output_status
 ```
 
-```{r maybe-stop, include=FALSE}
-required_paths <- c(paths$feature_panel, paths$transfer_predictions, paths$transfer_feature_summary)
-if (!all(file.exists(required_paths))) {
-  stop("Required analysis outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
-}
+## Curated Feature Set
+
+```{r feature-catalog}
+feature_catalog
 ```
 
-## Feature Inventory
+## Core Per-Condition Quantities
 
-```{r feature-inventory}
+Two yield quantities are central here:
+
+- `live_auc`: trapezoidal area under the alive-cell curve
+- `peak_total_yield_per_glucose`: `max(live + dead)` up to the last glucose measurement, divided by `initial_glucose - final_glucose`
+
+```{r per-condition-preview}
 feature_panel %>%
-  summarise(
-    n_wells = n(),
-    n_lines = n_distinct(cellLine),
-    n_ploidy_states = n_distinct(paste(cellLine, ploidy_metric)),
-    n_glucose_conditions = n_distinct(G0)
-  )
-```
-
-```{r feature-preview}
-feature_panel %>%
-  select(cellLine, ploidy_metric, G0, live_peak, max_growth_rate, max_death_rate, glucose_drawdown, max_glucose_drawdown_rate) %>%
+  select(
+    cellLine, ploidy_metric, G0,
+    max_growth_rate, max_death_rate,
+    live_auc,
+    total_peak_to_glucose_end,
+    glucose_initial, glucose_final,
+    peak_total_yield_per_glucose
+  ) %>%
   arrange(cellLine, ploidy_metric, G0)
 ```
 
-## Observed Trajectories
+## Effect Overview
 
-```{r trajectory-helper}
-plot_one_trajectory <- function(cell_line, g0) {
-  meta_sub <- feature_panel %>%
-    filter(cellLine == cell_line, abs(G0 - g0) < 1e-12) %>%
-    select(well_idx, ploidy_metric)
+The old heatmap was not interpretable because feature scales differed too much. If we keep a heatmap at all, it should be feature-wise standardized.
 
-  cnt <- count_summary %>%
-    semi_join(meta_sub, by = "well_idx") %>%
-    select(well_idx, ploidy_metric, hours, live_cells, dead_cells) %>%
-    pivot_longer(cols = c(live_cells, dead_cells), names_to = "state", values_to = "value")
-
-  gluc <- glucose_summary %>%
-    semi_join(meta_sub, by = "well_idx") %>%
-    select(well_idx, ploidy_metric, hours, glucose_hat)
-
-  p_count <- ggplot(cnt, aes(hours, value, color = factor(ploidy_metric))) +
-    geom_line(linewidth = 0.9) +
-    facet_wrap(~state, scales = "free_y") +
-    scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(
-      title = sprintf("%s | G0 = %s", cell_line, g0),
-      x = "hours",
-      y = "count"
-    ) +
-    theme_bw()
-
-  p_gluc <- ggplot(gluc, aes(hours, glucose_hat, color = factor(ploidy_metric))) +
-    geom_line(linewidth = 0.9) +
-    scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(x = "hours", y = "estimated glucose") +
-    theme_bw()
-
-  p_count / p_gluc
-}
-```
-
-```{r example-trajectory, fig.height=6, fig.width=8}
-plot_one_trajectory("SNU668", 0.25)
-```
-
-## Glucose-Response Signatures
-
-This notebook now distinguishes:
-
-- per-condition trajectory features in `feature_panel`, and
-- glucose-response signatures in `signature_panel`.
-
-The signature layer is the transfer target. It uses bespoke summaries:
-
-- growth: low-glucose median, high-glucose median, and glucose-response slope
-- death: low-glucose median, high-glucose median, and glucose-response slope
-- yield: regressions of alive AUC, dead AUC, total AUC, and peak total cells against `log1p(G0)`
-- glucose handling: low-glucose exhaustion timing and high-glucose drawdown summaries
-
-```{r top-effects}
-signature_panel %>%
-  select(cellLine, ploidy_metric, starts_with("growth_"), starts_with("death_"), starts_with("yield_alive_auc"), starts_with("yield_total_peak")) %>%
-  arrange(cellLine, ploidy_metric)
-```
-
-## Direct Ploidy Effects On Signatures
-
-The effect definition here is per-unit-ploidy change within each line:
-
-`effect = (signature_high - signature_low) / (ploidy_high - ploidy_low)`
-
-```{r top-effects-2}
-effect_summary <- signature_effects %>%
-  group_by(feature) %>%
-  summarise(
-    mean_effect = mean(effect_per_ploidy, na.rm = TRUE),
-    sd_effect = sd(effect_per_ploidy, na.rm = TRUE),
-    sign_consistency = mean(sign(effect_per_ploidy) == sign(mean(effect_per_ploidy, na.rm = TRUE)), na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(sign_consistency), desc(abs(mean_effect)))
-
-effect_summary %>% slice_head(n = 15)
-```
-
-```{r effect-heatmap, fig.height=8, fig.width=11}
-plot_features <- transfer_feature_summary %>%
-  arrange(desc(mean_abs_err_improvement)) %>%
-  slice_head(n = 12) %>%
-  pull(feature)
-
+```{r effect-heatmap, fig.height=5, fig.width=10}
 signature_effects %>%
-  filter(feature %in% plot_features) %>%
-  mutate(
-    feature = forcats::fct_reorder(feature, effect_per_ploidy, .fun = median, na.rm = TRUE),
-    line_label = cellLine
-  ) %>%
-  ggplot(aes(x = feature, y = line_label, fill = effect_per_ploidy)) +
+  left_join(feature_catalog, by = "feature") %>%
+  group_by(feature) %>%
+  mutate(effect_z = as.numeric(scale(effect_per_ploidy))) %>%
+  ungroup() %>%
+  ggplot(aes(x = short_label, y = cellLine, fill = effect_z)) +
   geom_tile(color = "white") +
   scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b") +
   labs(
-    title = "Empirical Ploidy Effects On Glucose-Response Signatures",
+    title = "Standardized Ploidy Effects Across Curated Features",
     x = NULL,
     y = NULL,
-    fill = "effect\nper ploidy"
+    fill = "within-feature\nz-score"
   ) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-## Shared Effect Structure
+## Feature-by-Feature Analysis
 
-```{r pca-plot, fig.height=5, fig.width=8}
-if (!is.null(signature_pca_scores) && nrow(signature_pca_scores)) {
-  ggplot(signature_pca_scores, aes(PC1, PC2, color = cellLine)) +
-    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey70") +
-    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey70") +
-    geom_point(alpha = 0.9, size = 3) +
-    theme_bw() +
-    labs(
-      title = "PCA of Aggregated Ploidy-Effect Signatures",
-      subtitle = "Each point is one cell line"
-    )
+```{r helpers}
+plot_feature_scatter <- function(raw_col, title, ylab) {
+  ggplot(feature_panel, aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
+    geom_point(size = 2) +
+    geom_line(aes(group = interaction(cellLine, ploidy_metric)), alpha = 0.5) +
+    facet_wrap(~cellLine, scales = "free_y") +
+    scale_x_continuous(trans = pseudo_log_trans(base = 10)) +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(title = title, x = "initial glucose (G0)", y = ylab) +
+    theme_bw()
+}
+
+build_fit_df <- function(raw_col) {
+  feature_panel %>%
+    group_by(cellLine, ploidy_metric) %>%
+    group_modify(~ {
+      fit <- lm(reformulate("log1p(G0)", response = raw_col), data = .x)
+      tibble(
+        G0 = seq(0, 25, length.out = 100),
+        fitted = predict(fit, newdata = data.frame(G0 = seq(0, 25, length.out = 100)))
+      )
+    }) %>%
+    ungroup()
+}
+
+plot_feature_regression <- function(raw_col, title, ylab) {
+  fit_df <- build_fit_df(raw_col)
+
+  ggplot(feature_panel, aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
+    geom_point(size = 2) +
+    geom_line(data = fit_df, aes(x = G0, y = fitted, color = factor(ploidy_metric)), linewidth = 0.8) +
+    facet_wrap(~cellLine, scales = "free_y") +
+    scale_x_continuous(trans = pseudo_log_trans(base = 10)) +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(title = title, x = "initial glucose (G0)", y = ylab) +
+    theme_bw()
+}
+
+plot_signature_values <- function(sig_col, title, ylab) {
+  ggplot(signature_panel, aes(factor(ploidy_metric), .data[[sig_col]], fill = factor(ploidy_metric))) +
+    geom_col() +
+    facet_wrap(~cellLine, scales = "free_y") +
+    scale_fill_brewer(palette = "Set1", name = "ploidy") +
+    labs(title = title, x = "ploidy metric", y = ylab) +
+    theme_bw()
 }
 ```
 
-```{r pca-loadings}
-if (!is.null(signature_pca_loadings) && nrow(signature_pca_loadings)) {
-  signature_pca_loadings %>%
-    arrange(desc(abs(PC1))) %>%
-    slice_head(n = 12)
-}
+### Growth Low G
+
+```{r growth-lowg-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "growth_lowG_median")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
 ```
 
-## Transfer Evaluation
+```{r growth-lowg-plot, fig.height=6, fig.width=10}
+plot_feature_scatter(
+  raw_col = "max_growth_rate",
+  title = "Per-Condition Max Growth Rate Across Initial Glucose",
+  ylab = "max growth rate"
+)
+```
 
-The transfer baseline is `null = observed ploidy state predicts missing signature with no change`. The transfer prediction adds the median cross-line ploidy effect for that signature.
+```{r growth-lowg-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "growth_lowG_median",
+  title = "Aggregated Feature: Growth Low G Median",
+  ylab = "median max growth rate at G0 <= 0.25"
+)
+```
+
+### Growth High G
+
+```{r growth-highg-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "growth_highG_median")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r growth-highg-plot, fig.height=6, fig.width=10}
+plot_feature_scatter(
+  raw_col = "max_growth_rate",
+  title = "Per-Condition Max Growth Rate Across Initial Glucose",
+  ylab = "max growth rate"
+)
+```
+
+```{r growth-highg-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "growth_highG_median",
+  title = "Aggregated Feature: Growth High G Median",
+  ylab = "median max growth rate at G0 >= 1"
+)
+```
+
+### Death Low G
+
+```{r death-lowg-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "death_lowG_median")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r death-lowg-plot, fig.height=6, fig.width=10}
+plot_feature_scatter(
+  raw_col = "max_death_rate",
+  title = "Per-Condition Max Death Rate Across Initial Glucose",
+  ylab = "max death rate"
+)
+```
+
+```{r death-lowg-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "death_lowG_median",
+  title = "Aggregated Feature: Death Low G Median",
+  ylab = "median max death rate at G0 <= 0.25"
+)
+```
+
+### Death High G
+
+```{r death-highg-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "death_highG_median")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r death-highg-plot, fig.height=6, fig.width=10}
+plot_feature_scatter(
+  raw_col = "max_death_rate",
+  title = "Per-Condition Max Death Rate Across Initial Glucose",
+  ylab = "max death rate"
+)
+```
+
+```{r death-highg-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "death_highG_median",
+  title = "Aggregated Feature: Death High G Median",
+  ylab = "median max death rate at G0 >= 1"
+)
+```
+
+### Alive AUC Baseline
+
+```{r aliveauc-int-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "yield_alive_auc_intercept")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r aliveauc-reg-plot, fig.height=6, fig.width=10}
+plot_feature_regression(
+  raw_col = "live_auc",
+  title = "Alive AUC Regressed Against Initial Glucose",
+  ylab = "alive AUC"
+)
+```
+
+```{r aliveauc-int-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "yield_alive_auc_intercept",
+  title = "Aggregated Feature: Alive AUC Regression Intercept",
+  ylab = "intercept of alive AUC ~ log1p(G0)"
+)
+```
+
+### Alive AUC Glucose Response
+
+```{r aliveauc-slope-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "yield_alive_auc_slope")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r aliveauc-slope-plot, fig.height=6, fig.width=10}
+plot_feature_regression(
+  raw_col = "live_auc",
+  title = "Alive AUC Regressed Against Initial Glucose",
+  ylab = "alive AUC"
+)
+```
+
+```{r aliveauc-slope-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "yield_alive_auc_slope",
+  title = "Aggregated Feature: Alive AUC Regression Slope",
+  ylab = "slope of alive AUC ~ log1p(G0)"
+)
+```
+
+### Peak Yield Baseline
+
+```{r peakyield-int-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "peak_total_yield_intercept")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r peakyield-reg-plot, fig.height=6, fig.width=10}
+plot_feature_regression(
+  raw_col = "peak_total_yield_per_glucose",
+  title = "Peak Total Yield Per Glucose Regressed Against Initial Glucose",
+  ylab = "max(live + dead) / glucose drawdown"
+)
+```
+
+```{r peakyield-int-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "peak_total_yield_intercept",
+  title = "Aggregated Feature: Peak Yield Regression Intercept",
+  ylab = "intercept of peak yield ~ log1p(G0)"
+)
+```
+
+### Peak Yield Glucose Response
+
+```{r peakyield-slope-text, results='asis'}
+row <- feature_catalog %>% filter(feature == "peak_total_yield_slope")
+cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
+cat("2. Computation: ", row$computation, "\n", sep = "")
+```
+
+```{r peakyield-slope-plot, fig.height=6, fig.width=10}
+plot_feature_regression(
+  raw_col = "peak_total_yield_per_glucose",
+  title = "Peak Total Yield Per Glucose Regressed Against Initial Glucose",
+  ylab = "max(live + dead) / glucose drawdown"
+)
+```
+
+```{r peakyield-slope-signature, fig.height=4, fig.width=10}
+plot_signature_values(
+  sig_col = "peak_total_yield_slope",
+  title = "Aggregated Feature: Peak Yield Regression Slope",
+  ylab = "slope of peak yield ~ log1p(G0)"
+)
+```
+
+## Transfer Summary
 
 ```{r transfer-summary}
 transfer_feature_summary %>%
-  select(feature, n_cases, scaled_mae_null, scaled_mae_transfer, mean_scaled_err_improvement, transfer_win_rate, sign_accuracy) %>%
+  left_join(feature_catalog, by = "feature") %>%
+  select(short_label, n_cases, scaled_mae_null, scaled_mae_transfer, mean_scaled_err_improvement, transfer_win_rate, sign_accuracy) %>%
   arrange(desc(mean_scaled_err_improvement))
 ```
 
-```{r transfer-bar, fig.height=7, fig.width=10}
+```{r transfer-bar, fig.height=5, fig.width=9}
 transfer_feature_summary %>%
-  slice_head(n = 15) %>%
-  mutate(feature = forcats::fct_reorder(feature, mean_scaled_err_improvement)) %>%
-  ggplot(aes(x = feature, y = mean_scaled_err_improvement, fill = transfer_win_rate)) +
+  left_join(feature_catalog, by = "feature") %>%
+  mutate(short_label = forcats::fct_reorder(short_label, mean_scaled_err_improvement)) %>%
+  ggplot(aes(x = short_label, y = mean_scaled_err_improvement, fill = transfer_win_rate)) +
   geom_col() +
   coord_flip() +
   scale_fill_viridis_c(labels = percent_format(accuracy = 1)) +
   labs(
-    title = "Features Most Improved by Cross-Line Ploidy Transfer",
+    title = "Transfer Gain By Curated Feature",
     x = NULL,
     y = "mean scaled error improvement",
     fill = "transfer\nwin rate"
@@ -277,35 +410,13 @@ transfer_feature_summary %>%
   theme_bw()
 ```
 
-```{r case-summary}
+```{r transfer-case-summary}
 transfer_case_summary %>%
   arrange(desc(mean_scaled_err_improvement))
 ```
 
-```{r transfer-scatter, fig.height=6, fig.width=9}
-top_transfer_features <- transfer_feature_summary %>%
-  slice_head(n = 6) %>%
-  pull(feature)
-
-transfer_predictions %>%
-  filter(feature %in% top_transfer_features) %>%
-  mutate(feature = forcats::fct_reorder(feature, abs_err_improvement, .fun = median, na.rm = TRUE)) %>%
-  ggplot(aes(x = true_value, y = pred_transfer - pred_null, color = direction)) +
-  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey70") +
-  geom_point(size = 2, alpha = 0.8) +
-  facet_wrap(~feature, scales = "free") +
-  theme_bw() +
-  labs(
-    title = "Transferred Adjustment Relative to Null",
-    subtitle = "Positive values mean the shared ploidy effect pushes the prediction upward",
-    x = "true held-out feature value",
-    y = "transfer minus null prediction"
-  )
-```
-
 ## Notes
 
-- Feature values are medians across replicate observations at each timepoint within a well-condition.
-- Glucose is reconstructed from `lum_obs` using the fixed calibration parameters stored in `stan_ready_data`.
-- The transfer layer now works on glucose-response signatures rather than raw `G0`-matched condition summaries.
-- The cross-line effect is normalized per unit of `ploidy_metric`, which matters because `MDA-MB-231` has a smaller ploidy shift than the other paired lines.
+- `peak_total_yield_per_glucose` uses `max(live + dead)` only up to the final glucose measurement time, as requested.
+- Transfer is now evaluated only on the curated eight-feature panel.
+- Cross-feature comparisons use scaled errors, so large-magnitude yield features no longer dominate the summary.

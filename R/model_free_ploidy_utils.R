@@ -199,6 +199,17 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
   nadir_live_idx <- if (nrow(count_df)) which.min(count_df$live_cells) else integer(0)
   peak_dead_idx <- if (nrow(count_df)) which.max(count_df$dead_cells) else integer(0)
   min_glucose_idx <- if (nrow(glucose_df)) which.min(glucose_df$glucose_hat) else integer(0)
+  glucose_end_time <- if (nrow(glucose_df)) max(glucose_df$hours, na.rm = TRUE) else NA_real_
+  count_until_glucose_end <- if (is.finite(glucose_end_time)) {
+    count_df %>% filter(hours <= glucose_end_time)
+  } else {
+    count_df[0, ]
+  }
+  total_peak_to_glucose_end <- if (nrow(count_until_glucose_end)) {
+    max(count_until_glucose_end$total_cells, na.rm = TRUE)
+  } else {
+    NA_real_
+  }
 
   out <- tibble(
     well_idx = well_meta_row$well_idx,
@@ -261,7 +272,14 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     },
     total_peak = if (nrow(count_df)) max(count_df$total_cells, na.rm = TRUE) else NA_real_,
     total_peak_time = if (nrow(count_df)) count_df$hours[which.max(count_df$total_cells)] else NA_real_,
-    total_auc = safe_trapz(count_df$hours, count_df$total_cells)
+    total_auc = safe_trapz(count_df$hours, count_df$total_cells),
+    glucose_end_time = glucose_end_time,
+    total_peak_to_glucose_end = total_peak_to_glucose_end,
+    peak_total_yield_per_glucose = if (nrow(glucose_df)) {
+      total_peak_to_glucose_end / max(glucose_df$glucose_hat[1] - dplyr::last(glucose_df$glucose_hat), 1e-8)
+    } else {
+      NA_real_
+    }
   )
 
   out
@@ -328,6 +346,61 @@ fit_log_glucose_response <- function(g0, y, pred_grid = c(0, 0.1, 0.25, 1, 5, 25
   )
 }
 
+get_model_free_feature_catalog <- function() {
+  tibble(
+    feature = c(
+      "growth_lowG_median",
+      "growth_highG_median",
+      "death_lowG_median",
+      "death_highG_median",
+      "yield_alive_auc_intercept",
+      "yield_alive_auc_slope",
+      "peak_total_yield_intercept",
+      "peak_total_yield_slope"
+    ),
+    short_label = c(
+      "Growth Low G",
+      "Growth High G",
+      "Death Low G",
+      "Death High G",
+      "Alive AUC Baseline",
+      "Alive AUC Glucose Response",
+      "Peak Yield Baseline",
+      "Peak Yield Glucose Response"
+    ),
+    category = c(
+      "Growth",
+      "Growth",
+      "Death",
+      "Death",
+      "Yield",
+      "Yield",
+      "Yield",
+      "Yield"
+    ),
+    rationale = c(
+      "Median maximum live-cell growth rate under severe glucose limitation (G0 <= 0.25). Tests whether ploidy changes the ability to grow when glucose is scarce.",
+      "Median maximum live-cell growth rate when glucose is more available (G0 >= 1). Tests whether ploidy shifts proliferative capacity in permissive conditions rather than starvation response.",
+      "Median maximum dead-cell accumulation rate under severe glucose limitation (G0 <= 0.25). Targets starvation-associated death pressure.",
+      "Median maximum dead-cell accumulation rate when glucose is more available (G0 >= 1). Checks whether any ploidy-associated death effect persists outside the strongest starvation regime.",
+      "Intercept from regression of alive-cell AUC on log1p(G0). Captures baseline cumulative alive biomass at near-zero glucose.",
+      "Slope from regression of alive-cell AUC on log1p(G0). Captures how strongly cumulative alive biomass increases as glucose supply rises.",
+      "Intercept from regression of peak total-cell yield per glucose consumed on log1p(G0). Estimates baseline conversion efficiency of glucose into total cell output near zero glucose.",
+      "Slope from regression of peak total-cell yield per glucose consumed on log1p(G0). Tests whether ploidy changes how glucose-to-cell conversion efficiency scales with available glucose."
+    ),
+    computation = c(
+      "Median of per-condition max_growth_rate across G0 <= 0.25.",
+      "Median of per-condition max_growth_rate across G0 >= 1.",
+      "Median of per-condition max_death_rate across G0 <= 0.25.",
+      "Median of per-condition max_death_rate across G0 >= 1.",
+      "Intercept from lm(live_auc ~ log1p(G0)).",
+      "Slope from lm(live_auc ~ log1p(G0)).",
+      "Intercept from lm(peak_total_yield_per_glucose ~ log1p(G0)).",
+      "Slope from lm(peak_total_yield_per_glucose ~ log1p(G0))."
+    )
+  )
+}
+
 median_in_g0_band <- function(g0, y, lower = -Inf, upper = Inf) {
   keep <- is.finite(g0) & is.finite(y) & g0 >= lower & g0 <= upper
   if (!any(keep)) {
@@ -344,10 +417,7 @@ summarize_glucose_signatures <- function(feature_panel) {
     g0 <- df$G0
 
     fit_alive_auc <- fit_log_glucose_response(g0, df$live_auc)
-    fit_dead_auc <- fit_log_glucose_response(g0, df$dead_auc)
-    fit_total_peak <- fit_log_glucose_response(g0, df$total_peak)
-    fit_total_auc <- fit_log_glucose_response(g0, df$total_auc)
-    fit_live_peak <- fit_log_glucose_response(g0, df$live_peak)
+    fit_peak_total_yield <- fit_log_glucose_response(g0, df$peak_total_yield_per_glucose)
 
     tibble(
       cellLine = df$cellLine[1],
@@ -363,36 +433,16 @@ summarize_glucose_signatures <- function(feature_panel) {
       death_lowG_median = median_in_g0_band(g0, df$max_death_rate, upper = 0.25),
       death_highG_median = median_in_g0_band(g0, df$max_death_rate, lower = 1),
       death_logG_slope = fit_log_glucose_response(g0, df$max_death_rate)$slope,
-      dead_fraction_lowG = median_in_g0_band(g0, df$dead_fraction_peak, upper = 0.25),
-      dead_fraction_highG = median_in_g0_band(g0, df$dead_fraction_peak, lower = 1),
-      glucose_floor_time_lowG = median_in_g0_band(g0, df$time_to_glucose_floor, upper = 0.25),
-      glucose_drawdown_fraction_highG = median_in_g0_band(g0, df$glucose_drawdown_fraction, lower = 1),
-      glucose_drawdown_rate_highG = median_in_g0_band(g0, df$max_glucose_drawdown_rate, lower = 1),
       yield_alive_auc_intercept = fit_alive_auc$intercept,
       yield_alive_auc_slope = fit_alive_auc$slope,
       yield_alive_auc_pred_0 = fit_alive_auc$pred[["pred_0"]],
       yield_alive_auc_pred_1 = fit_alive_auc$pred[["pred_1"]],
       yield_alive_auc_pred_25 = fit_alive_auc$pred[["pred_25"]],
-      yield_dead_auc_intercept = fit_dead_auc$intercept,
-      yield_dead_auc_slope = fit_dead_auc$slope,
-      yield_dead_auc_pred_0 = fit_dead_auc$pred[["pred_0"]],
-      yield_dead_auc_pred_1 = fit_dead_auc$pred[["pred_1"]],
-      yield_dead_auc_pred_25 = fit_dead_auc$pred[["pred_25"]],
-      yield_total_peak_intercept = fit_total_peak$intercept,
-      yield_total_peak_slope = fit_total_peak$slope,
-      yield_total_peak_pred_0 = fit_total_peak$pred[["pred_0"]],
-      yield_total_peak_pred_1 = fit_total_peak$pred[["pred_1"]],
-      yield_total_peak_pred_25 = fit_total_peak$pred[["pred_25"]],
-      yield_total_auc_intercept = fit_total_auc$intercept,
-      yield_total_auc_slope = fit_total_auc$slope,
-      yield_total_auc_pred_0 = fit_total_auc$pred[["pred_0"]],
-      yield_total_auc_pred_1 = fit_total_auc$pred[["pred_1"]],
-      yield_total_auc_pred_25 = fit_total_auc$pred[["pred_25"]],
-      live_peak_intercept = fit_live_peak$intercept,
-      live_peak_slope = fit_live_peak$slope,
-      live_peak_pred_0 = fit_live_peak$pred[["pred_0"]],
-      live_peak_pred_1 = fit_live_peak$pred[["pred_1"]],
-      live_peak_pred_25 = fit_live_peak$pred[["pred_25"]]
+      peak_total_yield_intercept = fit_peak_total_yield$intercept,
+      peak_total_yield_slope = fit_peak_total_yield$slope,
+      peak_total_yield_pred_0 = fit_peak_total_yield$pred[["pred_0"]],
+      peak_total_yield_pred_1 = fit_peak_total_yield$pred[["pred_1"]],
+      peak_total_yield_pred_25 = fit_peak_total_yield$pred[["pred_25"]]
     )
   })
 
@@ -400,11 +450,7 @@ summarize_glucose_signatures <- function(feature_panel) {
 }
 
 compute_empirical_effects <- function(signature_panel) {
-  feature_cols <- names(signature_panel)[vapply(signature_panel, is.numeric, logical(1))]
-  feature_cols <- setdiff(
-    feature_cols,
-    c("line_id", "ploidy_metric", "ploidy_abs", "has_starvation", "n_glucose_conditions")
-  )
+  feature_cols <- get_model_free_feature_catalog()$feature
 
   paired <- signature_panel %>%
     group_by(cellLine) %>%
@@ -470,11 +516,7 @@ compute_empirical_effects <- function(signature_panel) {
 }
 
 evaluate_transfer_predictions <- function(signature_panel) {
-  feature_cols <- names(signature_panel)[vapply(signature_panel, is.numeric, logical(1))]
-  feature_cols <- setdiff(
-    feature_cols,
-    c("line_id", "ploidy_metric", "ploidy_abs", "has_starvation", "n_glucose_conditions")
-  )
+  feature_cols <- get_model_free_feature_catalog()$feature
 
   rows <- list()
   idx <- 1L

@@ -96,12 +96,15 @@
 
   scripts/extract_model_free_ploidy_features.R writes those derived tables under data/model_free_ploidy/ including
   feature_panel.Rds/CSV plus a second-layer signature_panel.Rds/CSV. That signature layer aggregates across initial
-  glucose with feature-specific rules: e.g. low/high-glucose medians for rate-like quantities and log1p(G0)
-  regressions for yield-like quantities such as alive AUC and max(total). Paired ploidy-effect summaries and PCA are
-  computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R then performs a leave-one-line
-  directional transfer benchmark on the signature panel, using the median cross-line ploidy effect per signature as the
-  transferred effect and reporting scaled error summaries so large-magnitude yield terms do not dominate. workflow/
-  model_free_ploidy_analysis.Rmd is the reporting notebook for this branch.
+  glucose with feature-specific rules and is now intentionally reduced to a curated 8-feature panel: low/high-glucose
+  medians for max growth and max death, intercept/slope from alive-AUC vs log1p(G0), and intercept/slope from a crude
+  peak-yield metric defined as max(live+dead) up to the final glucose measurement divided by glucose drawdown.
+  Paired ploidy-effect summaries are computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R
+  then performs a leave-one-line directional transfer benchmark on the curated signature panel, using the median
+  cross-line ploidy effect per signature as the transferred effect and reporting scaled error summaries so
+  heterogeneous feature magnitudes do not dominate. workflow/model_free_ploidy_analysis.Rmd is the reporting notebook
+  for this branch and now presents one section per curated feature with rationale plus the corresponding computation
+  plot.
 
   Image-derived feature branch
 

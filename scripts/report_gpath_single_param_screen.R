@@ -6,6 +6,7 @@ SCREEN_ROOT <- if (length(args) >= 1) args[1] else "data/gpath_transfer_cv_singl
 OUTPUT_DIR <- if (length(args) >= 2) args[2] else file.path(SCREEN_ROOT, "report")
 STAN_DATA_PATH <- if (length(args) >= 3) args[3] else "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"
 MODEL_NAME <- if (length(args) >= 4) args[4] else "gpath"
+FOCUS_MASKS <- if (length(args) >= 5) trimws(strsplit(args[5], ",", fixed = TRUE)[[1]]) else c("ae-1", "ah-1")
 
 library(dplyr)
 library(tidyr)
@@ -21,6 +22,7 @@ source("R/transfer_cv_plot_utils.R")
 
 cat(sprintf(">>> report_gpath_single_param_screen.R cwd: %s\n", getwd()))
 cat(sprintf(">>> Screen root: %s\n", SCREEN_ROOT))
+cat(sprintf(">>> Focus masks: %s\n", paste(FOCUS_MASKS, collapse = ", ")))
 
 safe_read_rds <- function(path) {
   if (!file.exists(path)) {
@@ -427,16 +429,117 @@ for (mask in mask_levels) {
     )
 
   safe_mask <- gsub("[^A-Za-z0-9_-]+", "-", mask)
-  ggsave(
-    file.path(heatmap_dir, sprintf("heatmap_transfer_gain_%s.png", safe_mask)),
-    p_heat,
-    width = 10,
-    height = 7,
-    dpi = 200
+    ggsave(
+      file.path(heatmap_dir, sprintf("heatmap_transfer_gain_%s.png", safe_mask)),
+      p_heat,
+      width = 10,
+      height = 7,
+      dpi = 200
   )
+}
+
+focus_df <- predictive_df %>%
+  filter(mask_label %in% FOCUS_MASKS) %>%
+  mutate(
+    positive_transfer_gain = transfer_gain > 0
+  )
+
+if (nrow(focus_df)) {
+  focus_summary <- focus_df %>%
+    group_by(mask_label, direction) %>%
+    summarise(
+      total_transfer_gain = sum(transfer_gain, na.rm = TRUE),
+      mean_transfer_gain = mean(transfer_gain, na.rm = TRUE),
+      n_positive_cells = sum(positive_transfer_gain, na.rm = TRUE),
+      prop_positive_cells = mean(positive_transfer_gain, na.rm = TRUE),
+      n_cells = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(mask_label, direction)
+
+  focus_line_summary <- focus_df %>%
+    group_by(mask_label, line_id, direction) %>%
+    summarise(
+      total_transfer_gain = sum(transfer_gain, na.rm = TRUE),
+      mean_transfer_gain = mean(transfer_gain, na.rm = TRUE),
+      n_positive_models = sum(positive_transfer_gain, na.rm = TRUE),
+      prop_positive_models = mean(positive_transfer_gain, na.rm = TRUE),
+      n_models = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(mask_label, direction, line_id)
+
+  failing_line_summary <- focus_df %>%
+    group_by(line_id) %>%
+    summarise(
+      total_transfer_gain = sum(transfer_gain, na.rm = TRUE),
+      mean_transfer_gain = mean(transfer_gain, na.rm = TRUE),
+      n_positive_cells = sum(positive_transfer_gain, na.rm = TRUE),
+      prop_positive_cells = mean(positive_transfer_gain, na.rm = TRUE),
+      n_cells = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    arrange(mean_transfer_gain, total_transfer_gain)
+
+  failing_line_id <- failing_line_summary$line_id[[1]]
+  failing_line_detail <- focus_df %>%
+    filter(line_id == failing_line_id) %>%
+    arrange(mask_label, direction, run_id)
+
+  write.csv(focus_summary, file.path(OUTPUT_DIR, "focus_mask_summary.csv"), row.names = FALSE)
+  write.csv(focus_line_summary, file.path(OUTPUT_DIR, "focus_mask_line_summary.csv"), row.names = FALSE)
+  write.csv(failing_line_summary, file.path(OUTPUT_DIR, "failing_line_summary.csv"), row.names = FALSE)
+  write.csv(failing_line_detail, file.path(OUTPUT_DIR, "failing_line_detail.csv"), row.names = FALSE)
+
+  p_focus_counts <- ggplot(
+    focus_summary,
+    aes(x = mask_label, y = n_positive_cells, fill = direction)
+  ) +
+    geom_col(position = "dodge") +
+    theme_bw() +
+    labs(x = "", y = "Positive line x model cells")
+
+  p_focus_gain <- ggplot(
+    focus_summary,
+    aes(x = mask_label, y = total_transfer_gain, fill = direction)
+  ) +
+    geom_col(position = "dodge") +
+    theme_bw() +
+    labs(x = "", y = "Total transfer gain")
+
+  p_failing_line <- ggplot(
+    failing_line_detail,
+    aes(x = run_id, y = mask_label, fill = transfer_gain)
+  ) +
+    facet_grid(cols = vars(direction)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0) +
+    theme_minimal() +
+    labs(
+      title = sprintf("Failing line detail | line %s", failing_line_id),
+      x = "Model ID",
+      y = "Mask",
+      fill = "Transfer gain"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(color = "grey85", fill = NA),
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(file.path(OUTPUT_DIR, "focus_mask_counts.png"), p_focus_counts, width = 8, height = 5, dpi = 200)
+  ggsave(file.path(OUTPUT_DIR, "focus_mask_total_gain.png"), p_focus_gain, width = 8, height = 5, dpi = 200)
+  ggsave(file.path(OUTPUT_DIR, "failing_line_detail.png"), p_failing_line, width = 10, height = 4, dpi = 200)
 }
 
 cat(sprintf(">>> Wrote report outputs to %s\n", OUTPUT_DIR))
 cat(sprintf(">>> Per-mask transfer-gain heatmaps: %s\n", heatmap_dir))
 cat(">>> Top predictive masks by direction:\n")
 print(predictive_mask_summary %>% arrange(direction, desc(mean_transfer_gain)))
+
+if (exists("focus_summary")) {
+  cat(">>> Focus-mask summary:\n")
+  print(focus_summary)
+  cat(">>> Failing-line summary:\n")
+  print(failing_line_summary)
+}

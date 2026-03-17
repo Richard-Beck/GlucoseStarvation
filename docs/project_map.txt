@@ -87,6 +87,20 @@
      optimisation batches can be cleaned by batch label with scripts/cleanup_gpath_optim_batch.R. The combine job now
      uses an `afterany` dependency on the optimisation array so partially successful runs still produce combined outputs.
 
+  Model-free ploidy-summary branch
+
+  This branch uses the same `stan_ready_data` object but does not fit the ODE. R/model_free_ploidy_utils.R reconstructs
+  count/glucose trajectories per well from `stan_ready_data`, converts glucose luminescence to estimated glucose using
+  the stored calibration parameters, and derives per-condition summary features such as peak live counts, growth/death
+  slopes, glucose drawdown, and timing metrics.
+
+  scripts/extract_model_free_ploidy_features.R writes those derived tables under data/model_free_ploidy/ including
+  feature_panel.Rds/CSV, count_summary.Rds/CSV, glucose_summary.Rds/CSV, paired ploidy-effect summaries, and a PCA of
+  the empirical per-feature ploidy effects. scripts/evaluate_model_free_ploidy_transfer.R then performs a leave-one-line
+  directional transfer benchmark on the derived features, using the median cross-line effect at matched G0 as the
+  transferred ploidy effect, and writes prediction/summary artefacts under the same root. workflow/
+  model_free_ploidy_analysis.Rmd is the reporting notebook for this branch.
+
   Image-derived feature branch
 
   This is separate from the Stan path. The size-aware classifier is scripts/image_processing/

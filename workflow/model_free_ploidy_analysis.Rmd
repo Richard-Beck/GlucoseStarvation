@@ -1,0 +1,290 @@
+---
+title: "Model-Free Ploidy Analysis"
+author: "Codex"
+date: "2026-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+
+## Purpose
+
+This notebook reports a model-free ploidy analysis built directly from the curated `stan_ready_data` object rather than from fitted ODE parameters. The workflow has two stages:
+
+1. extract per-condition features from observed count and glucose trajectories,
+2. test whether a shared ploidy effect estimated from other lines improves held-out prediction of the missing ploidy state.
+
+The notebook is a reporting layer. It expects the scripts below to have been run first:
+
+```bash
+Rscript scripts/extract_model_free_ploidy_features.R
+Rscript scripts/evaluate_model_free_ploidy_transfer.R
+```
+
+## Setup
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(forcats)
+
+source("R/project_paths.R")
+source("R/gpath_run_utils.R")
+source("R/model_free_ploidy_utils.R")
+
+analysis_root <- file.path("data", "model_free_ploidy")
+
+paths <- list(
+  stan_data = resolve_stan_data_path(),
+  feature_panel = file.path(analysis_root, "feature_panel.Rds"),
+  count_summary = file.path(analysis_root, "count_summary.Rds"),
+  glucose_summary = file.path(analysis_root, "glucose_summary.Rds"),
+  paired_effects = file.path(analysis_root, "paired_effects_long.Rds"),
+  effect_pca_scores = file.path(analysis_root, "effect_pca_scores.Rds"),
+  effect_pca_loadings = file.path(analysis_root, "effect_pca_loadings.Rds"),
+  transfer_predictions = file.path(analysis_root, "transfer_predictions.Rds"),
+  transfer_feature_summary = file.path(analysis_root, "transfer_feature_summary.Rds"),
+  transfer_case_summary = file.path(analysis_root, "transfer_case_summary.Rds")
+)
+
+safe_read_rds <- function(path) {
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+  readRDS(path)
+}
+
+feature_panel <- safe_read_rds(paths$feature_panel)
+count_summary <- safe_read_rds(paths$count_summary)
+glucose_summary <- safe_read_rds(paths$glucose_summary)
+paired_effects <- safe_read_rds(paths$paired_effects)
+effect_pca_scores <- safe_read_rds(paths$effect_pca_scores)
+effect_pca_loadings <- safe_read_rds(paths$effect_pca_loadings)
+transfer_predictions <- safe_read_rds(paths$transfer_predictions)
+transfer_feature_summary <- safe_read_rds(paths$transfer_feature_summary)
+transfer_case_summary <- safe_read_rds(paths$transfer_case_summary)
+
+cat("Working directory:", getwd(), "\n")
+cat("stan_data path:", paths$stan_data, "\n")
+cat("analysis root:", analysis_root, "\n")
+```
+
+## Output Check
+
+```{r output-check}
+output_status <- tibble(
+  artifact = names(paths),
+  path = unlist(paths),
+  exists = file.exists(unlist(paths))
+)
+
+output_status
+```
+
+```{r maybe-stop, include=FALSE}
+required_paths <- c(paths$feature_panel, paths$transfer_predictions, paths$transfer_feature_summary)
+if (!all(file.exists(required_paths))) {
+  stop("Required analysis outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
+}
+```
+
+## Feature Inventory
+
+```{r feature-inventory}
+feature_panel %>%
+  summarise(
+    n_wells = n(),
+    n_lines = n_distinct(cellLine),
+    n_ploidy_states = n_distinct(paste(cellLine, ploidy_metric)),
+    n_glucose_conditions = n_distinct(G0)
+  )
+```
+
+```{r feature-preview}
+feature_panel %>%
+  select(cellLine, ploidy_metric, G0, live_peak, max_growth_rate, max_death_rate, glucose_drawdown, max_glucose_drawdown_rate) %>%
+  arrange(cellLine, ploidy_metric, G0)
+```
+
+## Observed Trajectories
+
+```{r trajectory-helper}
+plot_one_trajectory <- function(cell_line, g0) {
+  meta_sub <- feature_panel %>%
+    filter(cellLine == cell_line, abs(G0 - g0) < 1e-12) %>%
+    select(well_idx, ploidy_metric)
+
+  cnt <- count_summary %>%
+    semi_join(meta_sub, by = "well_idx") %>%
+    select(well_idx, ploidy_metric, hours, live_cells, dead_cells) %>%
+    pivot_longer(cols = c(live_cells, dead_cells), names_to = "state", values_to = "value")
+
+  gluc <- glucose_summary %>%
+    semi_join(meta_sub, by = "well_idx") %>%
+    select(well_idx, ploidy_metric, hours, glucose_hat)
+
+  p_count <- ggplot(cnt, aes(hours, value, color = factor(ploidy_metric))) +
+    geom_line(linewidth = 0.9) +
+    facet_wrap(~state, scales = "free_y") +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(
+      title = sprintf("%s | G0 = %s", cell_line, g0),
+      x = "hours",
+      y = "count"
+    ) +
+    theme_bw()
+
+  p_gluc <- ggplot(gluc, aes(hours, glucose_hat, color = factor(ploidy_metric))) +
+    geom_line(linewidth = 0.9) +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(x = "hours", y = "estimated glucose") +
+    theme_bw()
+
+  p_count / p_gluc
+}
+```
+
+```{r example-trajectory, fig.height=6, fig.width=8}
+plot_one_trajectory("SNU668", 0.25)
+```
+
+## Direct Ploidy Effects
+
+The effect definition here is per-unit-ploidy change within each line and glucose condition:
+
+`effect = (feature_high - feature_low) / (ploidy_high - ploidy_low)`
+
+```{r top-effects}
+effect_summary <- paired_effects %>%
+  group_by(feature) %>%
+  summarise(
+    mean_effect = mean(effect_per_ploidy, na.rm = TRUE),
+    sd_effect = sd(effect_per_ploidy, na.rm = TRUE),
+    sign_consistency = mean(sign(effect_per_ploidy) == sign(mean(effect_per_ploidy, na.rm = TRUE)), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(sign_consistency), desc(abs(mean_effect)))
+
+effect_summary %>% slice_head(n = 15)
+```
+
+```{r effect-heatmap, fig.height=8, fig.width=11}
+plot_features <- transfer_feature_summary %>%
+  arrange(desc(mean_abs_err_improvement)) %>%
+  slice_head(n = 12) %>%
+  pull(feature)
+
+paired_effects %>%
+  filter(feature %in% plot_features) %>%
+  mutate(
+    feature = forcats::fct_reorder(feature, effect_per_ploidy, .fun = median, na.rm = TRUE),
+    line_g0 = paste(cellLine, "G0=", G0)
+  ) %>%
+  ggplot(aes(x = feature, y = line_g0, fill = effect_per_ploidy)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b") +
+  labs(
+    title = "Empirical Ploidy Effects by Line and Glucose Condition",
+    x = NULL,
+    y = NULL,
+    fill = "effect\nper ploidy"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Shared Effect Structure
+
+```{r pca-plot, fig.height=5, fig.width=8}
+if (!is.null(effect_pca_scores) && nrow(effect_pca_scores)) {
+  ggplot(effect_pca_scores, aes(PC1, PC2, color = cellLine, size = G0)) +
+    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey70") +
+    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey70") +
+    geom_point(alpha = 0.9) +
+    theme_bw() +
+    labs(
+      title = "PCA of Empirical Ploidy-Effect Signatures",
+      subtitle = "Each point is one cell line at one starting glucose level",
+      size = "G0"
+    )
+}
+```
+
+```{r pca-loadings}
+if (!is.null(effect_pca_loadings) && nrow(effect_pca_loadings)) {
+  effect_pca_loadings %>%
+    arrange(desc(abs(PC1))) %>%
+    slice_head(n = 12)
+}
+```
+
+## Transfer Evaluation
+
+The transfer baseline is `null = observed ploidy state predicts missing state with no change`. The transfer prediction adds the median cross-line feature effect estimated at the same `G0`.
+
+```{r transfer-summary}
+transfer_feature_summary %>%
+  select(feature, n_cases, mae_null, mae_transfer, mean_abs_err_improvement, transfer_win_rate, sign_accuracy) %>%
+  arrange(desc(mean_abs_err_improvement))
+```
+
+```{r transfer-bar, fig.height=7, fig.width=10}
+transfer_feature_summary %>%
+  slice_head(n = 15) %>%
+  mutate(feature = forcats::fct_reorder(feature, mean_abs_err_improvement)) %>%
+  ggplot(aes(x = feature, y = mean_abs_err_improvement, fill = transfer_win_rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Features Most Improved by Cross-Line Ploidy Transfer",
+    x = NULL,
+    y = "mean absolute-error improvement",
+    fill = "transfer\nwin rate"
+  ) +
+  theme_bw()
+```
+
+```{r case-summary}
+transfer_case_summary %>%
+  arrange(desc(mean_abs_err_improvement))
+```
+
+```{r transfer-scatter, fig.height=6, fig.width=9}
+top_transfer_features <- transfer_feature_summary %>%
+  slice_head(n = 6) %>%
+  pull(feature)
+
+transfer_predictions %>%
+  filter(feature %in% top_transfer_features) %>%
+  mutate(feature = forcats::fct_reorder(feature, abs_err_improvement, .fun = median, na.rm = TRUE)) %>%
+  ggplot(aes(x = true_value, y = pred_transfer - pred_null, color = direction)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey70") +
+  geom_point(size = 2, alpha = 0.8) +
+  facet_wrap(~feature, scales = "free") +
+  theme_bw() +
+  labs(
+    title = "Transferred Adjustment Relative to Null",
+    subtitle = "Positive values mean the shared ploidy effect pushes the prediction upward",
+    x = "true held-out feature value",
+    y = "transfer minus null prediction"
+  )
+```
+
+## Notes
+
+- Feature values are medians across replicate observations at each timepoint within a well-condition.
+- Glucose is reconstructed from `lum_obs` using the fixed calibration parameters stored in `stan_ready_data`.
+- The cross-line effect is normalized per unit of `ploidy_metric`, which matters because `MDA-MB-231` has a smaller ploidy shift than the other paired lines.
+- This is intentionally a direct-data benchmark. It is useful even if some individual features are noisy because it tells us which observable phenotype summaries actually carry transferable ploidy information.

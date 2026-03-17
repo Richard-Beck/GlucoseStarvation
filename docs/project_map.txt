@@ -66,7 +66,9 @@
      best optimization start per null/transfer/oracle condition, simulate the held-out line, and overlay fits with
      color by fit type and linetype by transfer direction. Batch export of annotated transfer overlays now lives in
      scripts/export_gpath_transfer_overlays.R, which writes per-model/per-line PNGs plus a manifest under
-     data/gpath_transfer_cv_overlays/.
+     data/gpath_transfer_cv_overlays/. A targeted masked-screen overlay exporter now also lives in
+     scripts/export_single_param_hit_overlays.R, which writes selected per-mask/per-model/per-line overlays plus a
+     manifest under data/gpath_transfer_cv_single_param/hit_overlays/.
 
      Cluster submission is beginning to move outside ecology. slurm/README.md defines the target structure:
      `slurm/jobs/` for stable job scripts, `slurm/submit_*.sh` for one-shot wrappers, and `slurm/runs/...` for generated

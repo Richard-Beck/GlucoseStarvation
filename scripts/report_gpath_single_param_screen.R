@@ -342,6 +342,9 @@ write.csv(parameter_mask_summary, file.path(OUTPUT_DIR, "parameter_mask_summary.
 write.csv(derived_mask_summary, file.path(OUTPUT_DIR, "derived_mask_summary.csv"), row.names = FALSE)
 write.csv(subset_mask_summary, file.path(OUTPUT_DIR, "subset_mask_summary.csv"), row.names = FALSE)
 
+heatmap_dir <- file.path(OUTPUT_DIR, "transfer_gain_heatmaps")
+dir.create(heatmap_dir, recursive = TRUE, showWarnings = FALSE)
+
 plot_predictive <- ggplot(
   predictive_mask_summary,
   aes(x = reorder(mask_label, mean_transfer_gain), y = mean_transfer_gain, color = direction)
@@ -394,6 +397,46 @@ ggsave(file.path(OUTPUT_DIR, "derived_mask_heatmap.png"), plot_derived, width = 
 combined <- (plot_predictive | plot_parameter) / (plot_subset | plot_derived)
 ggsave(file.path(OUTPUT_DIR, "single_param_screen_dashboard.png"), combined, width = 16, height = 12, dpi = 200)
 
+mask_levels <- unique(predictive_df$mask_label)
+for (mask in mask_levels) {
+  sub_df <- predictive_df %>%
+    filter(mask_label == mask) %>%
+    mutate(
+      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
+      line_id = factor(line_id, levels = sort(unique(line_id)))
+    )
+
+  if (!nrow(sub_df)) {
+    next
+  }
+
+  p_heat <- ggplot(sub_df, aes(x = line_id, y = run_id, fill = transfer_gain)) +
+    facet_grid(cols = vars(direction)) +
+    geom_raster() +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0) +
+    theme_minimal() +
+    labs(
+      title = sprintf("Transfer Gain Heatmap | %s", mask),
+      x = "Cell line",
+      y = "Model ID",
+      fill = "Transfer gain"
+    ) +
+    theme(
+      panel.border = element_rect(color = "grey85", fill = NA),
+      strip.text = element_text(face = "bold")
+    )
+
+  safe_mask <- gsub("[^A-Za-z0-9_-]+", "-", mask)
+  ggsave(
+    file.path(heatmap_dir, sprintf("heatmap_transfer_gain_%s.png", safe_mask)),
+    p_heat,
+    width = 10,
+    height = 7,
+    dpi = 200
+  )
+}
+
 cat(sprintf(">>> Wrote report outputs to %s\n", OUTPUT_DIR))
+cat(sprintf(">>> Per-mask transfer-gain heatmaps: %s\n", heatmap_dir))
 cat(">>> Top predictive masks by direction:\n")
 print(predictive_mask_summary %>% arrange(direction, desc(mean_transfer_gain)))

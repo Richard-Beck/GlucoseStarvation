@@ -313,7 +313,7 @@ parameter_mask_summary <- parameter_df %>%
   group_by(mask_label, direction) %>%
   summarise(
     mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
-    mean_prop_parameters_better = mean(prop_parameters_transfer_better_than_null, na.rm = TRUE),
+    target_parameter_improves = mean(prop_parameters_transfer_better_than_null, na.rm = TRUE),
     n_cases = dplyr::n(),
     .groups = "drop"
   )
@@ -333,7 +333,6 @@ subset_mask_summary <- subset_summary_df %>%
     mean_transfer_minus_oracle_train = mean(transfer_minus_oracle_train, na.rm = TRUE),
     mean_transfer_minus_null_train = mean(transfer_minus_null_train, na.rm = TRUE),
     mean_transfer_minus_oracle_holdout = mean(transfer_minus_oracle_holdout, na.rm = TRUE),
-    mean_transfer_minus_null_holdout = mean(transfer_minus_null_holdout, na.rm = TRUE),
     n_cases = dplyr::n(),
     .groups = "drop"
   )
@@ -367,14 +366,14 @@ plot_parameter <- ggplot(
 
 plot_subset <- ggplot(
   subset_mask_summary,
-  aes(x = reorder(mask_label, mean_transfer_minus_null_holdout), y = mean_transfer_minus_null_holdout, color = direction)
+  aes(x = reorder(mask_label, mean_transfer_minus_oracle_train), y = mean_transfer_minus_oracle_train, color = direction)
 ) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey70") +
   geom_point(size = 2.5) +
   coord_flip() +
   facet_wrap(~ direction, scales = "free_y") +
   theme_bw() +
-  labs(x = "", y = "Transfer - Null on transfer-holdout wells")
+  labs(x = "", y = "Transfer - Oracle on transfer-training wells")
 
 plot_derived <- ggplot(
   derived_mask_summary,
@@ -389,7 +388,7 @@ plot_derived <- ggplot(
 
 ggsave(file.path(OUTPUT_DIR, "predictive_mask_ranking.png"), plot_predictive, width = 11, height = 8, dpi = 200)
 ggsave(file.path(OUTPUT_DIR, "parameter_mask_ranking.png"), plot_parameter, width = 11, height = 8, dpi = 200)
-ggsave(file.path(OUTPUT_DIR, "subset_mask_ranking.png"), plot_subset, width = 11, height = 8, dpi = 200)
+ggsave(file.path(OUTPUT_DIR, "training_tension_mask_ranking.png"), plot_subset, width = 11, height = 8, dpi = 200)
 ggsave(file.path(OUTPUT_DIR, "derived_mask_heatmap.png"), plot_derived, width = 12, height = 9, dpi = 200)
 
 combined <- (plot_predictive | plot_parameter) / (plot_subset | plot_derived)

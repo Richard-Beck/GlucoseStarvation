@@ -48,7 +48,9 @@
      scripts/plot_gpath_parameter_transfer.R.
      Single-parameter transfer screening specs can now be generated with scripts/make_gpath_single_param_transfer_spec.R,
      which writes one masked transfer-screen row per model parameter and directs outputs into separate roots under
-     data/gpath_transfer_cv_single_param/.
+     data/gpath_transfer_cv_single_param/. Aggregated reporting for those masked screens now lives in
+     scripts/report_gpath_single_param_screen.R, which scans the per-mask roots and writes screen-level CSV/PNG
+     summaries under data/gpath_transfer_cv_single_param/report/.
      There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
      scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
      data/gpath_transfer_cv_nuts/.

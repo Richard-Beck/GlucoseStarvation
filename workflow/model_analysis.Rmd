@@ -529,19 +529,21 @@ collect_focused_parameter_transfer <- function(
         abs_transfer_err = abs(holdout_diff),
         abs_error_improvement = abs_null_err - abs_transfer_err,
         positive_triplet = null_holdout > 0 & transfer_holdout > 0 & oracle_holdout > 0,
-        abs_log_null_ratio = ifelse(
+        log_null_ratio = ifelse(
           positive_triplet,
-          abs(log(null_holdout / oracle_holdout)),
+          log(null_holdout / oracle_holdout),
           NA_real_
         ),
-        abs_log_transfer_ratio = ifelse(
+        log_transfer_ratio = ifelse(
           positive_triplet,
-          abs(log(transfer_holdout / oracle_holdout)),
+          log(transfer_holdout / oracle_holdout),
           NA_real_
         ),
-        ratio_error_improvement = abs_log_null_ratio - abs_log_transfer_ratio,
+        abs_log_null_ratio = abs(log_null_ratio),
+        abs_log_transfer_ratio = abs(log_transfer_ratio),
+        ratio_error_improvement = abs(log_null_ratio) - abs(log_transfer_ratio),
         transfer_beats_null_abs = abs_transfer_err < abs_null_err,
-        transfer_beats_null_ratio = abs_log_transfer_ratio < abs_log_null_ratio,
+        transfer_beats_null_ratio = abs(log_transfer_ratio) < abs(log_null_ratio),
         line_direction = sprintf("line %d | %s", line_id, direction)
       )
   })
@@ -1413,7 +1415,7 @@ if (is.na(selected_model_id)) {
 
 ## Focused Common Parameters
 
-These plots break out the four parameters that are present across the ranked model set: `ae[1]`, `ah[1]`, `Y_R[1]`, and `m`. The first view uses the current absolute-difference criterion against the oracle. The second uses multiplicative discrepancy, via absolute log-ratios to the oracle, on the reconstructed held-out parameters.
+These plots break out the four parameters that are present across the ranked model set: `ae[1]`, `ah[1]`, `Y_R[1]`, and `m`. The ratio view uses signed log-ratios to the oracle on the reconstructed held-out parameters, while the hit summaries below retain the same absolute-log-ratio win criteria used elsewhere in the notebook.
 
 ```{r focused-parameter-table}
 if (!nrow(focused_parameter_df)) {
@@ -1440,71 +1442,6 @@ if (!nrow(focused_parameter_df)) {
 }
 ```
 
-```{r focused-parameter-absolute, fig.height=10, fig.width=14}
-if (!nrow(focused_parameter_df)) {
-  announce_missing("No focused parameter-transfer rows available for absolute-error plotting.")
-} else {
-  plot_df <- focused_parameter_df %>%
-    mutate(
-      parameter = factor(parameter, levels = focus_common_parameters),
-      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
-      model_id = factor(model_id, levels = ranking_df$model_id),
-      fit_target = factor("oracle", levels = "oracle")
-    )
-
-  p1 <- ggplot(
-    plot_df,
-    aes(x = model_id)
-  ) +
-    geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
-    geom_segment(
-      aes(
-        xend = model_id,
-        y = abs_null_err,
-        yend = abs_transfer_err,
-        color = direction
-      ),
-      linewidth = 0.5,
-      alpha = 0.45
-    ) +
-    geom_point(aes(y = abs_null_err), shape = 21, size = 2.4, stroke = 0.7, fill = "white", color = "black") +
-    geom_point(aes(y = abs_transfer_err, color = direction), size = 2.2, alpha = 0.85) +
-    facet_grid(parameter ~ line_direction, scales = "free_y") +
-    scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
-    theme_bw() +
-    labs(
-      x = "",
-      y = "|fit - oracle| on reconstructed held-out parameter",
-      color = "Direction"
-    ) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      panel.grid.minor = element_blank()
-    )
-
-  p2 <- ggplot(
-    plot_df,
-    aes(x = model_id, y = abs_error_improvement, color = direction)
-  ) +
-    geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
-    geom_point(position = position_jitter(width = 0.08, height = 0), size = 2.1, alpha = 0.85) +
-    facet_grid(parameter ~ line_direction, scales = "free_y") +
-    scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
-    theme_bw() +
-    labs(
-      x = "",
-      y = "|null-oracle| - |transfer-oracle|",
-      color = "Direction"
-    ) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      panel.grid.minor = element_blank()
-    )
-
-  p1 / p2
-}
-```
-
 ```{r focused-parameter-ratio, fig.height=10, fig.width=14}
 if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs_log_transfer_ratio)))) {
   announce_missing("No positive-valued focused parameter rows available for ratio-based plotting.")
@@ -1525,21 +1462,21 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
     geom_segment(
       aes(
         xend = model_id,
-        y = abs_log_null_ratio,
-        yend = abs_log_transfer_ratio,
+        y = log_null_ratio,
+        yend = log_transfer_ratio,
         color = direction
       ),
       linewidth = 0.5,
       alpha = 0.45
     ) +
-    geom_point(aes(y = abs_log_null_ratio), shape = 21, size = 2.4, stroke = 0.7, fill = "white", color = "black") +
-    geom_point(aes(y = abs_log_transfer_ratio, color = direction), size = 2.2, alpha = 0.85) +
+    geom_point(aes(y = log_null_ratio), shape = 21, size = 2.4, stroke = 0.7, fill = "white", color = "black") +
+    geom_point(aes(y = log_transfer_ratio, color = direction), size = 2.2, alpha = 0.85) +
     facet_grid(parameter ~ line_direction, scales = "free_y") +
     scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
     theme_bw() +
     labs(
       x = "",
-      y = "|log(fit / oracle)| on reconstructed held-out parameter",
+      y = "log(fit / oracle) on reconstructed held-out parameter",
       color = "Direction"
     ) +
     theme(
@@ -1559,6 +1496,69 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
     labs(
       x = "",
       y = "|log(null/oracle)| - |log(transfer/oracle)|",
+      color = "Direction"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank()
+    )
+
+  p1 / p2
+}
+```
+
+```{r focused-parameter-hit-summary, fig.height=8, fig.width=14}
+if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs_log_transfer_ratio)))) {
+  announce_missing("No positive-valued focused parameter rows available for hit-summary plotting.")
+} else {
+  hit_df <- focused_parameter_df %>%
+    filter(!is.na(abs_log_null_ratio), !is.na(abs_log_transfer_ratio)) %>%
+    group_by(model_id, direction, parameter) %>%
+    summarise(
+      mean_log_error_improvement = mean(ratio_error_improvement, na.rm = TRUE),
+      median_log_error_improvement = median(ratio_error_improvement, na.rm = TRUE),
+      prop_transfer_better_than_null = mean(transfer_beats_null_ratio, na.rm = TRUE),
+      n_cases = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      parameter = factor(parameter, levels = focus_common_parameters),
+      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
+      model_id = factor(model_id, levels = ranking_df$model_id)
+    )
+
+  p1 <- ggplot(
+    hit_df,
+    aes(x = model_id, y = mean_log_error_improvement, color = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.08, height = 0), size = 2.2, alpha = 0.85) +
+    facet_wrap(~ parameter, scales = "free_y", ncol = 2) +
+    scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
+    theme_bw() +
+    labs(
+      x = "",
+      y = "Mean log-error improvement over null",
+      color = "Direction"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank()
+    )
+
+  p2 <- ggplot(
+    hit_df,
+    aes(x = model_id, y = prop_transfer_better_than_null, color = direction)
+  ) +
+    geom_hline(yintercept = 0.5, color = "grey75", linetype = "dashed") +
+    geom_point(position = position_jitter(width = 0.08, height = 0), size = 2.2, alpha = 0.85) +
+    facet_wrap(~ parameter, ncol = 2) +
+    scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
+    coord_cartesian(ylim = c(0, 1)) +
+    theme_bw() +
+    labs(
+      x = "",
+      y = "Proportion transfer beats null",
       color = "Direction"
     ) +
     theme(

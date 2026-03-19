@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=8G
 #SBATCH --time=00:15:00
-#SBATCH --qos=normal
+#SBATCH --qos=medium
 
 set -euo pipefail
 

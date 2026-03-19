@@ -8,3 +8,7 @@ figures
 results
 plots
 ecology/model_selection/data
+.nfs*
+slurm/runs
+slurm/logs
+models/gpath/v1/gpath_hier

@@ -3,21 +3,17 @@
 # Target run IDs
 RUN_IDS=(
   "1R_1P_0W_C0_M1"
-  #"1R_1P_1W_C0_M0"
+  "1R_1P_1W_C0_M0"
   "1R_1P_1W_C0_M1"
   "2R_1P_0W_C0_M1"
-  #"2R_1P_1W_C0_M0"
-  #"2R_1P_1W_C0_M1"
+  "2R_1P_1W_C0_M0"
+  "2R_1P_1W_C0_M1"
   "2R_2P_0W_C0_M1"
-  #"2R_2P_0W_C1_M0"
-  #"2R_2P_1W_C0_M0"
+  "2R_2P_0W_C1_M0"
+  "2R_2P_1W_C0_M0"
   "2R_2P_1W_C0_M1"
-  #"2R_2P_1W_C1_M0"
-  #"2R_2P_1W_C1_M1"
-  #"2R_3P_0W_C0_M0"
-  #"3R_1P_0W_C0_M1"
-  #"3R_2P_0W_C0_M0"
-  #"3R_3P_0W_C1_M1"
+  "2R_2P_1W_C1_M0"
+  "2R_2P_1W_C1_M1"
 )
 
 MODEL_NAME="gpath"

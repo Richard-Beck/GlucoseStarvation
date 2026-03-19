@@ -62,7 +62,8 @@ project_paths <- list(
   assessment_run_ids = file.path("models", "gpath", "v1", "assessment_run_ids.txt"),
   optim_root = file.path("data", "runs", "gpath", "v1", "optim"),
   transfer_optim_root = "data/gpath_transfer_cv/gpath",
-  transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath"
+  transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath",
+  report_export_root = file.path("data", "report_exports", "model_analysis")
 )
 
 cat("Current working directory:", getwd(), "\n")
@@ -80,6 +81,37 @@ safe_read_rds <- function(path) {
 
 announce_missing <- function(...) {
   cat("SKIP:", sprintf(...), "\n")
+}
+
+ensure_report_export_root <- function(path = project_paths$report_export_root) {
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  normalizePath(path, winslash = "/", mustWork = FALSE)
+}
+
+write_audit_artifact <- function(x, stem, dir_path = project_paths$report_export_root) {
+  dir_path <- ensure_report_export_root(dir_path)
+  rds_path <- file.path(dir_path, sprintf("%s.Rds", stem))
+  csv_path <- file.path(dir_path, sprintf("%s.csv", stem))
+  saveRDS(x, rds_path)
+
+  if (is.data.frame(x) || tibble::is_tibble(x)) {
+    utils::write.csv(as.data.frame(x), csv_path, row.names = FALSE)
+  } else {
+    csv_path <- NA_character_
+  }
+
+  tibble(
+    artifact = stem,
+    rds_path = normalizePath(rds_path, winslash = "/", mustWork = FALSE),
+    csv_path = if (is.na(csv_path)) NA_character_ else normalizePath(csv_path, winslash = "/", mustWork = FALSE)
+  )
+}
+
+preview_table <- function(x, n = 20L) {
+  if (is.null(x) || !nrow(x)) {
+    return(x)
+  }
+  head(as.data.frame(x), n)
 }
 
 read_run_id_file <- function(path) {
@@ -960,6 +992,7 @@ knitr::kable(artifact_commands)
 ## Available Outputs
 
 ```{r available-outputs}
+report_export_root <- ensure_report_export_root()
 ranking_df <- build_model_ranking()
 manifest_df <- summarize_manifest_status(ranking_df)
 selected_model_id <- find_selected_model(ranking_df)
@@ -972,9 +1005,26 @@ common_raw_theta_parameters <- raw_theta_ploidy_global_df %>%
   filter(n_models_present == n_distinct(raw_theta_ploidy_global_df$model_id)) %>%
   pull(parameter)
 
+audit_index_df <- bind_rows(
+  write_audit_artifact(ranking_df, "ranking_df"),
+  write_audit_artifact(manifest_df, "manifest_df"),
+  write_audit_artifact(raw_theta_ploidy_global_df, "raw_theta_ploidy_global_df"),
+  write_audit_artifact(raw_theta_ploidy_transfer_df, "raw_theta_ploidy_transfer_df"),
+  write_audit_artifact(raw_theta_ploidy_df, "raw_theta_ploidy_df")
+)
+
 cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
 cat("\nSelected model for downstream reporting:", selected_model_id, "\n")
+cat("\nAudit export root:", report_export_root, "\n")
+```
+
+## Audit Artifacts
+
+Full audit tables are written during knitting under `data/report_exports/model_analysis/`. The report shows only compact previews.
+
+```{r audit-artifact-index}
+knitr::kable(audit_index_df)
 ```
 
 ## Trusted Optimisation Runs
@@ -989,16 +1039,18 @@ if (!nrow(manifest_df)) {
 
 ## Best-Fit `raw_theta_ploidy` Coefficients
 
-This table loads the `raw_theta_ploidy` vector from the best optimization start for each ranked `model_id` and relabels each coefficient with the corresponding model parameter.
+This section previews the `raw_theta_ploidy` vector from the best optimization start for each ranked `model_id`. The full audit table is exported.
 
 ```{r best-raw-theta-ploidy}
 if (!nrow(raw_theta_ploidy_df)) {
   announce_missing("No best-fit raw_theta_ploidy coefficients could be extracted from ranked optimisation runs.")
 } else {
-  raw_theta_ploidy_df %>%
+  audit_index_df <- bind_rows(audit_index_df, write_audit_artifact(raw_theta_ploidy_df, "raw_theta_ploidy_df"))
+  preview_df <- raw_theta_ploidy_df %>%
     select(source, model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_holdout, missing, run_label, run_tag) %>%
-    arrange(source, model_id, line_id, direction, fit_type, parameter) %>%
-    print(n = Inf)
+    arrange(source, model_id, line_id, direction, fit_type, parameter)
+  knitr::kable(preview_table(preview_df, n = 24))
+  cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_df.csv"), "\n")
 }
 ```
 
@@ -1010,11 +1062,13 @@ These rows are the best `transfer` fits for each held-out line and direction, wi
 if (!nrow(raw_theta_ploidy_transfer_df)) {
   announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients found under %s", project_paths$transfer_optim_root)
 } else {
-  raw_theta_ploidy_transfer_df %>%
+  transfer_preview_df <- raw_theta_ploidy_transfer_df %>%
     filter(fit_type == "transfer") %>%
     select(model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_train, ll_transfer_holdout, holdout_obs, run_tag) %>%
     arrange(model_id, line_id, direction, fit_type, parameter) %>%
-    print(n = Inf)
+    as.data.frame()
+  knitr::kable(preview_table(transfer_preview_df, n = 24))
+  cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_transfer_df.csv"), "\n")
 }
 ```
 
@@ -1226,6 +1280,20 @@ transfer_subset_summary_df <- summarize_transfer_subset_diagnostics(transfer_sub
 
 predictive_screen_summary <- summarize_predictive_screening(screen_transfer_df)
 parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
+audit_index_df <- bind_rows(
+  audit_index_df,
+  write_audit_artifact(screen_transfer_df, "screen_transfer_df"),
+  write_audit_artifact(screen_parameter_df, "screen_parameter_df"),
+  write_audit_artifact(focused_parameter_df, "focused_parameter_df"),
+  write_audit_artifact(family_parameter_df, "family_parameter_df"),
+  write_audit_artifact(family_parameter_summary_df, "family_parameter_summary_df"),
+  write_audit_artifact(model_family_summary_df, "model_family_summary_df"),
+  write_audit_artifact(derived_transfer_df, "derived_transfer_df"),
+  write_audit_artifact(derived_transfer_cmp_df, "derived_transfer_cmp_df"),
+  write_audit_artifact(derived_transfer_summary_df, "derived_transfer_summary_df"),
+  write_audit_artifact(transfer_subset_diag_df, "transfer_subset_diag_df"),
+  write_audit_artifact(transfer_subset_summary_df, "transfer_subset_summary_df")
+)
 ```
 
 ## Transfer Screening Across Models
@@ -1421,7 +1489,7 @@ These plots break out the four parameters that are present across the ranked mod
 if (!nrow(focused_parameter_df)) {
   announce_missing("No focused parameter-transfer comparison rows found for the common parameters.")
 } else {
-  focused_parameter_df %>%
+  focused_preview_df <- focused_parameter_df %>%
     select(
       model_id,
       parameter,
@@ -1437,8 +1505,9 @@ if (!nrow(focused_parameter_df)) {
       abs_log_transfer_ratio,
       ratio_error_improvement
     ) %>%
-    arrange(parameter, model_id, line_id, direction) %>%
-    print(n = Inf)
+    arrange(parameter, model_id, line_id, direction)
+  knitr::kable(preview_table(focused_preview_df, n = 24))
+  cat("\nFull table:", file.path(report_export_root, "focused_parameter_df.csv"), "\n")
 }
 ```
 
@@ -1526,6 +1595,7 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
       direction = factor(direction, levels = c("low_to_high", "high_to_low")),
       model_id = factor(model_id, levels = ranking_df$model_id)
     )
+  audit_index_df <- bind_rows(audit_index_df, write_audit_artifact(hit_df, "focused_parameter_hit_df"))
 
   p1 <- ggplot(
     hit_df,
@@ -1567,7 +1637,12 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
     )
 
   p1 / p2
+  cat("\nFull hit summary:", file.path(report_export_root, "focused_parameter_hit_df.csv"), "\n")
 }
+```
+
+```{r audit-artifact-index-final}
+knitr::kable(audit_index_df %>% distinct(artifact, .keep_all = TRUE) %>% arrange(artifact))
 ```
 
 ## Cross-Model Family Transfer

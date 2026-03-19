@@ -977,8 +977,6 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       model_id,
       alias,
       line_id = NA_integer_,
-      line_label = "global",
-      direction = "global",
       parameter,
       raw_theta_ploidy
     )
@@ -994,6 +992,13 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       raw_theta_ploidy
     )
 
+  line_levels <- sprintf("line %d", sort(unique(transfer_plot_df$line_id)))
+
+  global_repeated_df <- tidyr::expand_grid(
+    global_plot_df,
+    line_label = line_levels
+  )
+
   transfer_with_global_df <- transfer_plot_df %>%
     left_join(
       global_plot_df %>%
@@ -1008,14 +1013,14 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       model_id,
       line_label,
       direction,
-      x = as.integer(factor(model_id, levels = ranking_df$model_id)),
+      x = model_id,
       y = global_raw_theta_ploidy,
-      xend = as.integer(factor(model_id, levels = ranking_df$model_id)),
+      xend = model_id,
       yend = raw_theta_ploidy
     )
 
   plot_df <- bind_rows(
-    global_plot_df %>% mutate(point_type = "global"),
+    global_repeated_df %>% mutate(point_type = "global", direction = "global"),
     transfer_plot_df %>% mutate(point_type = "transfer")
   ) %>%
     mutate(
@@ -1023,7 +1028,7 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       model_id = factor(model_id, levels = ranking_df$model_id),
       line_label = factor(
         line_label,
-        levels = c("global", sprintf("line %d", sort(unique(raw_theta_ploidy_transfer_df$line_id))))
+        levels = line_levels
       ),
       parameter = factor(parameter, levels = common_raw_theta_parameters)
     )

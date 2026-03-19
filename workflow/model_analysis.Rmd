@@ -47,6 +47,16 @@ source("R/transfer_cv_plot_utils.R")
 
 focus_common_parameters <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
 
+normalize_focus_parameter <- function(parameter) {
+  dplyr::case_when(
+    parameter %in% c("ae", "ae[1]") ~ "ae[1]",
+    parameter %in% c("ah", "ah[1]") ~ "ah[1]",
+    parameter %in% c("Y_R", "Y_R[1]") ~ "Y_R[1]",
+    parameter == "m" ~ "m",
+    TRUE ~ parameter
+  )
+}
+
 project_paths <- list(
   stan_data = resolve_stan_data_path(),
   assessment_run_ids = file.path("models", "gpath", "v1", "assessment_run_ids.txt"),
@@ -510,9 +520,11 @@ collect_focused_parameter_transfer <- function(
     }
 
     pc %>%
-      filter(parameter %in% focus_parameters) %>%
+      mutate(parameter_focus = normalize_focus_parameter(parameter)) %>%
+      filter(parameter_focus %in% focus_parameters) %>%
       mutate(
         model_id = model_id,
+        parameter = parameter_focus,
         abs_null_err = abs(null_vs_oracle_diff),
         abs_transfer_err = abs(holdout_diff),
         abs_error_improvement = abs_null_err - abs_transfer_err,

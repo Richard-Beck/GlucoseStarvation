@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo = TRUE,
+  echo = FALSE,
   warning = FALSE,
   message = FALSE
 )
@@ -27,7 +27,7 @@ Where an upstream command is not known exactly from the repo history, that is st
 
 ## Setup
 
-```{r libraries}
+```{r libraries, include=FALSE}
 library(dplyr)
 library(ggplot2)
 library(purrr)
@@ -71,7 +71,7 @@ cat("stan_data path:", project_paths$stan_data, "\n")
 cat("assessment set:", project_paths$assessment_run_ids, "\n")
 ```
 
-```{r helpers}
+```{r helpers, include=FALSE}
 safe_read_rds <- function(path) {
   if (!file.exists(path)) {
     return(NULL)
@@ -986,7 +986,7 @@ artifact_commands <- tribble(
   "Current summary path."
 )
 
-knitr::kable(artifact_commands)
+print(as.data.frame(artifact_commands), row.names = FALSE)
 ```
 
 ## Available Outputs
@@ -1024,7 +1024,7 @@ cat("\nAudit export root:", report_export_root, "\n")
 Full audit tables are written during knitting under `data/report_exports/model_analysis/`. The report shows only compact previews.
 
 ```{r audit-artifact-index}
-knitr::kable(audit_index_df)
+print(as.data.frame(audit_index_df), row.names = FALSE)
 ```
 
 ## Trusted Optimisation Runs
@@ -1033,7 +1033,7 @@ knitr::kable(audit_index_df)
 if (!nrow(manifest_df)) {
   announce_missing("No manifest-backed optimisation outputs found under %s", project_paths$optim_root)
 } else {
-  knitr::kable(manifest_df)
+  print(as.data.frame(manifest_df), row.names = FALSE)
 }
 ```
 
@@ -1049,7 +1049,7 @@ if (!nrow(raw_theta_ploidy_df)) {
   preview_df <- raw_theta_ploidy_df %>%
     select(source, model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_holdout, missing, run_label, run_tag) %>%
     arrange(source, model_id, line_id, direction, fit_type, parameter)
-  knitr::kable(preview_table(preview_df, n = 24))
+  print(preview_table(preview_df, n = 24), row.names = FALSE)
   cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_df.csv"), "\n")
 }
 ```
@@ -1067,7 +1067,7 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
     select(model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_train, ll_transfer_holdout, holdout_obs, run_tag) %>%
     arrange(model_id, line_id, direction, fit_type, parameter) %>%
     as.data.frame()
-  knitr::kable(preview_table(transfer_preview_df, n = 24))
+  print(preview_table(transfer_preview_df, n = 24), row.names = FALSE)
   cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_transfer_df.csv"), "\n")
 }
 ```
@@ -1187,13 +1187,63 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
 }
 ```
 
+```{r transfer-raw-theta-ploidy-summary}
+if (!nrow(raw_theta_ploidy_transfer_df)) {
+  announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients available for directional-agreement summary.")
+} else {
+  global_sign_df <- raw_theta_ploidy_global_df %>%
+    filter(parameter %in% focus_common_parameters, !missing) %>%
+    transmute(
+      model_id,
+      parameter = normalize_focus_parameter(parameter),
+      global_raw_theta_ploidy = raw_theta_ploidy,
+      global_sign = sign(raw_theta_ploidy)
+    )
+
+  agreement_df <- raw_theta_ploidy_transfer_df %>%
+    filter(fit_type == "transfer", !missing) %>%
+    mutate(parameter = normalize_focus_parameter(parameter)) %>%
+    filter(parameter %in% focus_common_parameters) %>%
+    left_join(global_sign_df, by = c("model_id", "parameter")) %>%
+    mutate(
+      transfer_sign = sign(raw_theta_ploidy),
+      directional_agreement = !is.na(global_sign) & !is.na(transfer_sign) & (global_sign == transfer_sign)
+    )
+
+  by_parameter_df <- agreement_df %>%
+    group_by(parameter) %>%
+    summarise(
+      n_cases = dplyr::n(),
+      prop_directional_agreement = mean(directional_agreement, na.rm = TRUE),
+      mean_abs_shift_from_global = mean(abs(raw_theta_ploidy - global_raw_theta_ploidy), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(match(parameter, focus_common_parameters))
+
+  cat("Directional agreement of transfer `raw_theta_ploidy` with the global all-data fit\n\n")
+  print(as.data.frame(by_parameter_df), row.names = FALSE)
+
+  cat("\nA few representative disagreements\n\n")
+  disagreement_preview_df <- agreement_df %>%
+    filter(!directional_agreement) %>%
+    select(model_id, line_id, direction, parameter, global_raw_theta_ploidy, raw_theta_ploidy) %>%
+    arrange(parameter, model_id, line_id, direction)
+
+  if (!nrow(disagreement_preview_df)) {
+    cat("None\n")
+  } else {
+    print(preview_table(disagreement_preview_df, n = 16), row.names = FALSE)
+  }
+}
+```
+
 ## Model Selection
 
 ```{r model-selection-table}
 if (!nrow(ranking_df)) {
   announce_missing("No trusted optimisation outputs found under %s", project_paths$optim_root)
 } else {
-  knitr::kable(ranking_df %>% select(model_id, alias, best_lp, k, AIC, delta_AIC))
+  print(as.data.frame(ranking_df %>% select(model_id, alias, best_lp, k, AIC, delta_AIC)), row.names = FALSE)
 }
 ```
 
@@ -1255,7 +1305,7 @@ if (!nrow(ranking_df)) {
   }) %>%
     arrange(desc(prop_within_5), desc(prop_within_1), delta_AIC)
 
-  knitr::kable(stability_df)
+  print(as.data.frame(stability_df), row.names = FALSE)
 }
 ```
 
@@ -1506,7 +1556,7 @@ if (!nrow(focused_parameter_df)) {
       ratio_error_improvement
     ) %>%
     arrange(parameter, model_id, line_id, direction)
-  knitr::kable(preview_table(focused_preview_df, n = 24))
+  print(preview_table(focused_preview_df, n = 24), row.names = FALSE)
   cat("\nFull table:", file.path(report_export_root, "focused_parameter_df.csv"), "\n")
 }
 ```
@@ -1642,7 +1692,10 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
 ```
 
 ```{r audit-artifact-index-final}
-knitr::kable(audit_index_df %>% distinct(artifact, .keep_all = TRUE) %>% arrange(artifact))
+print(
+  as.data.frame(audit_index_df %>% distinct(artifact, .keep_all = TRUE) %>% arrange(artifact)),
+  row.names = FALSE
+)
 ```
 
 ## Cross-Model Family Transfer

@@ -210,7 +210,7 @@ extract_best_draw_vector <- function(run_dir) {
   out
 }
 
-collect_best_raw_theta_ploidy <- function(ranking_df) {
+collect_best_raw_theta_ploidy_global <- function(ranking_df) {
   if (!nrow(ranking_df)) {
     return(tibble())
   }
@@ -237,15 +237,116 @@ collect_best_raw_theta_ploidy <- function(ranking_df) {
     values <- unname(draw_vec[coef_names])
 
     tibble(
+      source = "global_optim",
       model_id = model_id,
       alias = ranking_df$alias[[i]],
       run_label = ranking_df$run_label[[i]],
+      line_id = NA_integer_,
+      direction = NA_character_,
+      fit_type = "all_data_best",
+      run_tag = NA_character_,
       coefficient = coef_names,
       parameter = param_labels,
       raw_theta_ploidy = values,
-      missing = is.na(values)
+      missing = is.na(values),
+      return_code = NA_real_,
+      lp__ = unname(draw_vec["lp__"]),
+      elpd = NA_real_,
+      ll_transfer_train = NA_real_,
+      ll_transfer_holdout = NA_real_,
+      holdout_wells = NA_integer_,
+      holdout_obs = NA_integer_
     )
   })
+
+  bind_rows(rows)
+}
+
+collect_best_raw_theta_ploidy_transfer <- function(
+  ranking_df,
+  output_root = project_paths$transfer_optim_root,
+  stan_data_path = project_paths$stan_data
+) {
+  model_ids <- ranking_df$model_id
+  if (!length(model_ids)) {
+    return(tibble())
+  }
+
+  stan_data <- readRDS(resolve_stan_data_path(stan_data_path))
+  all_wells <- seq_len(stan_data$N_wells)
+  rows <- list()
+  idx <- 1L
+
+  for (model_id in model_ids) {
+    base_dir <- file.path(output_root, model_id)
+    best_path <- file.path(base_dir, "transfer_best_start_summary.Rds")
+    if (!file.exists(best_path)) {
+      next
+    }
+
+    best_df <- readRDS(best_path)
+    if (is.null(best_df) || !nrow(best_df)) {
+      next
+    }
+
+    dims <- parse_run_id(model_id)
+    param_labels <- get_param_names(
+      R = dims$R,
+      P = dims$P,
+      W = dims$W,
+      C = dims$C,
+      M = dims$M,
+      priors = base_priors
+    )
+    coef_names <- sprintf("raw_theta_ploidy[%d]", seq_along(param_labels))
+
+    for (j in seq_len(nrow(best_df))) {
+      fit_row <- best_df[j, , drop = FALSE]
+      fit_obj <- tryCatch(
+        load_best_transfer_fit(
+          model_id = model_id,
+          line_id = fit_row$line_id[[1]],
+          direction = fit_row$direction[[1]],
+          fit_type = fit_row$fit_type[[1]],
+          output_root = dirname(output_root),
+          model_name = "gpath"
+        ),
+        error = function(e) NULL
+      )
+
+      if (is.null(fit_obj)) {
+        next
+      }
+
+      draw_vec <- extract_draw_vector(fit_obj$draws)
+      values <- unname(draw_vec[coef_names])
+      holdout_wells <- fit_obj$split_meta$holdout_wells
+      train_wells <- setdiff(all_wells, holdout_wells)
+
+      rows[[idx]] <- tibble(
+        source = "transfer_cv_best",
+        model_id = model_id,
+        alias = ranking_df$alias[match(model_id, ranking_df$model_id)],
+        run_label = ranking_df$run_label[match(model_id, ranking_df$model_id)],
+        line_id = as.integer(fit_row$line_id[[1]]),
+        direction = as.character(fit_row$direction[[1]]),
+        fit_type = as.character(fit_row$fit_type[[1]]),
+        run_tag = as.character(fit_row$run_tag[[1]]),
+        coefficient = coef_names,
+        parameter = param_labels,
+        raw_theta_ploidy = values,
+        missing = is.na(values),
+        return_code = as.numeric(fit_row$return_code[[1]]),
+        lp__ = as.numeric(fit_row$lp__[[1]]),
+        elpd = as.numeric(fit_row$elpd[[1]]),
+        ll_transfer_train = compute_point_loglik_subset(fit_obj$draws, train_wells),
+        ll_transfer_holdout = compute_point_loglik_subset(fit_obj$draws, holdout_wells),
+        holdout_wells = as.integer(length(holdout_wells)),
+        holdout_obs = as.integer(fit_row$holdout_obs[[1]])
+      )
+      idx <- idx + 1L
+    }
+  }
 
   bind_rows(rows)
 }
@@ -805,7 +906,14 @@ knitr::kable(artifact_commands)
 ranking_df <- build_model_ranking()
 manifest_df <- summarize_manifest_status(ranking_df)
 selected_model_id <- find_selected_model(ranking_df)
-raw_theta_ploidy_df <- collect_best_raw_theta_ploidy(ranking_df)
+raw_theta_ploidy_global_df <- collect_best_raw_theta_ploidy_global(ranking_df)
+raw_theta_ploidy_transfer_df <- collect_best_raw_theta_ploidy_transfer(ranking_df)
+raw_theta_ploidy_df <- bind_rows(raw_theta_ploidy_global_df, raw_theta_ploidy_transfer_df)
+common_raw_theta_parameters <- raw_theta_ploidy_global_df %>%
+  filter(!missing) %>%
+  count(parameter, name = "n_models_present") %>%
+  filter(n_models_present == n_distinct(raw_theta_ploidy_global_df$model_id)) %>%
+  pull(parameter)
 
 cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
@@ -831,9 +939,65 @@ if (!nrow(raw_theta_ploidy_df)) {
   announce_missing("No best-fit raw_theta_ploidy coefficients could be extracted from ranked optimisation runs.")
 } else {
   raw_theta_ploidy_df %>%
-    select(model_id, alias, parameter, raw_theta_ploidy, missing, run_label) %>%
-    arrange(model_id, parameter) %>%
+    select(source, model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_holdout, missing, run_label, run_tag) %>%
+    arrange(source, model_id, line_id, direction, fit_type, parameter) %>%
     print(n = Inf)
+}
+```
+
+## Leave-One-Line-Out `raw_theta_ploidy` Fits
+
+These rows are the best `null`, `transfer`, and `oracle` fits for each held-out line and direction, with the corresponding `raw_theta_ploidy` values and fit scores attached.
+
+```{r transfer-raw-theta-ploidy-table}
+if (!nrow(raw_theta_ploidy_transfer_df)) {
+  announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients found under %s", project_paths$transfer_optim_root)
+} else {
+  raw_theta_ploidy_transfer_df %>%
+    select(model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_train, ll_transfer_holdout, holdout_obs, run_tag) %>%
+    arrange(model_id, line_id, direction, fit_type, parameter) %>%
+    print(n = Inf)
+}
+```
+
+```{r transfer-raw-theta-ploidy-plot, fig.height=12, fig.width=14}
+if (!nrow(raw_theta_ploidy_transfer_df)) {
+  announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients available for plotting.")
+} else {
+  plot_df <- raw_theta_ploidy_transfer_df %>%
+    filter(parameter %in% common_raw_theta_parameters, !missing) %>%
+    mutate(
+      fit_type = factor(fit_type, levels = c("null", "transfer", "oracle")),
+      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
+      model_id = factor(model_id, levels = ranking_df$model_id),
+      line_label = sprintf("line %d", line_id),
+      parameter = factor(parameter, levels = common_raw_theta_parameters)
+    )
+
+  ggplot(
+    plot_df,
+    aes(x = model_id, y = raw_theta_ploidy, color = fit_type, shape = direction)
+  ) +
+    geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
+    geom_point(
+      aes(size = elpd),
+      position = position_dodge(width = 0.6),
+      alpha = 0.8
+    ) +
+    facet_grid(parameter ~ line_label, scales = "free_y") +
+    scale_color_manual(values = c(null = "#7570b3", transfer = "#1b9e77", oracle = "#d95f02")) +
+    theme_bw() +
+    labs(
+      x = "",
+      y = "Best-fit raw_theta_ploidy",
+      color = "Fit type",
+      shape = "Direction",
+      size = "Held-out ELPD"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.minor = element_blank()
+    )
 }
 ```
 

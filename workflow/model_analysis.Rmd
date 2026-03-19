@@ -947,13 +947,14 @@ if (!nrow(raw_theta_ploidy_df)) {
 
 ## Leave-One-Line-Out `raw_theta_ploidy` Fits
 
-These rows are the best `null`, `transfer`, and `oracle` fits for each held-out line and direction, with the corresponding `raw_theta_ploidy` values and fit scores attached.
+These rows are the best `transfer` fits for each held-out line and direction, with the corresponding `raw_theta_ploidy` values and fit scores attached.
 
 ```{r transfer-raw-theta-ploidy-table}
 if (!nrow(raw_theta_ploidy_transfer_df)) {
   announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients found under %s", project_paths$transfer_optim_root)
 } else {
   raw_theta_ploidy_transfer_df %>%
+    filter(fit_type == "transfer") %>%
     select(model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_train, ll_transfer_holdout, holdout_obs, run_tag) %>%
     arrange(model_id, line_id, direction, fit_type, parameter) %>%
     print(n = Inf)
@@ -964,37 +965,60 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
 if (!nrow(raw_theta_ploidy_transfer_df)) {
   announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients available for plotting.")
 } else {
+  transfer_plot_df <- raw_theta_ploidy_transfer_df %>%
+    filter(fit_type == "transfer", parameter %in% common_raw_theta_parameters, !missing)
+
+  if (!nrow(transfer_plot_df)) {
+    announce_missing("No transfer-fit raw_theta_ploidy coefficients available for common parameters.")
+  } else {
   global_plot_df <- raw_theta_ploidy_global_df %>%
     filter(parameter %in% common_raw_theta_parameters, !missing) %>%
     transmute(
       model_id,
       alias,
+      line_id = NA_integer_,
       line_label = "global",
       direction = "global",
-      fit_type = "all_data_best",
       parameter,
-      raw_theta_ploidy,
-      lp__,
-      elpd = NA_real_
+      raw_theta_ploidy
     )
 
-  transfer_plot_df <- raw_theta_ploidy_transfer_df %>%
-    filter(parameter %in% common_raw_theta_parameters, !missing) %>%
+  transfer_plot_df <- transfer_plot_df %>%
     transmute(
       model_id,
       alias,
+      line_id,
       line_label = sprintf("line %d", line_id),
       direction,
-      fit_type,
       parameter,
-      raw_theta_ploidy,
-      lp__,
-      elpd
+      raw_theta_ploidy
     )
 
-  plot_df <- bind_rows(global_plot_df, transfer_plot_df) %>%
+  transfer_with_global_df <- transfer_plot_df %>%
+    left_join(
+      global_plot_df %>%
+        select(model_id, parameter, global_raw_theta_ploidy = raw_theta_ploidy),
+      by = c("model_id", "parameter")
+    )
+
+  line_df <- transfer_with_global_df %>%
+    filter(!is.na(global_raw_theta_ploidy)) %>%
+    transmute(
+      parameter,
+      model_id,
+      line_label,
+      direction,
+      x = as.integer(factor(model_id, levels = ranking_df$model_id)),
+      y = global_raw_theta_ploidy,
+      xend = as.integer(factor(model_id, levels = ranking_df$model_id)),
+      yend = raw_theta_ploidy
+    )
+
+  plot_df <- bind_rows(
+    global_plot_df %>% mutate(point_type = "global"),
+    transfer_plot_df %>% mutate(point_type = "transfer")
+  ) %>%
     mutate(
-      fit_type = factor(fit_type, levels = c("all_data_best", "null", "transfer", "oracle")),
       direction = factor(direction, levels = c("global", "low_to_high", "high_to_low")),
       model_id = factor(model_id, levels = ranking_df$model_id),
       line_label = factor(
@@ -1004,30 +1028,15 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       parameter = factor(parameter, levels = common_raw_theta_parameters)
     )
 
-  line_df <- plot_df %>%
-    filter(direction %in% c("global", "low_to_high", "high_to_low")) %>%
-    mutate(direction_group = ifelse(direction == "global", NA_character_, as.character(direction))) %>%
-    filter(!is.na(direction_group)) %>%
-    select(parameter, model_id, line_label, direction, raw_theta_ploidy) %>%
-    tidyr::pivot_wider(names_from = direction, values_from = raw_theta_ploidy) %>%
-    tidyr::pivot_longer(
-      cols = c(global, low_to_high, high_to_low),
-      names_to = "direction",
-      values_to = "raw_theta_ploidy"
-    ) %>%
-    mutate(
-      direction = factor(direction, levels = c("global", "low_to_high", "high_to_low")),
-      segment_group = interaction(model_id, line_label, direction_group, drop = TRUE)
-    )
-
   ggplot(
     plot_df,
     aes(x = model_id, y = raw_theta_ploidy)
   ) +
     geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
-    geom_line(
+    geom_segment(
       data = line_df,
-      aes(group = segment_group, color = direction_group),
+      aes(x = x, y = y, xend = xend, yend = yend, color = direction),
+      inherit.aes = FALSE,
       linewidth = 0.5,
       alpha = 0.45
     ) +
@@ -1041,25 +1050,24 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
     ) +
     geom_point(
       data = plot_df %>% filter(direction != "global"),
-      aes(color = direction, shape = fit_type, size = elpd),
+      aes(color = direction),
       position = position_jitter(width = 0.08, height = 0),
-      alpha = 0.8
+      alpha = 0.8,
+      size = 2.2
     ) +
     facet_grid(parameter ~ line_label, scales = "free_y") +
     scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
-    scale_shape_manual(values = c(null = 16, transfer = 17, oracle = 15)) +
     theme_bw() +
     labs(
       x = "",
       y = "Best-fit raw_theta_ploidy",
-      color = "Direction",
-      shape = "Fit type",
-      size = "Held-out ELPD"
+      color = "Direction"
     ) +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1),
       panel.grid.minor = element_blank()
     )
+  }
 }
 ```
 

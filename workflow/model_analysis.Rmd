@@ -911,7 +911,7 @@ raw_theta_ploidy_transfer_df <- collect_best_raw_theta_ploidy_transfer(ranking_d
 raw_theta_ploidy_df <- bind_rows(raw_theta_ploidy_global_df, raw_theta_ploidy_transfer_df)
 common_raw_theta_parameters <- raw_theta_ploidy_global_df %>%
   filter(!missing) %>%
-  count(parameter, name = "n_models_present") %>%
+  dplyr::count(parameter, name = "n_models_present") %>%
   filter(n_models_present == n_distinct(raw_theta_ploidy_global_df$model_id)) %>%
   pull(parameter)
 
@@ -964,34 +964,96 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
 if (!nrow(raw_theta_ploidy_transfer_df)) {
   announce_missing("No leave-one-line-out transfer best-fit raw_theta_ploidy coefficients available for plotting.")
 } else {
-  plot_df <- raw_theta_ploidy_transfer_df %>%
+  global_plot_df <- raw_theta_ploidy_global_df %>%
     filter(parameter %in% common_raw_theta_parameters, !missing) %>%
-    mutate(
-      fit_type = factor(fit_type, levels = c("null", "transfer", "oracle")),
-      direction = factor(direction, levels = c("low_to_high", "high_to_low")),
-      model_id = factor(model_id, levels = ranking_df$model_id),
+    transmute(
+      model_id,
+      alias,
+      line_label = "global",
+      direction = "global",
+      fit_type = "all_data_best",
+      parameter,
+      raw_theta_ploidy,
+      lp__,
+      elpd = NA_real_
+    )
+
+  transfer_plot_df <- raw_theta_ploidy_transfer_df %>%
+    filter(parameter %in% common_raw_theta_parameters, !missing) %>%
+    transmute(
+      model_id,
+      alias,
       line_label = sprintf("line %d", line_id),
+      direction,
+      fit_type,
+      parameter,
+      raw_theta_ploidy,
+      lp__,
+      elpd
+    )
+
+  plot_df <- bind_rows(global_plot_df, transfer_plot_df) %>%
+    mutate(
+      fit_type = factor(fit_type, levels = c("all_data_best", "null", "transfer", "oracle")),
+      direction = factor(direction, levels = c("global", "low_to_high", "high_to_low")),
+      model_id = factor(model_id, levels = ranking_df$model_id),
+      line_label = factor(
+        line_label,
+        levels = c("global", sprintf("line %d", sort(unique(raw_theta_ploidy_transfer_df$line_id))))
+      ),
       parameter = factor(parameter, levels = common_raw_theta_parameters)
+    )
+
+  line_df <- plot_df %>%
+    filter(direction %in% c("global", "low_to_high", "high_to_low")) %>%
+    mutate(direction_group = ifelse(direction == "global", NA_character_, as.character(direction))) %>%
+    filter(!is.na(direction_group)) %>%
+    select(parameter, model_id, line_label, direction, raw_theta_ploidy) %>%
+    tidyr::pivot_wider(names_from = direction, values_from = raw_theta_ploidy) %>%
+    tidyr::pivot_longer(
+      cols = c(global, low_to_high, high_to_low),
+      names_to = "direction",
+      values_to = "raw_theta_ploidy"
+    ) %>%
+    mutate(
+      direction = factor(direction, levels = c("global", "low_to_high", "high_to_low")),
+      segment_group = interaction(model_id, line_label, direction_group, drop = TRUE)
     )
 
   ggplot(
     plot_df,
-    aes(x = model_id, y = raw_theta_ploidy, color = fit_type, shape = direction)
+    aes(x = model_id, y = raw_theta_ploidy)
   ) +
     geom_hline(yintercept = 0, color = "grey75", linetype = "dashed") +
+    geom_line(
+      data = line_df,
+      aes(group = segment_group, color = direction_group),
+      linewidth = 0.5,
+      alpha = 0.45
+    ) +
     geom_point(
-      aes(size = elpd),
-      position = position_dodge(width = 0.6),
+      data = plot_df %>% filter(direction == "global"),
+      shape = 21,
+      size = 2.8,
+      stroke = 0.7,
+      fill = "white",
+      color = "black"
+    ) +
+    geom_point(
+      data = plot_df %>% filter(direction != "global"),
+      aes(color = direction, shape = fit_type, size = elpd),
+      position = position_jitter(width = 0.08, height = 0),
       alpha = 0.8
     ) +
     facet_grid(parameter ~ line_label, scales = "free_y") +
-    scale_color_manual(values = c(null = "#7570b3", transfer = "#1b9e77", oracle = "#d95f02")) +
+    scale_color_manual(values = c(low_to_high = "#1b9e77", high_to_low = "#d95f02")) +
+    scale_shape_manual(values = c(null = 16, transfer = 17, oracle = 15)) +
     theme_bw() +
     labs(
       x = "",
       y = "Best-fit raw_theta_ploidy",
-      color = "Fit type",
-      shape = "Direction",
+      color = "Direction",
+      shape = "Fit type",
       size = "Held-out ELPD"
     ) +
     theme(

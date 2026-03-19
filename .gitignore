@@ -12,3 +12,4 @@ ecology/model_selection/data
 slurm/runs
 slurm/logs
 models/gpath/v1/gpath_hier
+*.html

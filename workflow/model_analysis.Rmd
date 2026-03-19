@@ -63,7 +63,8 @@ project_paths <- list(
   optim_root = file.path("data", "runs", "gpath", "v1", "optim"),
   transfer_optim_root = "data/gpath_transfer_cv/gpath",
   transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath",
-  report_export_root = file.path("data", "report_exports", "model_analysis")
+  report_export_root = file.path("data", "report_exports", "model_analysis"),
+  agent_text_path = file.path("workflow", "model_analysis.txt")
 )
 
 cat("Current working directory:", getwd(), "\n")
@@ -112,6 +113,70 @@ preview_table <- function(x, n = 20L) {
     return(x)
   }
   head(as.data.frame(x), n)
+}
+
+artifact_csv_path <- function(stem, dir_path = project_paths$report_export_root) {
+  file.path(ensure_report_export_root(dir_path), sprintf("%s.csv", stem))
+}
+
+emit_artifact_note <- function(stem, label = "Audit CSV") {
+  knitr::asis_output(sprintf("%s: `%s`\n", label, artifact_csv_path(stem)))
+}
+
+write_agent_text_report <- function(
+  path = project_paths$agent_text_path,
+  ranking_df,
+  raw_theta_agreement_df = NULL,
+  focused_hit_df = NULL,
+  report_export_root = project_paths$report_export_root
+) {
+  lines <- c(
+    "Model Analysis Summary",
+    "",
+    sprintf("Generated: %s", Sys.time()),
+    sprintf("Stan data: %s", project_paths$stan_data),
+    sprintf("Audit export root: %s", ensure_report_export_root(report_export_root)),
+    ""
+  )
+
+  if (!is.null(ranking_df) && nrow(ranking_df)) {
+    lines <- c(
+      lines,
+      "Model Ranking",
+      capture.output(print(as.data.frame(ranking_df %>% select(model_id, alias, best_lp, k, AIC, delta_AIC)), row.names = FALSE)),
+      ""
+    )
+  }
+
+  if (!is.null(raw_theta_agreement_df) && nrow(raw_theta_agreement_df)) {
+    lines <- c(
+      lines,
+      "Directional Agreement Of raw_theta_ploidy With Global Fit",
+      capture.output(print(as.data.frame(raw_theta_agreement_df), row.names = FALSE)),
+      ""
+    )
+  }
+
+  if (!is.null(focused_hit_df) && nrow(focused_hit_df)) {
+    lines <- c(
+      lines,
+      "Focused Parameter Hit Summary",
+      capture.output(print(as.data.frame(focused_hit_df), row.names = FALSE)),
+      ""
+    )
+  }
+
+  lines <- c(
+    lines,
+    "Key Audit Artifacts",
+    sprintf("- %s", artifact_csv_path("raw_theta_ploidy_df", report_export_root)),
+    sprintf("- %s", artifact_csv_path("raw_theta_ploidy_transfer_df", report_export_root)),
+    sprintf("- %s", artifact_csv_path("focused_parameter_df", report_export_root)),
+    sprintf("- %s", artifact_csv_path("focused_parameter_hit_df", report_export_root))
+  )
+
+  writeLines(lines, path, useBytes = TRUE)
+  normalizePath(path, winslash = "/", mustWork = FALSE)
 }
 
 read_run_id_file <- function(path) {
@@ -1012,6 +1077,8 @@ audit_index_df <- bind_rows(
   write_audit_artifact(raw_theta_ploidy_transfer_df, "raw_theta_ploidy_transfer_df"),
   write_audit_artifact(raw_theta_ploidy_df, "raw_theta_ploidy_df")
 )
+raw_theta_agreement_summary_df <- tibble()
+focused_hit_df <- tibble()
 
 cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
@@ -1050,7 +1117,7 @@ if (!nrow(raw_theta_ploidy_df)) {
     select(source, model_id, alias, line_id, direction, fit_type, parameter, raw_theta_ploidy, lp__, elpd, ll_transfer_holdout, missing, run_label, run_tag) %>%
     arrange(source, model_id, line_id, direction, fit_type, parameter)
   print(preview_table(preview_df, n = 24), row.names = FALSE)
-  cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_df.csv"), "\n")
+  emit_artifact_note("raw_theta_ploidy_df")
 }
 ```
 
@@ -1068,7 +1135,7 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
     arrange(model_id, line_id, direction, fit_type, parameter) %>%
     as.data.frame()
   print(preview_table(transfer_preview_df, n = 24), row.names = FALSE)
-  cat("\nFull table:", file.path(report_export_root, "raw_theta_ploidy_transfer_df.csv"), "\n")
+  emit_artifact_note("raw_theta_ploidy_transfer_df")
 }
 ```
 
@@ -1219,6 +1286,7 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
       .groups = "drop"
     ) %>%
     arrange(match(parameter, focus_common_parameters))
+  raw_theta_agreement_summary_df <- by_parameter_df
 
   cat("Directional agreement of transfer `raw_theta_ploidy` with the global all-data fit\n\n")
   print(as.data.frame(by_parameter_df), row.names = FALSE)
@@ -1234,6 +1302,23 @@ if (!nrow(raw_theta_ploidy_transfer_df)) {
   } else {
     print(preview_table(disagreement_preview_df, n = 16), row.names = FALSE)
   }
+}
+```
+
+```{r transfer-raw-theta-ploidy-takeaway, results='asis'}
+if (nrow(raw_theta_agreement_summary_df)) {
+  strongest <- raw_theta_agreement_summary_df %>%
+    arrange(desc(prop_directional_agreement), desc(n_cases)) %>%
+    head(3)
+  txt <- paste(sprintf(
+    "%s: %.2f agreement",
+    strongest$parameter,
+    strongest$prop_directional_agreement
+  ), collapse = "; ")
+  knitr::asis_output(sprintf(
+    "**Takeaway.** Across leave-one-line-out transfer fits, directional agreement with the global all-data `raw_theta_ploidy` estimate is strongest for %s.\n",
+    txt
+  ))
 }
 ```
 
@@ -1557,7 +1642,7 @@ if (!nrow(focused_parameter_df)) {
     ) %>%
     arrange(parameter, model_id, line_id, direction)
   print(preview_table(focused_preview_df, n = 24), row.names = FALSE)
-  cat("\nFull table:", file.path(report_export_root, "focused_parameter_df.csv"), "\n")
+  emit_artifact_note("focused_parameter_df")
 }
 ```
 
@@ -1645,6 +1730,7 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
       direction = factor(direction, levels = c("low_to_high", "high_to_low")),
       model_id = factor(model_id, levels = ranking_df$model_id)
     )
+  focused_hit_df <- hit_df
   audit_index_df <- bind_rows(audit_index_df, write_audit_artifact(hit_df, "focused_parameter_hit_df"))
 
   p1 <- ggplot(
@@ -1687,7 +1773,30 @@ if (!nrow(focused_parameter_df %>% filter(!is.na(abs_log_null_ratio), !is.na(abs
     )
 
   p1 / p2
-  cat("\nFull hit summary:", file.path(report_export_root, "focused_parameter_hit_df.csv"), "\n")
+  emit_artifact_note("focused_parameter_hit_df")
+}
+```
+
+```{r focused-parameter-takeaway, results='asis'}
+if (nrow(focused_hit_df)) {
+  top_hits <- focused_hit_df %>%
+    group_by(parameter) %>%
+    summarise(
+      mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+      mean_win_rate = mean(prop_transfer_better_than_null, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(mean_log_error_improvement), desc(mean_win_rate))
+  txt <- paste(sprintf(
+    "%s (mean log-error improvement %.3f, win rate %.2f)",
+    top_hits$parameter,
+    top_hits$mean_log_error_improvement,
+    top_hits$mean_win_rate
+  ), collapse = "; ")
+  knitr::asis_output(sprintf(
+    "**Takeaway.** On reconstructed held-out parameter values, transfer remains much weaker than the raw-coefficient directional agreement: %s.\n",
+    txt
+  ))
 }
 ```
 
@@ -1696,6 +1805,23 @@ print(
   as.data.frame(audit_index_df %>% distinct(artifact, .keep_all = TRUE) %>% arrange(artifact)),
   row.names = FALSE
 )
+```
+
+```{r agent-text-export, include=FALSE}
+agent_text_path <- write_agent_text_report(
+  ranking_df = ranking_df,
+  raw_theta_agreement_df = raw_theta_agreement_summary_df,
+  focused_hit_df = focused_hit_df,
+  report_export_root = report_export_root
+)
+```
+
+## Agent Text Artifact
+
+This notebook also writes a lightweight text companion for local agents.
+
+```{r agent-text-artifact, results='asis'}
+knitr::asis_output(sprintf("Tracked text artifact: `%s`\n", normalizePath(project_paths$agent_text_path, winslash = "/", mustWork = FALSE)))
 ```
 
 ## Cross-Model Family Transfer

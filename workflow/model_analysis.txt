@@ -1,0 +1,11 @@
+Model Analysis Summary
+
+Generated: 2026-03-19 16:39:00.947434
+Stan data: ecology/stan_ready_data.Rds
+Audit export root: C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis
+
+Key Audit Artifacts
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_transfer_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_hit_df.csv

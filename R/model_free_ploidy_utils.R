@@ -8,6 +8,14 @@ suppressPackageStartupMessages({
   library(purrr)
 })
 
+g0_display_levels <- function() {
+  c(0, 0.1, 0.25, 0.5, 1, 5, 25)
+}
+
+as_g0_factor <- function(x) {
+  factor(as.character(x), levels = as.character(g0_display_levels()))
+}
+
 nearest_value_at_or_after <- function(hours, values, target_time) {
   ok <- is.finite(hours) & is.finite(values)
   hours <- hours[ok]
@@ -92,6 +100,43 @@ calc_rate_extrema <- function(hours, value, log1p_scale = FALSE) {
     min_rate = rate[idx_min],
     time_at_max_rate = mids[idx_max],
     time_at_min_rate = mids[idx_min]
+  )
+}
+
+calc_smoothed_rate_extrema <- function(hours, value, log1p_scale = FALSE, spar = 0.55, n_eval = 200L) {
+  ok <- is.finite(hours) & is.finite(value)
+  hours <- hours[ok]
+  value <- value[ok]
+
+  if (length(hours) < 4L || length(unique(hours)) < 4L) {
+    return(calc_rate_extrema(hours, value, log1p_scale = log1p_scale))
+  }
+
+  ord <- order(hours)
+  hours <- hours[ord]
+  value <- value[ord]
+  y <- if (log1p_scale) log1p(pmax(value, 0)) else value
+
+  fit <- try(stats::smooth.spline(x = hours, y = y, spar = spar), silent = TRUE)
+  if (inherits(fit, "try-error")) {
+    return(calc_rate_extrema(hours, value, log1p_scale = log1p_scale))
+  }
+
+  eval_hours <- seq(min(hours), max(hours), length.out = n_eval)
+  deriv <- predict(fit, x = eval_hours, deriv = 1)$y
+
+  if (!length(deriv) || all(!is.finite(deriv))) {
+    return(calc_rate_extrema(hours, value, log1p_scale = log1p_scale))
+  }
+
+  idx_max <- which.max(deriv)
+  idx_min <- which.min(deriv)
+
+  list(
+    max_rate = deriv[idx_max],
+    min_rate = deriv[idx_min],
+    time_at_max_rate = eval_hours[idx_max],
+    time_at_min_rate = eval_hours[idx_min]
   )
 }
 
@@ -211,8 +256,10 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
   count_df <- count_df %>% arrange(hours)
   glucose_df <- glucose_df %>% arrange(hours)
 
-  live_rate <- calc_rate_extrema(count_df$hours, count_df$live_cells, log1p_scale = TRUE)
-  dead_rate <- calc_rate_extrema(count_df$hours, count_df$dead_cells, log1p_scale = TRUE)
+  live_rate_raw <- calc_rate_extrema(count_df$hours, count_df$live_cells, log1p_scale = TRUE)
+  dead_rate_raw <- calc_rate_extrema(count_df$hours, count_df$dead_cells, log1p_scale = TRUE)
+  live_rate <- calc_smoothed_rate_extrema(count_df$hours, count_df$live_cells, log1p_scale = TRUE)
+  dead_rate <- calc_smoothed_rate_extrema(count_df$hours, count_df$dead_cells, log1p_scale = TRUE)
   dead_frac_rate <- calc_rate_extrema(count_df$hours, count_df$dead_fraction, log1p_scale = FALSE)
   glucose_rate <- calc_rate_extrema(glucose_df$hours, glucose_df$glucose_hat, log1p_scale = FALSE)
 
@@ -269,6 +316,8 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     live_fold_change = if (nrow(count_df)) (dplyr::last(count_df$live_cells) + 1) / (count_df$live_cells[1] + 1) else NA_real_,
     live_auc = safe_trapz(count_df$hours, count_df$live_cells),
     live_auc_glucose_window = live_auc_glucose_window,
+    max_growth_rate_raw = live_rate_raw$max_rate,
+    max_decline_rate_raw = live_rate_raw$min_rate,
     max_growth_rate = live_rate$max_rate,
     max_decline_rate = live_rate$min_rate,
     time_max_growth_rate = live_rate$time_at_max_rate,
@@ -279,6 +328,7 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     dead_peak_time = if (length(peak_dead_idx)) count_df$hours[peak_dead_idx] else NA_real_,
     dead_net_change = if (nrow(count_df)) dplyr::last(count_df$dead_cells) - count_df$dead_cells[1] else NA_real_,
     dead_auc = safe_trapz(count_df$hours, count_df$dead_cells),
+    max_death_rate_raw = dead_rate_raw$max_rate,
     max_death_rate = dead_rate$max_rate,
     dead_fraction_initial = if (nrow(count_df)) count_df$dead_fraction[1] else NA_real_,
     dead_fraction_final = if (nrow(count_df)) dplyr::last(count_df$dead_fraction) else NA_real_,
@@ -440,11 +490,11 @@ get_model_free_feature_catalog <- function() {
       "Intercept from regression of peak total-cell yield per glucose consumed on log1p(G0). Estimates baseline conversion efficiency of glucose into total cell output near zero glucose.",
       "Slope from regression of peak total-cell yield per glucose consumed on log1p(G0). Tests whether ploidy changes how glucose-to-cell conversion efficiency scales with available glucose."
     ),
-    computation = c(
-      "Median of per-condition max_growth_rate across G0 <= 0.25.",
-      "Median of per-condition max_growth_rate across G0 >= 1.",
-      "Median of per-condition max_death_rate across G0 <= 0.25.",
-      "Median of per-condition max_death_rate across G0 >= 1.",
+      computation = c(
+        "Median of per-condition smoothed max_growth_rate across G0 <= 0.25.",
+        "Median of per-condition smoothed max_growth_rate across G0 >= 1.",
+        "Median of per-condition smoothed max_death_rate across G0 <= 0.25.",
+      "Median of per-condition smoothed max_death_rate across G0 >= 1.",
       "Intercept from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
       "Slope from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
       "Intercept from lm(peak_total_yield_per_glucose ~ log1p(G0)).",

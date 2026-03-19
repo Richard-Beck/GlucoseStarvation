@@ -180,6 +180,76 @@ find_selected_model <- function(ranking_df) {
   ranking_df$model_id[which.min(ranking_df$delta_AIC)]
 }
 
+extract_best_draw_vector <- function(run_dir) {
+  lp <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
+  draws <- readRDS(file.path(run_dir, "optim_draws_all.Rds"))
+  rc_path <- file.path(run_dir, "optim_rc_all.Rds")
+  rc <- if (file.exists(rc_path)) readRDS(rc_path) else rep(0L, length(lp))
+
+  ok <- which(is.finite(lp) & rc == 0L)
+  if (!length(ok)) {
+    ok <- which(is.finite(lp))
+  }
+  if (!length(ok)) {
+    return(NULL)
+  }
+
+  best_i <- ok[which.max(lp[ok])]
+  best_draw <- draws[[best_i]]
+
+  if (is.data.frame(best_draw)) {
+    best_draw <- as.matrix(best_draw)
+  }
+
+  if (!is.matrix(best_draw) || !nrow(best_draw)) {
+    stop(sprintf("Unsupported best-draw format in %s", run_dir))
+  }
+
+  out <- best_draw[1, , drop = TRUE]
+  names(out) <- colnames(best_draw)
+  out
+}
+
+collect_best_raw_theta_ploidy <- function(ranking_df) {
+  if (!nrow(ranking_df)) {
+    return(tibble())
+  }
+
+  rows <- lapply(seq_len(nrow(ranking_df)), function(i) {
+    model_id <- ranking_df$model_id[[i]]
+    run_dir <- ranking_df$run_dir[[i]]
+    dims <- parse_run_id(model_id)
+    param_labels <- get_param_names(
+      R = dims$R,
+      P = dims$P,
+      W = dims$W,
+      C = dims$C,
+      M = dims$M,
+      priors = base_priors
+    )
+
+    draw_vec <- tryCatch(extract_best_draw_vector(run_dir), error = function(e) NULL)
+    if (is.null(draw_vec)) {
+      return(NULL)
+    }
+
+    coef_names <- sprintf("raw_theta_ploidy[%d]", seq_along(param_labels))
+    values <- unname(draw_vec[coef_names])
+
+    tibble(
+      model_id = model_id,
+      alias = ranking_df$alias[[i]],
+      run_label = ranking_df$run_label[[i]],
+      coefficient = coef_names,
+      parameter = param_labels,
+      raw_theta_ploidy = values,
+      missing = is.na(values)
+    )
+  })
+
+  bind_rows(rows)
+}
+
 load_transfer_outputs <- function(model_id, output_root) {
   base_dir <- file.path(output_root, model_id)
   list(
@@ -735,6 +805,7 @@ knitr::kable(artifact_commands)
 ranking_df <- build_model_ranking()
 manifest_df <- summarize_manifest_status(ranking_df)
 selected_model_id <- find_selected_model(ranking_df)
+raw_theta_ploidy_df <- collect_best_raw_theta_ploidy(ranking_df)
 
 cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
@@ -748,6 +819,21 @@ if (!nrow(manifest_df)) {
   announce_missing("No manifest-backed optimisation outputs found under %s", project_paths$optim_root)
 } else {
   knitr::kable(manifest_df)
+}
+```
+
+## Best-Fit `raw_theta_ploidy` Coefficients
+
+This table loads the `raw_theta_ploidy` vector from the best optimization start for each ranked `model_id` and relabels each coefficient with the corresponding model parameter.
+
+```{r best-raw-theta-ploidy}
+if (!nrow(raw_theta_ploidy_df)) {
+  announce_missing("No best-fit raw_theta_ploidy coefficients could be extracted from ranked optimisation runs.")
+} else {
+  raw_theta_ploidy_df %>%
+    select(model_id, alias, parameter, raw_theta_ploidy, missing, run_label) %>%
+    arrange(model_id, parameter) %>%
+    print(n = Inf)
 }
 ```
 

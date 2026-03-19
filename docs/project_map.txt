@@ -99,6 +99,10 @@
   glucose with feature-specific rules and is now intentionally reduced to a curated 8-feature panel: low/high-glucose
   medians for max growth and max death, intercept/slope from alive-AUC vs log1p(G0), and intercept/slope from a crude
   peak-yield metric defined as max(live+dead) up to the final glucose measurement divided by glucose drawdown.
+  Growth/death maxima are now extracted from gently smoothed well trajectories, while the reporting notebook also shows
+  less-processed trajectory views and raw-versus-smoothed condition summaries so the feature construction is easier to
+  audit. Initial glucose is displayed in the notebook as evenly spaced categorical levels rather than on a pseudo-log
+  continuous axis.
   Paired ploidy-effect summaries are computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R
   then performs a leave-one-line directional transfer benchmark on the curated signature panel, using the median
   cross-line ploidy effect per signature as the transferred effect and reporting scaled error summaries so

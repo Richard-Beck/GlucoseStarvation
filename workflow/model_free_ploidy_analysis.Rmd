@@ -146,16 +146,12 @@ signature_effects %>%
 
 ```{r helpers}
 plot_feature_scatter <- function(raw_col, title, ylab) {
-  ggplot(feature_panel, aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
+  ggplot(feature_panel, aes(as_g0_factor(G0), .data[[raw_col]], color = factor(ploidy_metric))) +
     geom_point(size = 2) +
     geom_line(aes(group = interaction(cellLine, ploidy_metric)), alpha = 0.5) +
     facet_wrap(~cellLine, scales = "free_y") +
-    scale_x_continuous(
-      trans = pseudo_log_trans(base = 10),
-      breaks = c(0, 0.1, 0.25, 0.5, 1, 5, 25)
-    ) +
     scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(title = title, x = "initial glucose (G0, log-like scale)", y = ylab) +
+    labs(title = title, x = "initial glucose (G0)", y = ylab) +
     theme_bw()
 }
 
@@ -169,8 +165,8 @@ build_fit_df <- function(raw_col, max_g0 = Inf) {
       }
       fit <- lm(reformulate("log1p(G0)", response = raw_col), data = .x)
       tibble(
-        G0 = seq(min(.x$G0, na.rm = TRUE), max(.x$G0, na.rm = TRUE), length.out = 100),
-        fitted = predict(fit, newdata = data.frame(G0 = seq(min(.x$G0, na.rm = TRUE), max(.x$G0, na.rm = TRUE), length.out = 100)))
+        G0 = sort(unique(.x$G0)),
+        fitted = predict(fit, newdata = data.frame(G0 = sort(unique(.x$G0))))
       )
     }) %>%
     ungroup()
@@ -179,16 +175,12 @@ build_fit_df <- function(raw_col, max_g0 = Inf) {
 plot_feature_regression <- function(raw_col, title, ylab, max_g0 = Inf) {
   fit_df <- build_fit_df(raw_col, max_g0 = max_g0)
 
-  ggplot(feature_panel %>% filter(is.finite(.data[[raw_col]]), G0 <= max_g0), aes(G0, .data[[raw_col]], color = factor(ploidy_metric))) +
+  ggplot(feature_panel %>% filter(is.finite(.data[[raw_col]]), G0 <= max_g0), aes(as_g0_factor(G0), .data[[raw_col]], color = factor(ploidy_metric))) +
     geom_point(size = 2) +
-    geom_line(data = fit_df, aes(x = G0, y = fitted, color = factor(ploidy_metric)), linewidth = 0.8) +
+    geom_line(data = fit_df, aes(x = as_g0_factor(G0), y = fitted, color = factor(ploidy_metric), group = interaction(cellLine, ploidy_metric)), linewidth = 0.8) +
     facet_wrap(~cellLine, scales = "free_y") +
-    scale_x_continuous(
-      trans = pseudo_log_trans(base = 10),
-      breaks = c(0, 0.1, 0.25, 0.5, 1, 5, 25)
-    ) +
     scale_color_brewer(palette = "Set1", name = "ploidy") +
-    labs(title = title, x = "initial glucose (G0, log-like scale)", y = ylab) +
+    labs(title = title, x = "initial glucose (G0)", y = ylab) +
     theme_bw()
 }
 
@@ -198,6 +190,51 @@ plot_signature_values <- function(sig_col, title, ylab) {
     facet_wrap(~cellLine, scales = "free_y") +
     scale_fill_brewer(palette = "Set1", name = "ploidy") +
     labs(title = title, x = "ploidy metric", y = ylab) +
+    theme_bw()
+}
+
+plot_trajectory_view <- function(value_col, title, ylab) {
+  count_long <- feature_panel %>%
+    select(cellLine, ploidy_metric, G0, well_idx)
+
+  count_summary %>%
+    inner_join(count_long, by = c("well_idx", "cellLine", "ploidy_metric", "G0")) %>%
+    ggplot(aes(hours, .data[[value_col]], color = as_g0_factor(G0), group = interaction(well_idx, G0))) +
+    geom_line(alpha = 0.7) +
+    facet_grid(rows = vars(factor(ploidy_metric)), cols = vars(cellLine), scales = "free_y") +
+    scale_color_brewer(palette = "Spectral", name = "G0") +
+    labs(title = title, x = "hours", y = ylab) +
+    theme_bw()
+}
+
+plot_rate_processing <- function(raw_col, smooth_col, title, ylab) {
+  feature_panel %>%
+    select(cellLine, ploidy_metric, G0, all_of(raw_col), all_of(smooth_col)) %>%
+    pivot_longer(cols = c(all_of(raw_col), all_of(smooth_col)), names_to = "rate_type", values_to = "value") %>%
+    mutate(rate_type = recode(rate_type, !!raw_col := "raw", !!smooth_col := "smoothed")) %>%
+    ggplot(aes(as_g0_factor(G0), value, color = factor(ploidy_metric), shape = rate_type, group = interaction(cellLine, ploidy_metric, rate_type))) +
+    geom_point(size = 2) +
+    geom_line(alpha = 0.6) +
+    facet_wrap(~cellLine, scales = "free_y") +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(title = title, x = "initial glucose (G0)", y = ylab, shape = "rate source") +
+    theme_bw()
+}
+
+plot_yield_inputs <- function() {
+  feature_panel %>%
+    select(cellLine, ploidy_metric, G0, glucose_drawdown, total_net_gain_to_glucose_end, peak_total_yield_per_glucose) %>%
+    pivot_longer(
+      cols = c(glucose_drawdown, total_net_gain_to_glucose_end, peak_total_yield_per_glucose),
+      names_to = "component",
+      values_to = "value"
+    ) %>%
+    ggplot(aes(as_g0_factor(G0), value, color = factor(ploidy_metric), group = interaction(cellLine, ploidy_metric))) +
+    geom_point(size = 2) +
+    geom_line(alpha = 0.6) +
+    facet_grid(component ~ cellLine, scales = "free_y") +
+    scale_color_brewer(palette = "Set1", name = "ploidy") +
+    labs(title = "Peak Yield Inputs By Condition", x = "initial glucose (G0)", y = NULL) +
     theme_bw()
 }
 ```
@@ -214,9 +251,14 @@ cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
 ```{r growth-plot, fig.height=6, fig.width=10}
-plot_feature_scatter(
-  raw_col = "max_growth_rate",
-  title = "Per-Condition Max Growth Rate Across Initial Glucose",
+plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories", "live cells")
+```
+
+```{r growth-processing, fig.height=6, fig.width=10}
+plot_rate_processing(
+  raw_col = "max_growth_rate_raw",
+  smooth_col = "max_growth_rate",
+  title = "Raw vs Smoothed Max Growth Rate By Condition",
   ylab = "max growth rate"
 )
 ```
@@ -238,9 +280,14 @@ cat("4. Computation: ", row$computation, "\n", sep = "")
 ```
 
 ```{r death-plot, fig.height=6, fig.width=10}
-plot_feature_scatter(
-  raw_col = "max_death_rate",
-  title = "Per-Condition Max Death Rate Across Initial Glucose",
+plot_trajectory_view("dead_cells", "Underlying Dead-Cell Trajectories", "dead cells")
+```
+
+```{r death-processing, fig.height=6, fig.width=10}
+plot_rate_processing(
+  raw_col = "max_death_rate_raw",
+  smooth_col = "max_death_rate",
+  title = "Raw vs Smoothed Max Death Rate By Condition",
   ylab = "max death rate"
 )
 ```
@@ -270,6 +317,14 @@ plot_feature_regression(
 )
 ```
 
+```{r aliveauc-raw-view, fig.height=6, fig.width=10}
+plot_feature_scatter(
+  raw_col = "live_auc_glucose_window",
+  title = "Alive AUC Over The Glucose-Measurement Window By Condition",
+  ylab = "alive AUC over glucose window"
+)
+```
+
 ```{r aliveauc-signatures, fig.height=7, fig.width=10}
 plot_signature_values("yield_alive_auc_intercept", "Aggregated Feature: Alive AUC Regression Intercept", "intercept of alive AUC ~ log1p(G0), fit on G0 <= 1") /
   plot_signature_values("yield_alive_auc_slope", "Aggregated Feature: Alive AUC Regression Slope", "slope of alive AUC ~ log1p(G0), fit on G0 <= 1")
@@ -292,6 +347,10 @@ plot_feature_regression(
   title = "Peak Total Yield Per Glucose Regressed Against Initial Glucose",
   ylab = "net gain in total cells / glucose drawdown"
 )
+```
+
+```{r peakyield-inputs, fig.height=8, fig.width=10}
+plot_yield_inputs()
 ```
 
 ```{r peakyield-signatures, fig.height=7, fig.width=10}

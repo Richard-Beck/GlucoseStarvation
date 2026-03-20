@@ -23,6 +23,8 @@ NUM_THREADS <- if (length(args) >= 15) as.integer(args[15]) else 4L
 STAN_DATA_PATH <- if (length(args) >= 16) args[16] else ""
 OUTPUT_ROOT <- if (length(args) >= 17) args[17] else "data/gpath_transfer_cv_nuts"
 PLOIDY_EFFECT_MASK_SPEC <- if (length(args) >= 18) args[18] else ""
+INIT_MODE <- if (length(args) >= 19) args[19] else "auto"
+INIT_SOURCE <- if (length(args) >= 20) args[20] else ""
 
 run_id <- sprintf("%dR_%dP_%dW_C%d_M%d", R_VAL, P_VAL, W_VAL, CONSTRAINT_FLAG, WASTE_MECH_FLAG)
 
@@ -35,11 +37,20 @@ source("R/elpd_transfer_utils.R")
 DIRECTION <- normalize_transfer_direction(DIRECTION)
 FIT_TYPE <- normalize_fit_type(FIT_TYPE)
 STAN_DATA_PATH <- resolve_stan_data_path(STAN_DATA_PATH)
+INIT_MODE <- tolower(trimws(INIT_MODE))
+
+if (!(INIT_MODE %in% c("auto", "posterior", "optim", "random"))) {
+  stop(sprintf("Unsupported init mode '%s'", INIT_MODE))
+}
 
 cat(sprintf(">>> run_gpath_transfer_nuts.R cwd: %s\n", getwd()))
 cat(sprintf(">>> Transfer CV NUTS | %s | %s | line=%d | direction=%s | fit=%s | chain=%d\n",
             MODEL_NAME, run_id, LINE_ID, DIRECTION, FIT_TYPE, CHAIN_ID))
 cat(sprintf(">>> Stan data: %s\n", STAN_DATA_PATH))
+cat(sprintf(">>> Init mode: %s\n", INIT_MODE))
+if (nzchar(trimws(INIT_SOURCE))) {
+  cat(sprintf(">>> Init source: %s\n", INIT_SOURCE))
+}
 
 stan_data <- prepare_gpath_stan_data(
   stan_data_path = STAN_DATA_PATH,
@@ -84,7 +95,37 @@ cat(sprintf(">>> NUTS config: warmup=%d sampling=%d adapt_delta=%.3f max_treedep
             ITER_WARMUP, ITER_SAMPLING, ADAPT_DELTA, MAX_TREED, seed_fit))
 
 init_arg <- 2
-if (dir.exists(posterior_dir)) {
+if (INIT_MODE == "random") {
+  cat(">>> Using randomized CmdStan init=2\n")
+} else if (INIT_MODE == "optim") {
+  if (!nzchar(trimws(INIT_SOURCE))) {
+    stop("Optimization init requested but init source directory was not provided")
+  }
+  if (!dir.exists(INIT_SOURCE)) {
+    stop(sprintf("Optimization init requested but directory is missing: %s", INIT_SOURCE))
+  }
+
+  init_list <- load_optim_init_from_dir(
+    path = INIT_SOURCE,
+    chain_id = CHAIN_ID,
+    maxG0 = maxG0
+  )
+  init_arg <- list(init_list)
+  cat(sprintf(">>> Init from optimization outputs in %s\n", INIT_SOURCE))
+} else if (INIT_MODE == "posterior") {
+  posterior_source <- if (nzchar(trimws(INIT_SOURCE))) INIT_SOURCE else posterior_dir
+  if (!dir.exists(posterior_source)) {
+    stop(sprintf("Posterior init requested but directory is missing: %s", posterior_source))
+  }
+
+  init_list <- load_posterior_init_from_dir(
+    path = posterior_source,
+    seed = seed_init,
+    maxG0 = maxG0
+  )
+  init_arg <- list(init_list)
+  cat(sprintf(">>> Init from posterior draws in %s\n", posterior_source))
+} else if (dir.exists(posterior_dir)) {
   init_list <- tryCatch(
     load_posterior_init_from_dir(path = posterior_dir, seed = seed_init, maxG0 = maxG0),
     error = function(e) NULL
@@ -92,9 +133,33 @@ if (dir.exists(posterior_dir)) {
   if (!is.null(init_list)) {
     init_arg <- list(init_list)
     cat(sprintf(">>> Init from posterior draws in %s\n", posterior_dir))
+  } else if (nzchar(trimws(INIT_SOURCE)) && dir.exists(INIT_SOURCE)) {
+    init_list <- tryCatch(
+      load_optim_init_from_dir(path = INIT_SOURCE, chain_id = CHAIN_ID, maxG0 = maxG0),
+      error = function(e) NULL
+    )
+    if (!is.null(init_list)) {
+      init_arg <- list(init_list)
+      cat(sprintf(">>> Posterior init unavailable; fell back to optimization outputs in %s\n", INIT_SOURCE))
+    } else {
+      cat(">>> Posterior and optimization init unavailable; using init=2\n")
+    }
   } else {
     cat(">>> Posterior init unavailable; using init=2\n")
   }
+} else if (nzchar(trimws(INIT_SOURCE)) && dir.exists(INIT_SOURCE)) {
+  init_list <- tryCatch(
+    load_optim_init_from_dir(path = INIT_SOURCE, chain_id = CHAIN_ID, maxG0 = maxG0),
+    error = function(e) NULL
+  )
+  if (!is.null(init_list)) {
+    init_arg <- list(init_list)
+    cat(sprintf(">>> Init from optimization outputs in %s\n", INIT_SOURCE))
+  } else {
+    cat(">>> Optimization init unavailable; using init=2\n")
+  }
+} else {
+  cat(">>> No posterior/optimization init source available; using init=2\n")
 }
 
 fit <- mod$sample(

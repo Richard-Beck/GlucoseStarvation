@@ -38,6 +38,13 @@ load_optim_outputs <- function(model_id, base_path = "ecology/model_selection/da
   )
 }
 
+load_optim_outputs_from_dir <- function(path) {
+  list(
+    lp = readRDS(file.path(path, "optim_lp_all.Rds")),
+    draws = readRDS(file.path(path, "optim_draws_all.Rds"))
+  )
+}
+
 summarize_lp_neighborhood <- function(lp, near_cut = 5) {
   finite_mask <- is.finite(lp)
   n_total <- length(lp)
@@ -191,6 +198,45 @@ load_posterior_init_from_dir <- function(
     seed = seed,
     maxG0 = maxG0,
     param_names = param_names
+  )
+}
+
+load_optim_init_from_dir <- function(
+  path,
+  chain_id = 1L,
+  maxG0,
+  param_names = NULL
+) {
+  opt <- load_optim_outputs_from_dir(path)
+  lp <- opt$lp
+  draws_list <- opt$draws
+
+  valid_idx <- which(is.finite(lp) & !vapply(draws_list, is.null, logical(1)))
+  if (!length(valid_idx)) {
+    stop(sprintf("No valid optimization starts found in '%s'", path))
+  }
+
+  sorted_idx <- valid_idx[order(lp[valid_idx], decreasing = TRUE)]
+  pick <- sorted_idx[(as.integer(chain_id) - 1L) %% length(sorted_idx) + 1L]
+  draw_obj <- draws_list[[pick]]
+
+  if (is.matrix(draw_obj)) {
+    x_named <- draw_obj[1, , drop = TRUE]
+    if (!is.null(colnames(draw_obj))) {
+      names(x_named) <- colnames(draw_obj)
+    }
+  } else {
+    x_named <- draw_obj
+  }
+
+  if (is.null(names(x_named)) || !length(names(x_named))) {
+    stop(sprintf("Chosen optimization start %d in '%s' has no parameter names", pick, path))
+  }
+
+  flat_to_init_list(
+    x_named = x_named,
+    param_names = param_names,
+    maxG0 = maxG0
   )
 }
 

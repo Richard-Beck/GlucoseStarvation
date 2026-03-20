@@ -54,7 +54,10 @@
      summaries under data/gpath_transfer_cv_single_param/report/.
      There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
      scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
-     data/gpath_transfer_cv_nuts/.
+     data/gpath_transfer_cv_nuts/. The same runner now also supports explicit optimization-based initialization, and a
+     non-redundant full-data wrapper lives at scripts/make_gpath_full_nuts_manifest.R plus
+     slurm/submit_gpath_full_nuts_pipeline.sh / slurm/jobs/gpath_full_nuts_array.sh, which reuse `oracle` mode with a
+     single canonical line/direction per model instead of repeating duplicate all-data fits.
   5. Model comparison, diagnostics, plots/tables
      The main comparison notebook is workflow/model_analysis.Rmd. It is now intended as a reporting notebook rather than
      a scratchpad: it documents upstream commands, reads saved outputs from the current `gpath` workflow, reports model
@@ -123,7 +126,9 @@
   batch_segment_and_classify_TEMP_MEASURE_SIZE.py, which adds cell_size_px. workflow/preliminaries_and_metadata.Rmd:65
   reads batch_results_TEMP_MEASURE_SIZE.csv, builds data/counts/uncorrected_features.Rds at line 87, and uses that for
   exploratory feature plots. I do not see that file being consumed anywhere in R/prepare_data.R or the Stan fitting
-  scripts.
+  scripts. Near-term follow-up worth exploring: test whether ploidy-associated starvation phenotypes are better captured
+  by morphology/size distributions than by count trajectories alone, and whether these image-derived features should be
+  promoted into a first-class analysis branch.
 
   Dead code / duplicated pathways
 

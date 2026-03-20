@@ -383,7 +383,7 @@ stan_data <- list(
 
 key <- interaction(stan_data$line_id, stan_data$G0_per_well, drop=TRUE)
 stan_data$g1_id <- as.integer(key)
-stan_data$N_G1 <- max(g1_id)
-stan_data$g1_ref_well <- match(seq_len(N_G1), g1_id)
+stan_data$N_G1 <- max(stan_data$g1_id)
+stan_data$g1_ref_well <- match(seq_len(stan_data$N_G1), stan_data$g1_id)
 saveRDS(stan_data, "data/stan_ready_data.Rds")
 cat("Data saved to 'data/stan_ready_data.Rds'.\n")

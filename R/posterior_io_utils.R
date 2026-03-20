@@ -232,12 +232,21 @@ load_optim_init_from_dir <- function(
   if (is.null(names(x_named)) || !length(names(x_named))) {
     stop(sprintf("Chosen optimization start %d in '%s' has no parameter names", pick, path))
   }
-
-  flat_to_init_list(
+  init <- flat_to_init_list(
     x_named = x_named,
     param_names = param_names,
     maxG0 = maxG0
   )
+
+  if (!length(init)) {
+    stop(sprintf(
+      "Chosen optimization start %d in '%s' produced an empty init list; parameter names may be incompatible with the current Stan model",
+      pick,
+      path
+    ))
+  }
+
+  init
 }
 
 get_well_loglik_draws <- function(draws, well_idx) {

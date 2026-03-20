@@ -312,57 +312,22 @@ build_support_set <- function(ranking_df, stability_df, delta_aic_cutoff = 10) {
     arrange(delta_AIC, desc(prop_within_1), desc(prop_within_5))
 }
 
-build_aggregated_shortlist <- function(model_screen_df, top_n_mean_rank = 4L) {
+build_aggregated_shortlist <- function(model_screen_df, top_n_mean_rank = 3L, min_prop_within_1 = 0.05) {
   if (!nrow(model_screen_df)) {
     return(tibble())
   }
 
-  rank_cols <- c(
-    "rank_delta_AIC",
-    "rank_stability",
-    "rank_directional_agreement",
-    "rank_predictive_transfer",
-    "rank_parameter_transfer"
-  )
-  keep_cols <- rank_cols[rank_cols %in% names(model_screen_df)]
-  if (!length(keep_cols)) {
-    return(model_screen_df %>% arrange(mean_rank) %>% slice_head(n = top_n_mean_rank))
+  stable_df <- model_screen_df %>%
+    filter(!is.na(prop_within_1), prop_within_1 >= min_prop_within_1)
+
+  if (!nrow(stable_df)) {
+    stable_df <- model_screen_df
   }
 
-  is_nondominated <- function(i) {
-    xi <- as.numeric(model_screen_df[i, keep_cols, drop = TRUE])
-    others <- seq_len(nrow(model_screen_df))
-    others <- others[others != i]
-    for (j in others) {
-      xj <- as.numeric(model_screen_df[j, keep_cols, drop = TRUE])
-      if (all(xj <= xi, na.rm = TRUE) && any(xj < xi, na.rm = TRUE)) {
-        return(FALSE)
-      }
-    }
-    TRUE
-  }
-
-  pareto_idx <- which(vapply(seq_len(nrow(model_screen_df)), is_nondominated, logical(1)))
-  pareto_df <- model_screen_df[pareto_idx, , drop = FALSE] %>%
-    mutate(shortlist_source = "pareto")
-  top_df <- model_screen_df %>%
+  stable_df %>%
     arrange(mean_rank, delta_AIC) %>%
     slice_head(n = top_n_mean_rank) %>%
-    mutate(shortlist_source = "top_mean_rank")
-
-  bind_rows(pareto_df, top_df) %>%
-    group_by(model_id) %>%
-    summarise(
-      alias = first(alias),
-      delta_AIC = first(delta_AIC),
-      prop_within_1 = first(prop_within_1),
-      prop_directional_agreement_model = first(prop_directional_agreement_model),
-      mean_transfer_gain = first(mean_transfer_gain),
-      mean_parameter_log_error_improvement = first(mean_parameter_log_error_improvement),
-      mean_rank = first(mean_rank),
-      shortlist_source = paste(sort(unique(shortlist_source)), collapse = "+"),
-      .groups = "drop"
-    ) %>%
+    mutate(shortlist_source = sprintf("top_mean_rank_after_prop_within_1_filter>=%.2f", min_prop_within_1)) %>%
     arrange(mean_rank, delta_AIC)
 }
 
@@ -1826,7 +1791,7 @@ if (!nrow(shortlist_df)) {
 if (nrow(shortlist_df)) {
   shortlist_txt <- paste(shortlist_df$model_id, collapse = ", ")
   knitr::asis_output(sprintf(
-    "**Shortlist.** The report now treats `%s` as the primary shortlist for downstream interpretation. These models either lie on the multi-metric Pareto front, rank near the top by mean rank, or both.\n",
+    "**Shortlist.** The report now treats `%s` as the primary shortlist for downstream interpretation. These are the top 3 models by mean rank after discarding models with very poor optimisation stability (`prop_within_1 < 0.05`).\n",
     shortlist_txt
   ))
 }

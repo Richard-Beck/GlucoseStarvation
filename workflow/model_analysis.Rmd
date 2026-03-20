@@ -126,6 +126,10 @@ emit_artifact_note <- function(stem, label = "Audit CSV") {
 write_agent_text_report <- function(
   path = project_paths$agent_text_path,
   ranking_df,
+  support_set_df = NULL,
+  provenance_df = NULL,
+  metric_glossary_df = NULL,
+  selected_model_summary_df = NULL,
   raw_theta_agreement_df = NULL,
   focused_hit_df = NULL,
   report_export_root = project_paths$report_export_root
@@ -138,6 +142,42 @@ write_agent_text_report <- function(
     sprintf("Audit export root: %s", ensure_report_export_root(report_export_root)),
     ""
   )
+
+  if (!is.null(selected_model_summary_df) && nrow(selected_model_summary_df)) {
+    x <- selected_model_summary_df[1, , drop = FALSE]
+    lines <- c(
+      lines,
+      "Selected Model",
+      sprintf("model_id: %s", x$model_id[[1]]),
+      sprintf("alias: %s", x$alias[[1]]),
+      sprintf("selection_basis: lowest Delta AIC among trusted manifest-backed optimisation runs"),
+      sprintf("delta_AIC: %.3f", x$delta_AIC[[1]]),
+      sprintf("prop_within_5: %.3f", x$prop_within_5[[1]]),
+      sprintf("stability_class: %s", x$stability_class[[1]]),
+      sprintf("mean_transfer_gain: %s", format(round(x$mean_transfer_gain[[1]], 3), nsmall = 3)),
+      sprintf("mean_parameter_log_error_improvement: %s", format(round(x$mean_parameter_log_error_improvement[[1]], 3), nsmall = 3)),
+      sprintf("parameter_win_rate: %s", format(round(x$mean_prop_parameters_better[[1]], 3), nsmall = 3)),
+      ""
+    )
+  }
+
+  if (!is.null(support_set_df) && nrow(support_set_df)) {
+    lines <- c(
+      lines,
+      "Support Set",
+      capture.output(print(as.data.frame(support_set_df), row.names = FALSE)),
+      ""
+    )
+  }
+
+  if (!is.null(provenance_df) && nrow(provenance_df)) {
+    lines <- c(
+      lines,
+      "Current Provenance",
+      capture.output(print(as.data.frame(provenance_df), row.names = FALSE)),
+      ""
+    )
+  }
 
   if (!is.null(ranking_df) && nrow(ranking_df)) {
     lines <- c(
@@ -166,6 +206,15 @@ write_agent_text_report <- function(
     )
   }
 
+  if (!is.null(metric_glossary_df) && nrow(metric_glossary_df)) {
+    lines <- c(
+      lines,
+      "Metric Glossary",
+      capture.output(print(as.data.frame(metric_glossary_df), row.names = FALSE)),
+      ""
+    )
+  }
+
   lines <- c(
     lines,
     "Key Audit Artifacts",
@@ -177,6 +226,175 @@ write_agent_text_report <- function(
 
   writeLines(lines, path, useBytes = TRUE)
   normalizePath(path, winslash = "/", mustWork = FALSE)
+}
+
+build_stability_summary <- function(ranking_df) {
+  if (!nrow(ranking_df)) {
+    return(tibble())
+  }
+
+  purrr::map_dfr(seq_len(nrow(ranking_df)), function(i) {
+    run_dir <- ranking_df$run_dir[i]
+    lp <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
+    nbhd <- summarize_lp_neighborhood(lp, near_cut = 5)
+
+    tibble(
+      model_id = ranking_df$model_id[i],
+      alias = ranking_df$alias[i],
+      run_label = ranking_df$run_label[i],
+      n_total = length(lp),
+      n_finite = sum(nbhd$finite_mask),
+      best_lp = nbhd$best_lp,
+      n_within_1 = sum(nbhd$finite_mask & nbhd$lp_diff < 1),
+      n_within_5 = sum(nbhd$finite_mask & nbhd$lp_diff < 5),
+      n_within_10 = sum(nbhd$finite_mask & nbhd$lp_diff < 10),
+      prop_within_1 = mean(nbhd$finite_mask & nbhd$lp_diff < 1),
+      prop_within_5 = mean(nbhd$finite_mask & nbhd$lp_diff < 5),
+      prop_within_10 = mean(nbhd$finite_mask & nbhd$lp_diff < 10),
+      stability_class = dplyr::case_when(
+        mean(nbhd$finite_mask & nbhd$lp_diff < 5) >= 0.50 ~ "strong",
+        mean(nbhd$finite_mask & nbhd$lp_diff < 5) >= 0.20 ~ "moderate",
+        TRUE ~ "weak"
+      ),
+      delta_AIC = ranking_df$delta_AIC[i]
+    )
+  }) %>%
+    arrange(desc(prop_within_5), desc(prop_within_1), delta_AIC)
+}
+
+build_support_set <- function(ranking_df, stability_df, delta_aic_cutoff = 10) {
+  if (!nrow(ranking_df)) {
+    return(tibble())
+  }
+
+  ranking_df %>%
+    left_join(
+      stability_df %>% select(model_id, prop_within_5, stability_class),
+      by = "model_id"
+    ) %>%
+    filter(delta_AIC <= delta_aic_cutoff) %>%
+    select(model_id, alias, delta_AIC, k, prop_within_5, stability_class) %>%
+    arrange(delta_AIC, desc(prop_within_5))
+}
+
+build_metric_glossary <- function() {
+  tibble::tribble(
+    ~metric, ~interpretation,
+    "AIC", "Lower is better among trusted optimisation fits; combines fit and parameter count.",
+    "delta_AIC", "AIC minus the best AIC in the ranked set; values near zero indicate comparable support.",
+    "prop_within_5", "Fraction of optimisation starts within 5 log-posterior units of the best start; higher means more stable optimisation.",
+    "transfer_gain", "Held-out predictive improvement of transfer over null; positive favors transfer.",
+    "transfer_regret", "Held-out predictive gap between oracle and transfer; smaller is better.",
+    "mean_log_error_improvement", "For reconstructed held-out parameters, positive means transfer is closer to oracle than null on average.",
+    "prop_parameters_transfer_better_than_null", "Fraction of reconstructed held-out parameters for which transfer beats null; above 0.5 favors transfer."
+  )
+}
+
+build_current_provenance_table <- function(
+  ranking_df,
+  selected_model_id,
+  project_paths,
+  stan_data_command = "Rscript R/prepare_data.R"
+) {
+  selected_row <- ranking_df %>% filter(model_id == selected_model_id) %>% slice_head(n = 1)
+  selected_run_dir <- if (nrow(selected_row)) selected_row$run_dir[[1]] else NA_character_
+  selected_manifest <- if (nrow(selected_row)) selected_row$manifest_path[[1]] else NA_character_
+
+  tibble::tribble(
+    ~artifact_group, ~path, ~provenance, ~status,
+    "Stan data", project_paths$stan_data,
+    stan_data_command,
+    "Confirmed on 2026-03-20 by byte-identical rerun.",
+    "Assessment model set", project_paths$assessment_run_ids,
+    "Current ranking is restricted to these model IDs.",
+    "Concrete input file.",
+    "Selected optimisation run", selected_run_dir,
+    if (!is.na(selected_manifest)) sprintf("Manifest: %s", selected_manifest) else "No selected optimisation run available.",
+    if (!is.na(selected_run_dir)) "Concrete current source for selected-model ranking and best-fit coefficients." else "Missing.",
+    "Selected optimisation transfer summary", file.path(project_paths$transfer_optim_root, selected_model_id, "transfer_comparison_summary.Rds"),
+    "Loaded by the predictive transfer summary blocks for the selected model.",
+    "Concrete current source when present.",
+    "Selected parameter transfer summary", file.path(project_paths$transfer_optim_root, selected_model_id, "parameter_transfer_summary.Rds"),
+    "Loaded by the parameter-transfer interpretation blocks for the selected model.",
+    "Concrete current source when present.",
+    "Selected NUTS transfer summary", file.path(project_paths$transfer_nuts_root, selected_model_id, "transfer_comparison_summary.Rds"),
+    "Optional comparison source for posterior-averaged transfer checks.",
+    "Concrete comparison path when present."
+  )
+}
+
+summarize_model_screen <- function(ranking_df, stability_df, screen_transfer_df, screen_parameter_df) {
+  base <- ranking_df %>%
+    select(model_id, alias, delta_AIC, k, best_lp)
+
+  if (nrow(stability_df)) {
+    base <- base %>%
+      left_join(
+        stability_df %>% select(model_id, prop_within_5, prop_within_1, stability_class),
+        by = "model_id"
+      )
+  }
+
+  if (nrow(screen_transfer_df)) {
+    transfer_summary <- screen_transfer_df %>%
+      group_by(model_id) %>%
+      summarise(
+        mean_transfer_gain = mean(transfer_gain, na.rm = TRUE),
+        median_transfer_gain = median(transfer_gain, na.rm = TRUE),
+        mean_transfer_regret = mean(transfer_regret, na.rm = TRUE),
+        prop_transfer_better_than_null = mean(transfer > null, na.rm = TRUE),
+        n_transfer_cases = dplyr::n(),
+        .groups = "drop"
+      )
+    base <- base %>% left_join(transfer_summary, by = "model_id")
+  }
+
+  if (nrow(screen_parameter_df)) {
+    parameter_summary <- screen_parameter_df %>%
+      mutate(
+        mean_log_error_improvement = mean_abs_log_null_holdout_ratio - mean_abs_log_holdout_ratio
+      ) %>%
+      group_by(model_id) %>%
+      summarise(
+        mean_parameter_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+        median_parameter_log_error_improvement = median(mean_log_error_improvement, na.rm = TRUE),
+        mean_prop_parameters_better = mean(prop_parameters_transfer_better_than_null, na.rm = TRUE),
+        n_parameter_cases = dplyr::n(),
+        .groups = "drop"
+      )
+    base <- base %>% left_join(parameter_summary, by = "model_id")
+  }
+
+  base %>% arrange(delta_AIC, desc(mean_parameter_log_error_improvement), desc(mean_transfer_gain))
+}
+
+build_selected_model_takeaway <- function(selected_model_summary_df) {
+  if (is.null(selected_model_summary_df) || !nrow(selected_model_summary_df)) {
+    return("No selected model summary could be built.")
+  }
+
+  x <- selected_model_summary_df[1, , drop = FALSE]
+  predictive_phrase <- dplyr::case_when(
+    is.na(x$mean_transfer_gain[[1]]) ~ "predictive transfer is unavailable",
+    x$mean_transfer_gain[[1]] > 0 ~ "predictive transfer beats the null baseline on average",
+    TRUE ~ "predictive transfer does not beat the null baseline on average"
+  )
+  parameter_phrase <- dplyr::case_when(
+    is.na(x$mean_parameter_log_error_improvement[[1]]) ~ "parameter-transfer evidence is unavailable",
+    x$mean_parameter_log_error_improvement[[1]] > 0 ~ "parameter transfer moves held-out parameters closer to oracle on average",
+    TRUE ~ "parameter transfer does not move held-out parameters closer to oracle on average"
+  )
+
+  sprintf(
+    "Selected model %s (%s) has delta_AIC %.3f, %s optimisation stability (prop_within_5 = %.3f), and suggests that %s while %s.",
+    x$model_id[[1]],
+    x$alias[[1]],
+    x$delta_AIC[[1]],
+    x$stability_class[[1]],
+    x$prop_within_5[[1]],
+    predictive_phrase,
+    parameter_phrase
+  )
 }
 
 read_run_id_file <- function(path) {
@@ -1026,26 +1244,26 @@ This notebook depends on artefacts created elsewhere. The table below documents 
 artifact_commands <- tribble(
   ~artifact_group, ~path, ~command, ~status_note,
   "Stan data", project_paths$stan_data,
-  "Exact historical command not recorded in repo. Data are constructed by R/prepare_data.R.",
-  "Known script, command not fixed in repo history.",
+  "Rscript R/prepare_data.R",
+  "Confirmed on 2026-03-20 by a byte-identical rerun of `stan_ready_data.Rds`.",
   "Assessment model set", project_paths$assessment_run_ids,
   "Tracked file read by scripts/make_gpath_optim_spec.R when generating rerun specs.",
   "Canonical model-id set for current `gpath v1` assessment.",
   "Versioned hierarchical optimization", "data/runs/gpath/v1/optim/<DATASET_LABEL>/<RUN_ID>/<RUN_LABEL>",
   "bash slurm/submit_gpath_optim_pipeline.sh <SPEC_FILE.tsv> ; specs can be generated with Rscript scripts/make_gpath_optim_spec.R <SPEC_FILE.tsv> <RUN_IDS>",
-  "Trusted optimisation source. This notebook now ignores older non-manifest results.",
+  "Trusted optimisation source. Exact historical submission command is not stored in the current run outputs; current run_id/run_label provenance is reported below.",
   "Versioned hierarchical NUTS", "not yet migrated",
   "No new versioned NUTS pipeline for legacy hierarchical fits yet.",
   "Transfer NUTS still seeds from the older legacy NUTS outputs for now.",
   "Directional transfer (optimization)", "data/gpath_transfer_cv/gpath/<RUN_ID>",
   "bash slurm/submit_gpath_transfer_pipeline.sh MODEL R P W C M all low_to_high,high_to_low null,transfer,oracle 1:K 500 1000 0.99 12 16 ecology/stan_ready_data.Rds data/gpath_transfer_cv 0",
-  "Current optimization transfer path.",
+  "Current optimization transfer path. Exact historical submission arguments are not stored in the saved summaries; current selected-model paths are reported below.",
   "Directional transfer (optimization summaries)", "data/gpath_transfer_cv/gpath/<RUN_ID>/*.Rds",
   "Rscript scripts/summarize_gpath_transfer_cv.R gpath <RUN_ID> data/gpath_transfer_cv",
   "Current summary path.",
   "Directional transfer (NUTS)", "data/gpath_transfer_cv_nuts/gpath/<RUN_ID>",
   "bash slurm/submit_gpath_transfer_nuts_pipeline.sh MODEL R P W C M all low_to_high,high_to_low null,transfer,oracle 1:4 500 1000 0.99 12 16 ecology/stan_ready_data.Rds data/gpath_transfer_cv_nuts",
-  "Current NUTS transfer path.",
+  "Current NUTS transfer path. Exact historical submission arguments are not stored in the saved summaries; current selected-model paths are reported below.",
   "Directional transfer (NUTS summaries)", "data/gpath_transfer_cv_nuts/gpath/<RUN_ID>/*.Rds",
   "Rscript scripts/summarize_gpath_transfer_nuts.R gpath <RUN_ID> data/gpath_transfer_cv_nuts",
   "Current summary path."
@@ -1060,7 +1278,17 @@ print(as.data.frame(artifact_commands), row.names = FALSE)
 report_export_root <- ensure_report_export_root()
 ranking_df <- build_model_ranking()
 manifest_df <- summarize_manifest_status(ranking_df)
+stability_df <- build_stability_summary(ranking_df)
 selected_model_id <- find_selected_model(ranking_df)
+support_set_df <- build_support_set(ranking_df, stability_df)
+metric_glossary_df <- build_metric_glossary()
+provenance_df <- build_current_provenance_table(
+  ranking_df = ranking_df,
+  selected_model_id = selected_model_id,
+  project_paths = project_paths
+)
+model_screen_df <- tibble()
+selected_model_summary_df <- tibble()
 raw_theta_ploidy_global_df <- collect_best_raw_theta_ploidy_global(ranking_df)
 raw_theta_ploidy_transfer_df <- collect_best_raw_theta_ploidy_transfer(ranking_df)
 raw_theta_ploidy_df <- bind_rows(raw_theta_ploidy_global_df, raw_theta_ploidy_transfer_df)
@@ -1083,7 +1311,17 @@ focused_hit_df <- tibble()
 cat("Available trusted gpath model IDs:\n")
 print(ranking_df$model_id)
 cat("\nSelected model for downstream reporting:", selected_model_id, "\n")
+cat("\nModels in the current Delta AIC <= 10 support set:\n")
+print(support_set_df$model_id)
 cat("\nAudit export root:", report_export_root, "\n")
+```
+
+## Current Provenance
+
+This section records the concrete current artifact paths used by this render, separate from the generic rerun commands above.
+
+```{r current-provenance}
+print(as.data.frame(provenance_df), row.names = FALSE)
 ```
 
 ## Audit Artifacts
@@ -1332,6 +1570,28 @@ if (!nrow(ranking_df)) {
 }
 ```
 
+```{r model-support-set}
+if (!nrow(support_set_df)) {
+  announce_missing("No models fall within the current Delta AIC support threshold.")
+} else {
+  cat("Support set used for downstream robustness checks (`delta_AIC <= 10`)\n\n")
+  print(as.data.frame(support_set_df), row.names = FALSE)
+}
+```
+
+```{r model-selection-takeaway, results='asis'}
+if (nrow(ranking_df)) {
+  best_row <- ranking_df %>% slice_head(n = 1)
+  support_n <- nrow(support_set_df)
+  knitr::asis_output(sprintf(
+    "**Takeaway.** The current primary model is `%s` (%s) because it has the lowest AIC among trusted manifest-backed optimisation runs. The report now treats the `%d` models with `delta_AIC <= 10` as the support set for robustness checks rather than implying that the winner should be interpreted in isolation.\n",
+    best_row$model_id[[1]],
+    best_row$alias[[1]],
+    support_n
+  ))
+}
+```
+
 ```{r model-selection-plot}
 if (!nrow(ranking_df)) {
   announce_missing("Skipping model-selection plot because no ranking table was built.")
@@ -1364,34 +1624,17 @@ if (!nrow(ranking_df)) {
 ## Optimisation Stability Across Trusted Models
 
 ```{r optimisation-stability-all-models}
-if (!nrow(ranking_df)) {
+if (!nrow(stability_df)) {
   announce_missing("No trusted optimisation outputs available for stability summary.")
 } else {
-  stability_df <- purrr::map_dfr(seq_len(nrow(ranking_df)), function(i) {
-    run_dir <- ranking_df$run_dir[i]
-    lp <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
-    nbhd <- summarize_lp_neighborhood(lp, near_cut = 5)
-
-    tibble(
-      model_id = ranking_df$model_id[i],
-      alias = ranking_df$alias[i],
-      run_label = ranking_df$run_label[i],
-      n_total = length(lp),
-      n_finite = sum(nbhd$finite_mask),
-      best_lp = nbhd$best_lp,
-      n_within_1 = sum(nbhd$finite_mask & nbhd$lp_diff < 1),
-      n_within_5 = sum(nbhd$finite_mask & nbhd$lp_diff < 5),
-      n_within_10 = sum(nbhd$finite_mask & nbhd$lp_diff < 10),
-      prop_within_1 = mean(nbhd$finite_mask & nbhd$lp_diff < 1),
-      prop_within_5 = mean(nbhd$finite_mask & nbhd$lp_diff < 5),
-      prop_within_10 = mean(nbhd$finite_mask & nbhd$lp_diff < 10),
-      delta_AIC = ranking_df$delta_AIC[i]
-    )
-  }) %>%
-    arrange(desc(prop_within_5), desc(prop_within_1), delta_AIC)
-
   print(as.data.frame(stability_df), row.names = FALSE)
 }
+```
+
+## Metric Glossary
+
+```{r metric-glossary}
+print(as.data.frame(metric_glossary_df), row.names = FALSE)
 ```
 
 ## Transfer Analysis: Predictive View
@@ -1415,6 +1658,15 @@ transfer_subset_summary_df <- summarize_transfer_subset_diagnostics(transfer_sub
 
 predictive_screen_summary <- summarize_predictive_screening(screen_transfer_df)
 parameter_screen_summary <- summarize_parameter_screening(screen_parameter_df)
+model_screen_df <- summarize_model_screen(
+  ranking_df = ranking_df,
+  stability_df = stability_df,
+  screen_transfer_df = screen_transfer_df,
+  screen_parameter_df = screen_parameter_df
+)
+selected_model_summary_df <- model_screen_df %>%
+  filter(model_id == selected_model_id) %>%
+  slice_head(n = 1)
 audit_index_df <- bind_rows(
   audit_index_df,
   write_audit_artifact(screen_transfer_df, "screen_transfer_df"),
@@ -1423,12 +1675,30 @@ audit_index_df <- bind_rows(
   write_audit_artifact(family_parameter_df, "family_parameter_df"),
   write_audit_artifact(family_parameter_summary_df, "family_parameter_summary_df"),
   write_audit_artifact(model_family_summary_df, "model_family_summary_df"),
+  write_audit_artifact(model_screen_df, "model_screen_df"),
   write_audit_artifact(derived_transfer_df, "derived_transfer_df"),
   write_audit_artifact(derived_transfer_cmp_df, "derived_transfer_cmp_df"),
   write_audit_artifact(derived_transfer_summary_df, "derived_transfer_summary_df"),
   write_audit_artifact(transfer_subset_diag_df, "transfer_subset_diag_df"),
   write_audit_artifact(transfer_subset_summary_df, "transfer_subset_summary_df")
 )
+```
+
+## Selected-Model Scorecard
+
+```{r selected-model-scorecard}
+if (!nrow(selected_model_summary_df)) {
+  announce_missing("No selected-model scorecard could be built.")
+} else {
+  print(as.data.frame(selected_model_summary_df), row.names = FALSE)
+  emit_artifact_note("model_screen_df", label = "Audit CSV (all-model scorecard)")
+}
+```
+
+```{r selected-model-scorecard-takeaway, results='asis'}
+if (nrow(selected_model_summary_df)) {
+  knitr::asis_output(sprintf("**Selected-model summary.** %s\n", build_selected_model_takeaway(selected_model_summary_df)))
+}
 ```
 
 ## Transfer Screening Across Models
@@ -1810,6 +2080,10 @@ print(
 ```{r agent-text-export, include=FALSE}
 agent_text_path <- write_agent_text_report(
   ranking_df = ranking_df,
+  support_set_df = if (exists("support_set_df", inherits = TRUE)) support_set_df else tibble(),
+  provenance_df = if (exists("provenance_df", inherits = TRUE)) provenance_df else tibble(),
+  metric_glossary_df = if (exists("metric_glossary_df", inherits = TRUE)) metric_glossary_df else tibble(),
+  selected_model_summary_df = if (exists("selected_model_summary_df", inherits = TRUE)) selected_model_summary_df else tibble(),
   raw_theta_agreement_df = raw_theta_agreement_summary_df,
   focused_hit_df = focused_hit_df,
   report_export_root = report_export_root
@@ -2186,6 +2460,17 @@ if (is.na(selected_model_id)) {
 
 ## Current Interpretation
 
+Interpretation here is based on two distinct questions:
+
+- predictive transfer: does the transferred ploidy effect improve held-out predictive fit relative to the null?
+- parameter transfer: does the transferred ploidy effect move reconstructed held-out parameters closer to the oracle than the null does?
+
+```{r current-interpretation-gloss}
+metric_glossary_df %>%
+  filter(metric %in% c("transfer_gain", "transfer_regret", "mean_log_error_improvement", "prop_parameters_transfer_better_than_null")) %>%
+  print(row.names = FALSE)
+```
+
 ```{r interpretation-table}
 if (is.na(selected_model_id)) {
   announce_missing("No selected model available for interpretation summary.")
@@ -2219,6 +2504,26 @@ if (is.na(selected_model_id)) {
 
     print(interpretation_df)
   }
+}
+```
+
+```{r interpretation-takeaway, results='asis'}
+if (nrow(selected_model_summary_df)) {
+  x <- selected_model_summary_df[1, , drop = FALSE]
+  support_note <- if (nrow(support_set_df)) {
+    sprintf(
+      "For robustness, the report also keeps %d support-set models with `delta_AIC <= 10` in view.",
+      nrow(support_set_df)
+    )
+  } else {
+    "No broader support set was available under the current threshold."
+  }
+
+  knitr::asis_output(sprintf(
+    "**Interpretation.** %s %s The predictive summaries should be treated as a benchmark, but the parameter-transfer summaries remain the more direct readout for the biological question.\n",
+    build_selected_model_takeaway(selected_model_summary_df),
+    support_note
+  ))
 }
 ```
 

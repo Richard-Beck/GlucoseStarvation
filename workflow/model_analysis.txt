@@ -1,229 +1,29 @@
 Model Analysis Summary
 
-Generated: 2026-03-19 20:42:07.208809
-Stan data: data/stan_ready_data.Rds
-Audit export root: /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis
+Generated: 2026-03-20 09:40:56.264596
+Stan data: ecology/stan_ready_data.Rds
+Audit export root: C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis
 
-Model Ranking
-       model_id                        alias   best_lp  k      AIC delta_AIC
- 2R_2P_1W_C0_M0       2R-2P Dense, 1W (Mult) -47188.51 66 94509.02     0.000
- 2R_2P_1W_C0_M1        2R-2P Dense, 1W (Add) -47279.41 66 94690.83   181.808
- 2R_2P_0W_C0_M1                  2R-2P Dense -47431.73 54 94971.47   462.450
- 2R_1P_1W_C0_M0       2R-1P Dense, 1W (Mult) -47782.77 54 95673.54  1164.524
- 2R_2P_1W_C1_M0 2R-2P Specialized, 1W (Mult) -47812.78 54 95733.56  1224.546
- 2R_1P_1W_C0_M1        2R-1P Dense, 1W (Add) -48039.41 54 96186.83  1677.810
- 2R_1P_0W_C0_M1                  2R-1P Dense -48174.41 42 96432.82  1923.806
- 1R_1P_1W_C0_M0       1R-1P Dense, 1W (Mult) -48238.31 30 96536.61  2027.596
- 2R_2P_1W_C1_M1  2R-2P Specialized, 1W (Add) -48234.42 54 96576.85  2067.830
- 2R_2P_0W_C1_M0            2R-2P Specialized -48355.60 42 96795.19  2286.174
- 1R_1P_1W_C0_M1        1R-1P Dense, 1W (Add) -48450.63 30 96961.26  2452.242
- 1R_1P_0W_C0_M1                  1R-1P Dense -49231.24 24 98510.48  4001.458
-
-Directional Agreement Of raw_theta_ploidy With Global Fit
- parameter n_cases prop_directional_agreement mean_abs_shift_from_global
-     ae[1]     120                  0.9000000                  0.2575399
-     ah[1]     120                  0.7166667                  0.3468240
-    Y_R[1]     120                  0.9000000                  0.3998775
-         m     120                  0.9333333                  1.1917330
-
-Focused Parameter Hit Summary
-       model_id   direction parameter mean_log_error_improvement
- 1R_1P_0W_C0_M1 high_to_low    Y_R[1]                0.118675684
- 1R_1P_0W_C0_M1 high_to_low     ae[1]                0.102462584
- 1R_1P_0W_C0_M1 high_to_low     ah[1]                0.147763188
- 1R_1P_0W_C0_M1 high_to_low         m               -0.075659158
- 1R_1P_0W_C0_M1 low_to_high    Y_R[1]                0.058242157
- 1R_1P_0W_C0_M1 low_to_high     ae[1]                0.052333034
- 1R_1P_0W_C0_M1 low_to_high     ah[1]                0.078944479
- 1R_1P_0W_C0_M1 low_to_high         m               -0.095211601
- 1R_1P_1W_C0_M0 high_to_low    Y_R[1]               -0.017749818
- 1R_1P_1W_C0_M0 high_to_low     ae[1]                0.020419037
- 1R_1P_1W_C0_M0 high_to_low     ah[1]                0.041312751
- 1R_1P_1W_C0_M0 high_to_low         m               -0.077060654
- 1R_1P_1W_C0_M0 low_to_high    Y_R[1]               -0.038797184
- 1R_1P_1W_C0_M0 low_to_high     ae[1]               -0.011134231
- 1R_1P_1W_C0_M0 low_to_high     ah[1]                0.011318954
- 1R_1P_1W_C0_M0 low_to_high         m               -0.107458910
- 1R_1P_1W_C0_M1 high_to_low    Y_R[1]                0.067693768
- 1R_1P_1W_C0_M1 high_to_low     ae[1]                0.065392349
- 1R_1P_1W_C0_M1 high_to_low     ah[1]                0.068238334
- 1R_1P_1W_C0_M1 high_to_low         m               -0.078018270
- 1R_1P_1W_C0_M1 low_to_high    Y_R[1]                0.004896039
- 1R_1P_1W_C0_M1 low_to_high     ae[1]               -0.001514894
- 1R_1P_1W_C0_M1 low_to_high     ah[1]               -0.016532484
- 1R_1P_1W_C0_M1 low_to_high         m               -0.099808936
- 2R_1P_0W_C0_M1 high_to_low    Y_R[1]                0.120288950
- 2R_1P_0W_C0_M1 high_to_low     ae[1]                0.064044410
- 2R_1P_0W_C0_M1 high_to_low     ah[1]                0.048294064
- 2R_1P_0W_C0_M1 high_to_low         m               -0.112209220
- 2R_1P_0W_C0_M1 low_to_high    Y_R[1]               -0.087210159
- 2R_1P_0W_C0_M1 low_to_high     ae[1]               -0.054016403
- 2R_1P_0W_C0_M1 low_to_high     ah[1]               -0.048427712
- 2R_1P_0W_C0_M1 low_to_high         m               -0.120182894
- 2R_1P_1W_C0_M0 high_to_low    Y_R[1]                0.073392842
- 2R_1P_1W_C0_M0 high_to_low     ae[1]                0.096963329
- 2R_1P_1W_C0_M0 high_to_low     ah[1]                0.081229779
- 2R_1P_1W_C0_M0 high_to_low         m               -0.010012168
- 2R_1P_1W_C0_M0 low_to_high    Y_R[1]               -0.144092087
- 2R_1P_1W_C0_M0 low_to_high     ae[1]               -0.050308269
- 2R_1P_1W_C0_M0 low_to_high     ah[1]               -0.066547839
- 2R_1P_1W_C0_M0 low_to_high         m               -0.072013397
- 2R_1P_1W_C0_M1 high_to_low    Y_R[1]                0.116117100
- 2R_1P_1W_C0_M1 high_to_low     ae[1]                0.075220570
- 2R_1P_1W_C0_M1 high_to_low     ah[1]                0.079803432
- 2R_1P_1W_C0_M1 high_to_low         m                0.127276616
- 2R_1P_1W_C0_M1 low_to_high    Y_R[1]               -0.084773677
- 2R_1P_1W_C0_M1 low_to_high     ae[1]               -0.069183027
- 2R_1P_1W_C0_M1 low_to_high     ah[1]               -0.082377425
- 2R_1P_1W_C0_M1 low_to_high         m               -0.163002114
- 2R_2P_0W_C0_M1 high_to_low    Y_R[1]               -0.209086427
- 2R_2P_0W_C0_M1 high_to_low     ae[1]               -0.102059190
- 2R_2P_0W_C0_M1 high_to_low     ah[1]               -0.222101246
- 2R_2P_0W_C0_M1 high_to_low         m                0.113525737
- 2R_2P_0W_C0_M1 low_to_high    Y_R[1]               -0.213261439
- 2R_2P_0W_C0_M1 low_to_high     ae[1]               -0.078026715
- 2R_2P_0W_C0_M1 low_to_high     ah[1]               -0.290943034
- 2R_2P_0W_C0_M1 low_to_high         m                0.185847231
- 2R_2P_0W_C1_M0 high_to_low    Y_R[1]               -0.061452139
- 2R_2P_0W_C1_M0 high_to_low     ae[1]               -0.123748985
- 2R_2P_0W_C1_M0 high_to_low     ah[1]               -0.111419041
- 2R_2P_0W_C1_M0 high_to_low         m               -0.150854522
- 2R_2P_0W_C1_M0 low_to_high    Y_R[1]                0.119187312
- 2R_2P_0W_C1_M0 low_to_high     ae[1]               -0.081188729
- 2R_2P_0W_C1_M0 low_to_high     ah[1]               -0.135800030
- 2R_2P_0W_C1_M0 low_to_high         m                0.346674437
- 2R_2P_1W_C0_M0 high_to_low    Y_R[1]               -0.260300092
- 2R_2P_1W_C0_M0 high_to_low     ae[1]               -0.080884664
- 2R_2P_1W_C0_M0 high_to_low     ah[1]               -0.355129979
- 2R_2P_1W_C0_M0 high_to_low         m                0.265727290
- 2R_2P_1W_C0_M0 low_to_high    Y_R[1]               -0.100340768
- 2R_2P_1W_C0_M0 low_to_high     ae[1]               -0.142959810
- 2R_2P_1W_C0_M0 low_to_high     ah[1]               -0.373628644
- 2R_2P_1W_C0_M0 low_to_high         m                0.104860088
- 2R_2P_1W_C0_M1 high_to_low    Y_R[1]               -0.352800436
- 2R_2P_1W_C0_M1 high_to_low     ae[1]               -0.234928696
- 2R_2P_1W_C0_M1 high_to_low     ah[1]               -0.343790504
- 2R_2P_1W_C0_M1 high_to_low         m               -0.130137816
- 2R_2P_1W_C0_M1 low_to_high    Y_R[1]               -0.117731756
- 2R_2P_1W_C0_M1 low_to_high     ae[1]               -0.084487909
- 2R_2P_1W_C0_M1 low_to_high     ah[1]               -0.230864068
- 2R_2P_1W_C0_M1 low_to_high         m                0.313279964
- 2R_2P_1W_C1_M0 high_to_low    Y_R[1]               -0.009570736
- 2R_2P_1W_C1_M0 high_to_low     ae[1]               -0.075375128
- 2R_2P_1W_C1_M0 high_to_low     ah[1]                0.121344389
- 2R_2P_1W_C1_M0 high_to_low         m               -0.117180673
- 2R_2P_1W_C1_M0 low_to_high    Y_R[1]                0.047042020
- 2R_2P_1W_C1_M0 low_to_high     ae[1]               -0.101024191
- 2R_2P_1W_C1_M0 low_to_high     ah[1]               -0.030707297
- 2R_2P_1W_C1_M0 low_to_high         m                0.521866947
- 2R_2P_1W_C1_M1 high_to_low    Y_R[1]                0.318798739
- 2R_2P_1W_C1_M1 high_to_low     ae[1]               -0.099509522
- 2R_2P_1W_C1_M1 high_to_low     ah[1]               -0.222710949
- 2R_2P_1W_C1_M1 high_to_low         m                0.006649235
- 2R_2P_1W_C1_M1 low_to_high    Y_R[1]                0.162279851
- 2R_2P_1W_C1_M1 low_to_high     ae[1]               -0.027531333
- 2R_2P_1W_C1_M1 low_to_high     ah[1]               -0.118619755
- 2R_2P_1W_C1_M1 low_to_high         m                0.014297366
- median_log_error_improvement prop_transfer_better_than_null n_cases
-                  0.144202766                            0.6       5
-                  0.148237000                            0.8       5
-                  0.128645550                            1.0       5
-                 -0.140270348                            0.4       5
-                  0.143940543                            0.6       5
-                  0.102472630                            0.6       5
-                  0.129618985                            0.8       5
-                  0.060051035                            0.6       5
-                  0.090933008                            0.6       5
-                  0.097047637                            0.6       5
-                  0.047122093                            0.8       5
-                 -0.031574084                            0.4       5
-                  0.090489615                            0.6       5
-                  0.096799864                            0.6       5
-                  0.047811408                            0.8       5
-                  0.024518434                            0.6       5
-                  0.102852757                            0.6       5
-                  0.091268755                            0.8       5
-                  0.039704143                            1.0       5
-                 -0.130324290                            0.4       5
-                  0.102844193                            0.8       5
-                  0.091342599                            0.6       5
-                  0.037405463                            0.8       5
-                  0.040240871                            0.6       5
-                  0.128370005                            0.8       5
-                  0.076592352                            0.8       5
-                  0.024209059                            0.6       5
-                 -0.026182145                            0.4       5
-                  0.087266842                            0.6       5
-                  0.075413319                            0.6       5
-                 -0.010201128                            0.4       5
-                 -0.029276440                            0.4       5
-                  0.103208675                            0.8       5
-                  0.131209460                            0.8       5
-                  0.089519255                            0.8       5
-                  0.019749060                            0.6       5
-                  0.011480675                            0.6       5
-                  0.063945833                            0.6       5
-                  0.035156426                            0.6       5
-                 -0.036494212                            0.4       5
-                  0.138072705                            0.8       5
-                  0.077904400                            0.8       5
-                  0.003173067                            0.6       5
-                  0.074693744                            0.8       5
-                  0.115701308                            0.6       5
-                  0.071935650                            0.6       5
-                 -0.066978315                            0.4       5
-                 -0.140057898                            0.4       5
-                 -0.023770321                            0.4       5
-                  0.083624450                            0.6       5
-                 -0.117905675                            0.2       5
-                  0.180237644                            0.6       5
-                 -0.150671965                            0.4       5
-                  0.084904680                            0.8       5
-                 -0.233341490                            0.2       5
-                  0.259293335                            0.6       5
-                  0.073609388                            0.6       5
-                 -0.023667051                            0.4       5
-                 -0.030092017                            0.0       5
-                 -0.320211640                            0.4       5
-                  0.152720825                            0.6       5
-                  0.004110798                            0.6       5
-                 -0.112516932                            0.4       5
-                  0.413250680                            1.0       5
-                 -0.185341755                            0.2       5
-                  0.060314696                            0.6       5
-                 -0.313528090                            0.0       5
-                  0.322607980                            0.8       5
-                 -0.080904405                            0.4       5
-                 -0.065005350                            0.4       5
-                 -0.327389230                            0.2       5
-                  0.155590261                            0.6       5
-                 -0.176486835                            0.4       5
-                 -0.243735630                            0.4       5
-                 -0.371743270                            0.2       5
-                 -0.286259220                            0.4       5
-                 -0.151814287                            0.4       5
-                  0.025209036                            0.6       5
-                 -0.060492355                            0.0       5
-                  0.331462600                            0.8       5
-                  0.098574160                            0.8       5
-                 -0.039036300                            0.2       5
-                  0.205164460                            0.6       5
-                 -0.005481220                            0.4       5
-                  0.065366603                            0.6       5
-                 -0.069853325                            0.0       5
-                 -0.042840025                            0.4       5
-                  0.546221740                            1.0       5
-                  0.244286310                            1.0       5
-                 -0.031051660                            0.4       5
-                 -0.123634405                            0.2       5
-                  0.084649096                            0.6       5
-                  0.108523140                            1.0       5
-                  0.020828714                            0.8       5
-                 -0.021956159                            0.4       5
-                  0.082036291                            0.6       5
+Metric Glossary
+                                    metric
+                                       AIC
+                                 delta_AIC
+                             prop_within_5
+                             transfer_gain
+                           transfer_regret
+                mean_log_error_improvement
+ prop_parameters_transfer_better_than_null
+                                                                                                         interpretation
+                                     Lower is better among trusted optimisation fits; combines fit and parameter count.
+                                AIC minus the best AIC in the ranked set; values near zero indicate comparable support.
+ Fraction of optimisation starts within 5 log-posterior units of the best start; higher means more stable optimisation.
+                                       Held-out predictive improvement of transfer over null; positive favors transfer.
+                                                Held-out predictive gap between oracle and transfer; smaller is better.
+               For reconstructed held-out parameters, positive means transfer is closer to oracle than null on average.
+                Fraction of reconstructed held-out parameters for which transfer beats null; above 0.5 favors transfer.
 
 Key Audit Artifacts
-- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_df.csv
-- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_transfer_df.csv
-- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_df.csv
-- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_hit_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_transfer_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_df.csv
+- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_hit_df.csv

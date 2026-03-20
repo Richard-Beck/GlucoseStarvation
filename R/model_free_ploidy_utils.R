@@ -461,14 +461,14 @@ get_model_free_feature_catalog <- function() {
       "peak_total_yield_slope"
     ),
     short_label = c(
-      "Growth Low G",
-      "Growth High G",
-      "Death Low G",
-      "Death High G",
-      "Alive AUC Baseline",
-      "Alive AUC Glucose Response",
-      "Peak Yield Baseline",
-      "Peak Yield Glucose Response"
+      "Growth Low-G Median",
+      "Growth High-G Median",
+      "Death Low-G Median",
+      "Death High-G Median",
+      "Alive AUC Regression Intercept",
+      "Alive AUC Regression Slope",
+      "Peak Total Yield Regression Intercept",
+      "Peak Total Yield Regression Slope"
     ),
     category = c(
       "Growth",
@@ -480,6 +480,16 @@ get_model_free_feature_catalog <- function() {
       "Yield",
       "Yield"
     ),
+    definition = c(
+      "Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.",
+      "Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.",
+      "Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.",
+      "Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.",
+      "For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the intercept from regressing that quantity on log1p(G0), using only G0 <= 1.",
+      "For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the slope from regressing that quantity on log1p(G0), using only G0 <= 1.",
+      "For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the intercept from regressing that quantity on log1p(G0).",
+      "For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the slope from regressing that quantity on log1p(G0)."
+    ),
     rationale = c(
       "Median maximum live-cell growth rate under severe glucose limitation (G0 <= 0.25). Tests whether ploidy changes the ability to grow when glucose is scarce.",
       "Median maximum live-cell growth rate when glucose is more available (G0 >= 1). Tests whether ploidy shifts proliferative capacity in permissive conditions rather than starvation response.",
@@ -490,15 +500,25 @@ get_model_free_feature_catalog <- function() {
       "Intercept from regression of peak total-cell yield per glucose consumed on log1p(G0). Estimates baseline conversion efficiency of glucose into total cell output near zero glucose.",
       "Slope from regression of peak total-cell yield per glucose consumed on log1p(G0). Tests whether ploidy changes how glucose-to-cell conversion efficiency scales with available glucose."
     ),
-      computation = c(
-        "Median of per-condition smoothed max_growth_rate across G0 <= 0.25.",
-        "Median of per-condition smoothed max_growth_rate across G0 >= 1.",
-        "Median of per-condition smoothed max_death_rate across G0 <= 0.25.",
+    computation = c(
+      "Median of per-condition smoothed max_growth_rate across G0 <= 0.25.",
+      "Median of per-condition smoothed max_growth_rate across G0 >= 1.",
+      "Median of per-condition smoothed max_death_rate across G0 <= 0.25.",
       "Median of per-condition smoothed max_death_rate across G0 >= 1.",
       "Intercept from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
       "Slope from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
       "Intercept from lm(peak_total_yield_per_glucose ~ log1p(G0)).",
       "Slope from lm(peak_total_yield_per_glucose ~ log1p(G0))."
+    ),
+    interpretation = c(
+      "Higher values mean faster best-case live-cell expansion under very low glucose.",
+      "Higher values mean faster best-case live-cell expansion when glucose is not strongly limiting.",
+      "Higher values mean faster dead-cell accumulation under very low glucose.",
+      "Higher values mean faster dead-cell accumulation when glucose is not strongly limiting.",
+      "Higher values mean higher baseline cumulative live-cell burden near zero glucose.",
+      "Higher values mean alive-cell burden rises more steeply as initial glucose increases.",
+      "Higher values mean better baseline conversion of consumed glucose into total cell output near zero glucose.",
+      "Higher values mean glucose-to-total-cell conversion efficiency improves more strongly as initial glucose increases."
     )
   )
 }

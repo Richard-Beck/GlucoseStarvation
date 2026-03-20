@@ -129,8 +129,11 @@ tibble(
 
 ## Curated Feature Set
 
+The table below is the canonical reference for the eight transferred features. The `feature` column is the machine identifier used in saved outputs, and `short_label` is the display name used in figures and summaries.
+
 ```{r feature-catalog}
-feature_catalog
+feature_catalog %>%
+  select(feature, short_label, category, definition, rationale, computation, interpretation)
 ```
 
 ## Core Per-Condition Quantities
@@ -155,7 +158,7 @@ feature_panel %>%
 
 ## Effect Overview
 
-The old heatmap was not interpretable because feature scales differed too much. If we keep a heatmap at all, it should be feature-wise standardized.
+This heatmap is only for pattern screening across cell lines. Each feature is standardized within feature before plotting, so color shows whether a cell line has a relatively stronger or weaker ploidy effect for that feature, not the absolute effect magnitude. The main use is to see whether growth, death, and yield features tell a consistent story across lines.
 
 ```{r effect-heatmap, fig.height=5, fig.width=10}
 signature_effects %>%
@@ -179,6 +182,18 @@ signature_effects %>%
 ## Feature-by-Feature Analysis
 
 ```{r helpers}
+print_feature_details <- function(features) {
+  rows <- feature_catalog %>% filter(feature %in% features)
+  for (i in seq_len(nrow(rows))) {
+    row <- rows[i, ]
+    cat("**", row$short_label, "** (`", row$feature, "`)\n\n", sep = "")
+    cat("Definition: ", row$definition, "\n\n", sep = "")
+    cat("Rationale: ", row$rationale, "\n\n", sep = "")
+    cat("Computation: ", row$computation, "\n\n", sep = "")
+    cat("How to read it: ", row$interpretation, "\n\n", sep = "")
+  }
+}
+
 plot_feature_scatter <- function(raw_col, title, ylab) {
   ggplot(feature_panel, aes(as_g0_factor(G0), .data[[raw_col]], color = factor(ploidy_metric))) +
     geom_point(size = 2) +
@@ -227,11 +242,41 @@ plot_signature_values <- function(sig_col, title, ylab) {
     theme_bw()
 }
 
-plot_trajectory_view <- function(value_col, title, ylab) {
+build_live_reference_df <- function() {
+  feature_panel %>%
+    group_by(cellLine, ploidy_metric) %>%
+    summarise(
+      initial_live_median = median(live_initial, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(
+      signature_panel %>%
+        select(cellLine, ploidy_metric, growth_highG_median),
+      by = c("cellLine", "ploidy_metric")
+    ) %>%
+    inner_join(
+      count_summary %>%
+        group_by(cellLine, ploidy_metric) %>%
+        summarise(hours = list(sort(unique(hours))), .groups = "drop") %>%
+        tidyr::unnest(hours),
+      by = c("cellLine", "ploidy_metric")
+    ) %>%
+    group_by(cellLine, ploidy_metric) %>%
+    mutate(
+      start_hour = min(hours, na.rm = TRUE),
+      ref_live_cells = pmax(
+        expm1(log1p(initial_live_median) + growth_highG_median * (hours - start_hour)),
+        0
+      )
+    ) %>%
+    ungroup()
+}
+
+plot_trajectory_view <- function(value_col, title, ylab, add_live_reference = FALSE) {
   count_long <- feature_panel %>%
     select(cellLine, ploidy_metric, G0, well_idx)
 
-  count_summary %>%
+  p <- count_summary %>%
     inner_join(count_long, by = c("well_idx", "cellLine", "ploidy_metric", "G0")) %>%
     ggplot(aes(hours, .data[[value_col]], color = as_g0_factor(G0), group = interaction(well_idx, G0))) +
     geom_line(alpha = 0.7) +
@@ -239,6 +284,20 @@ plot_trajectory_view <- function(value_col, title, ylab) {
     scale_color_brewer(palette = "Spectral", name = "G0") +
     labs(title = title, x = "hours", y = ylab) +
     theme_bw()
+
+  if (add_live_reference && identical(value_col, "live_cells")) {
+    p <- p +
+      geom_line(
+        data = build_live_reference_df(),
+        aes(hours, ref_live_cells, group = interaction(cellLine, ploidy_metric)),
+        inherit.aes = FALSE,
+        color = "black",
+        linewidth = 0.9,
+        linetype = "22"
+      )
+  }
+
+  p
 }
 
 plot_rate_processing <- function(raw_col, smooth_col, title, ylab) {
@@ -276,17 +335,16 @@ plot_yield_inputs <- function() {
 ### Growth Features
 
 ```{r growth-lowg-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "growth_lowG_median")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-row <- feature_catalog %>% filter(feature == "growth_highG_median")
-cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("4. Computation: ", row$computation, "\n", sep = "")
+print_feature_details(c("growth_lowG_median", "growth_highG_median"))
 ```
 
+The trajectory plot should be read as a shape check on the growth feature. Colored lines are observed live-cell trajectories by initial glucose. The dashed black line in each panel is a simple reference curve built from the median initial live-cell count for that cell line and ploidy plus the corresponding `growth_highG_median` smoothed rate. It is not a fit to any one well. It is there to show whether the summarized high-glucose growth rate is in the right ballpark for the observed live-cell expansion.
+
 ```{r growth-plot, fig.height=6, fig.width=10}
-plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories", "live cells")
+plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories With High-G Growth Reference", "live cells", add_live_reference = TRUE)
 ```
+
+This processing plot shows exactly what smoothing is changing. Each condition contributes a raw max growth rate and a smoothed max growth rate; large separations indicate that pointwise derivatives were noisy for that condition. The summarized growth signatures below are built from the smoothed values, not the raw ones.
 
 ```{r growth-processing, fig.height=6, fig.width=10}
 plot_rate_processing(
@@ -297,25 +355,26 @@ plot_rate_processing(
 )
 ```
 
+These bars are the actual transferred growth features. Within each cell line, compare the two ploidy values directly. The high-G bar uses the same smoothed per-condition rates that define the black reference curves above.
+
 ```{r growth-signatures, fig.height=7, fig.width=10}
-plot_signature_values("growth_lowG_median", "Aggregated Feature: Growth Low G Median", "median max growth rate at G0 <= 0.25") /
-  plot_signature_values("growth_highG_median", "Aggregated Feature: Growth High G Median", "median max growth rate at G0 >= 1")
+plot_signature_values("growth_lowG_median", "Aggregated Feature: Growth Low-G Median", "median smoothed max growth rate at G0 <= 0.25") /
+  plot_signature_values("growth_highG_median", "Aggregated Feature: Growth High-G Median", "median smoothed max growth rate at G0 >= 1")
 ```
 
 ### Death Features
 
 ```{r death-lowg-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "death_lowG_median")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-row <- feature_catalog %>% filter(feature == "death_highG_median")
-cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("4. Computation: ", row$computation, "\n", sep = "")
+print_feature_details(c("death_lowG_median", "death_highG_median"))
 ```
+
+This trajectory plot is the death-side analogue of the live-cell view above. Look for whether higher-ploidy panels show systematically faster dead-cell accumulation, and whether that separation is concentrated at low glucose or persists into higher-glucose conditions.
 
 ```{r death-plot, fig.height=6, fig.width=10}
 plot_trajectory_view("dead_cells", "Underlying Dead-Cell Trajectories", "dead cells")
 ```
+
+This processing plot again compares the raw derivative-based summary with the smoothed derivative-based summary. If the smoothed and raw values agree, the death feature is structurally robust; if they diverge, the smoothing step is doing substantial denoising and should be kept in mind when interpreting marginal cases.
 
 ```{r death-processing, fig.height=6, fig.width=10}
 plot_rate_processing(
@@ -327,20 +386,17 @@ plot_rate_processing(
 ```
 
 ```{r death-signatures, fig.height=7, fig.width=10}
-plot_signature_values("death_lowG_median", "Aggregated Feature: Death Low G Median", "median max death rate at G0 <= 0.25") /
-  plot_signature_values("death_highG_median", "Aggregated Feature: Death High G Median", "median max death rate at G0 >= 1")
+plot_signature_values("death_lowG_median", "Aggregated Feature: Death Low-G Median", "median smoothed max death rate at G0 <= 0.25") /
+  plot_signature_values("death_highG_median", "Aggregated Feature: Death High-G Median", "median smoothed max death rate at G0 >= 1")
 ```
 
 ### Alive AUC Features
 
 ```{r aliveauc-int-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "yield_alive_auc_intercept")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-row <- feature_catalog %>% filter(feature == "yield_alive_auc_slope")
-cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("4. Computation: ", row$computation, "\n", sep = "")
+print_feature_details(c("yield_alive_auc_intercept", "yield_alive_auc_slope"))
 ```
+
+This regression plot is the main validation view for the Alive AUC features. Points are observed per-condition `live_auc_glucose_window` values and lines are the within-line, within-ploidy regressions on `log1p(G0)` used to generate the intercept and slope. Read the intercept as the near-zero-glucose baseline and the slope as the glucose responsiveness.
 
 ```{r aliveauc-reg-plot, fig.height=6, fig.width=10}
 plot_feature_regression(
@@ -359,6 +415,8 @@ plot_feature_scatter(
 )
 ```
 
+These bars are the transferred Alive AUC features themselves. The intercept panel should be read as baseline cumulative live-cell burden near zero glucose; the slope panel should be read as how much that cumulative burden increases as initial glucose rises.
+
 ```{r aliveauc-signatures, fig.height=7, fig.width=10}
 plot_signature_values("yield_alive_auc_intercept", "Aggregated Feature: Alive AUC Regression Intercept", "intercept of alive AUC ~ log1p(G0), fit on G0 <= 1") /
   plot_signature_values("yield_alive_auc_slope", "Aggregated Feature: Alive AUC Regression Slope", "slope of alive AUC ~ log1p(G0), fit on G0 <= 1")
@@ -367,13 +425,10 @@ plot_signature_values("yield_alive_auc_intercept", "Aggregated Feature: Alive AU
 ### Peak Yield Features
 
 ```{r peakyield-int-text, results='asis'}
-row <- feature_catalog %>% filter(feature == "peak_total_yield_intercept")
-cat("1. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("2. Computation: ", row$computation, "\n", sep = "")
-row <- feature_catalog %>% filter(feature == "peak_total_yield_slope")
-cat("\n\n3. Rationale: ", row$rationale, "\n\n", sep = "")
-cat("4. Computation: ", row$computation, "\n", sep = "")
+print_feature_details(c("peak_total_yield_intercept", "peak_total_yield_slope"))
 ```
+
+This regression plot shows the response quantity that feeds the peak total yield features. Each point is a condition-level estimate of total cell output per unit glucose consumed. The intercept captures the low-glucose baseline of that efficiency curve, and the slope captures how strongly that efficiency changes as the initial glucose level increases.
 
 ```{r peakyield-reg-plot, fig.height=6, fig.width=10}
 plot_feature_regression(
@@ -387,12 +442,16 @@ plot_feature_regression(
 plot_yield_inputs()
 ```
 
+This component plot is included because `peak_total_yield_per_glucose` is composite and otherwise hard to interpret. The top row shows glucose drawdown, the middle row shows total-cell net gain over the same glucose-observation window, and the bottom row shows the ratio of those two quantities. If a ploidy effect appears in the ratio, this panel helps identify whether it is being driven by numerator changes, denominator changes, or both.
+
 ```{r peakyield-signatures, fig.height=7, fig.width=10}
 plot_signature_values("peak_total_yield_intercept", "Aggregated Feature: Peak Yield Regression Intercept", "intercept of peak yield ~ log1p(G0)") /
   plot_signature_values("peak_total_yield_slope", "Aggregated Feature: Peak Yield Regression Slope", "slope of peak yield ~ log1p(G0)")
 ```
 
 ## Transfer Summary
+
+These transfer summaries use the same display names as the feature sections above. Positive improvement means the transferred ploidy effect outperformed the null baseline on average after feature-wise error scaling.
 
 ```{r transfer-summary}
 transfer_feature_summary %>%
@@ -417,6 +476,8 @@ transfer_feature_summary %>%
   ) +
   theme_bw()
 ```
+
+Read this chart as a ranking of which feature families carry the most reusable cross-line ploidy signal. Bar height is mean improvement over the null model, and fill shows how often transfer won at the per-case level. A useful feature should ideally be both high and dark.
 
 ```{r transfer-case-summary}
 transfer_case_summary %>%

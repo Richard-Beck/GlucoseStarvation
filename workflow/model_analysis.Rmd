@@ -127,6 +127,7 @@ write_agent_text_report <- function(
   path = project_paths$agent_text_path,
   ranking_df,
   support_set_df = NULL,
+  shortlist_df = NULL,
   provenance_df = NULL,
   metric_glossary_df = NULL,
   selected_model_summary_df = NULL,
@@ -147,10 +148,10 @@ write_agent_text_report <- function(
     x <- selected_model_summary_df[1, , drop = FALSE]
     lines <- c(
       lines,
-      "Selected Model",
+      "Representative Model",
       sprintf("model_id: %s", x$model_id[[1]]),
       sprintf("alias: %s", x$alias[[1]]),
-      sprintf("selection_basis: best mean rank across fit, stability, directional agreement, predictive transfer, and parameter transfer within the support set"),
+      sprintf("selection_basis: best mean rank within the aggregated shortlist; used for single-model plots only"),
       sprintf("delta_AIC: %.3f", x$delta_AIC[[1]]),
       sprintf("prop_within_1: %.3f", x$prop_within_1[[1]]),
       sprintf("prop_within_5: %.3f", x$prop_within_5[[1]]),
@@ -163,10 +164,19 @@ write_agent_text_report <- function(
     )
   }
 
+  if (!is.null(shortlist_df) && nrow(shortlist_df)) {
+    lines <- c(
+      lines,
+      "Aggregated Shortlist",
+      capture.output(print(as.data.frame(shortlist_df), row.names = FALSE)),
+      ""
+    )
+  }
+
   if (!is.null(support_set_df) && nrow(support_set_df)) {
     lines <- c(
       lines,
-      "Support Set",
+      "AIC Support Set",
       capture.output(print(as.data.frame(support_set_df), row.names = FALSE)),
       ""
     )
@@ -200,10 +210,18 @@ write_agent_text_report <- function(
   }
 
   if (!is.null(focused_hit_df) && nrow(focused_hit_df)) {
+    focused_summary_df <- focused_hit_df %>%
+      group_by(parameter) %>%
+      summarise(
+        mean_log_error_improvement = mean(mean_log_error_improvement, na.rm = TRUE),
+        mean_win_rate = mean(prop_transfer_better_than_null, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(mean_log_error_improvement), desc(mean_win_rate))
     lines <- c(
       lines,
-      "Focused Parameter Hit Summary",
-      capture.output(print(as.data.frame(focused_hit_df), row.names = FALSE)),
+      "Focused Parameter Summary",
+      capture.output(print(as.data.frame(focused_summary_df), row.names = FALSE)),
       ""
     )
   }
@@ -219,6 +237,26 @@ write_agent_text_report <- function(
 
   lines <- c(
     lines,
+    "Interpretation Verdict",
+    if (!is.null(shortlist_df) && nrow(shortlist_df)) {
+      pos_pred <- shortlist_df %>% filter(!is.na(mean_transfer_gain), mean_transfer_gain > 0)
+      pos_param <- shortlist_df %>% filter(!is.na(mean_parameter_log_error_improvement), mean_parameter_log_error_improvement > 0)
+      c(
+        sprintf("shortlist_models: %s", paste(shortlist_df$model_id, collapse = ", ")),
+        if (!nrow(pos_pred) && !nrow(pos_param)) {
+          "verdict: no shortlisted model is positive on average for either predictive transfer or parameter transfer."
+        } else if (nrow(pos_pred) && !nrow(pos_param)) {
+          "verdict: some shortlisted models improve predictive transfer, but none are positive on average for parameter transfer."
+        } else if (!nrow(pos_pred) && nrow(pos_param)) {
+          "verdict: some shortlisted models improve parameter transfer, but none are positive on average for predictive transfer."
+        } else {
+          "verdict: at least some shortlisted models are positive on both predictive and parameter-transfer summaries."
+        }
+      )
+    } else {
+      "verdict: no shortlist available."
+    },
+    "",
     "Key Audit Artifacts",
     sprintf("- %s", artifact_csv_path("raw_theta_ploidy_df", report_export_root)),
     sprintf("- %s", artifact_csv_path("raw_theta_ploidy_transfer_df", report_export_root)),
@@ -272,6 +310,60 @@ build_support_set <- function(ranking_df, stability_df, delta_aic_cutoff = 10) {
     filter(delta_AIC <= delta_aic_cutoff) %>%
     select(model_id, alias, delta_AIC, k, prop_within_1, prop_within_5) %>%
     arrange(delta_AIC, desc(prop_within_1), desc(prop_within_5))
+}
+
+build_aggregated_shortlist <- function(model_screen_df, top_n_mean_rank = 4L) {
+  if (!nrow(model_screen_df)) {
+    return(tibble())
+  }
+
+  rank_cols <- c(
+    "rank_delta_AIC",
+    "rank_stability",
+    "rank_directional_agreement",
+    "rank_predictive_transfer",
+    "rank_parameter_transfer"
+  )
+  keep_cols <- rank_cols[rank_cols %in% names(model_screen_df)]
+  if (!length(keep_cols)) {
+    return(model_screen_df %>% arrange(mean_rank) %>% slice_head(n = top_n_mean_rank))
+  }
+
+  is_nondominated <- function(i) {
+    xi <- as.numeric(model_screen_df[i, keep_cols, drop = TRUE])
+    others <- seq_len(nrow(model_screen_df))
+    others <- others[others != i]
+    for (j in others) {
+      xj <- as.numeric(model_screen_df[j, keep_cols, drop = TRUE])
+      if (all(xj <= xi, na.rm = TRUE) && any(xj < xi, na.rm = TRUE)) {
+        return(FALSE)
+      }
+    }
+    TRUE
+  }
+
+  pareto_idx <- which(vapply(seq_len(nrow(model_screen_df)), is_nondominated, logical(1)))
+  pareto_df <- model_screen_df[pareto_idx, , drop = FALSE] %>%
+    mutate(shortlist_source = "pareto")
+  top_df <- model_screen_df %>%
+    arrange(mean_rank, delta_AIC) %>%
+    slice_head(n = top_n_mean_rank) %>%
+    mutate(shortlist_source = "top_mean_rank")
+
+  bind_rows(pareto_df, top_df) %>%
+    group_by(model_id) %>%
+    summarise(
+      alias = first(alias),
+      delta_AIC = first(delta_AIC),
+      prop_within_1 = first(prop_within_1),
+      prop_directional_agreement_model = first(prop_directional_agreement_model),
+      mean_transfer_gain = first(mean_transfer_gain),
+      mean_parameter_log_error_improvement = first(mean_parameter_log_error_improvement),
+      mean_rank = first(mean_rank),
+      shortlist_source = paste(sort(unique(shortlist_source)), collapse = "+"),
+      .groups = "drop"
+    ) %>%
+    arrange(mean_rank, delta_AIC)
 }
 
 build_metric_glossary <- function() {
@@ -1302,6 +1394,7 @@ stability_df <- build_stability_summary(ranking_df)
 selected_model_id_aic <- find_selected_model(ranking_df)
 selected_model_id <- selected_model_id_aic
 support_set_df <- build_support_set(ranking_df, stability_df)
+shortlist_df <- tibble()
 metric_glossary_df <- build_metric_glossary()
 provenance_df <- build_current_provenance_table(
   ranking_df = ranking_df,
@@ -1599,7 +1692,7 @@ if (!nrow(ranking_df)) {
 if (!nrow(support_set_df)) {
   announce_missing("No models fall within the current Delta AIC support threshold.")
 } else {
-  cat("Support set used for downstream robustness checks (`delta_AIC <= 10`)\n\n")
+  cat("Strict AIC support set (`delta_AIC <= 10`)\n\n")
   print(as.data.frame(support_set_df), row.names = FALSE)
 }
 ```
@@ -1609,7 +1702,7 @@ if (nrow(ranking_df)) {
   best_row <- ranking_df %>% slice_head(n = 1)
   support_n <- nrow(support_set_df)
   knitr::asis_output(sprintf(
-    "**Takeaway.** `%s` (%s) is the best pure-fit model by AIC, but downstream selection is no longer based on AIC alone. The report now treats the `%d` models with `delta_AIC <= 10` as the support set for robustness checks and later re-ranks that set using fit, optimisation stability, directional agreement, predictive transfer, and parameter transfer.\n",
+    "**Takeaway.** `%s` (%s) is the best pure-fit model by AIC, but downstream interpretation is no longer driven by that strict fit support set alone. The strict `delta_AIC <= 10` support set currently contains `%d` model(s), so the report now builds a broader aggregated shortlist using fit, optimisation stability, directional agreement, predictive transfer, and parameter transfer.\n",
     best_row$model_id[[1]],
     best_row$alias[[1]],
     support_n
@@ -1688,11 +1781,8 @@ model_screen_df <- summarize_model_screen(
   screen_transfer_df = screen_transfer_df,
   screen_parameter_df = screen_parameter_df
 )
-selection_pool_df <- if (nrow(support_set_df)) {
-  model_screen_df %>% filter(model_id %in% support_set_df$model_id)
-} else {
-  model_screen_df
-}
+shortlist_df <- build_aggregated_shortlist(model_screen_df)
+selection_pool_df <- if (nrow(shortlist_df)) shortlist_df else model_screen_df
 selected_model_id <- selection_pool_df %>%
   arrange(mean_rank, delta_AIC, desc(prop_within_1), desc(mean_parameter_log_error_improvement)) %>%
   slice_head(n = 1) %>%
@@ -1722,7 +1812,27 @@ audit_index_df <- bind_rows(
 )
 ```
 
-## Selected-Model Scorecard
+## Aggregated Shortlist
+
+```{r aggregated-shortlist}
+if (!nrow(shortlist_df)) {
+  announce_missing("No aggregated shortlist could be built.")
+} else {
+  print(as.data.frame(shortlist_df), row.names = FALSE)
+}
+```
+
+```{r aggregated-shortlist-takeaway, results='asis'}
+if (nrow(shortlist_df)) {
+  shortlist_txt <- paste(shortlist_df$model_id, collapse = ", ")
+  knitr::asis_output(sprintf(
+    "**Shortlist.** The report now treats `%s` as the primary shortlist for downstream interpretation. These models either lie on the multi-metric Pareto front, rank near the top by mean rank, or both.\n",
+    shortlist_txt
+  ))
+}
+```
+
+## Representative Model Scorecard
 
 ```{r selected-model-scorecard}
 if (!nrow(selected_model_summary_df)) {
@@ -1784,7 +1894,7 @@ if (!nrow(model_screen_df)) {
 
 ```{r selected-model-scorecard-takeaway, results='asis'}
 if (nrow(selected_model_summary_df)) {
-  knitr::asis_output(sprintf("**Selected-model summary.** %s\n", build_selected_model_takeaway(selected_model_summary_df)))
+  knitr::asis_output(sprintf("**Representative model.** %s This representative model is used for single-model summaries and plots, but the shortlist above is the primary object for interpretation.\n", build_selected_model_takeaway(selected_model_summary_df)))
 }
 ```
 
@@ -2181,6 +2291,7 @@ print(
 agent_text_path <- write_agent_text_report(
   ranking_df = ranking_df,
   support_set_df = if (exists("support_set_df", inherits = TRUE)) support_set_df else tibble(),
+  shortlist_df = if (exists("shortlist_df", inherits = TRUE)) shortlist_df else tibble(),
   provenance_df = if (exists("provenance_df", inherits = TRUE)) provenance_df else tibble(),
   metric_glossary_df = if (exists("metric_glossary_df", inherits = TRUE)) metric_glossary_df else tibble(),
   selected_model_summary_df = if (exists("selected_model_summary_df", inherits = TRUE)) selected_model_summary_df else tibble(),
@@ -2608,21 +2719,36 @@ if (is.na(selected_model_id)) {
 ```
 
 ```{r interpretation-takeaway, results='asis'}
-if (nrow(selected_model_summary_df)) {
-  x <- selected_model_summary_df[1, , drop = FALSE]
-  support_note <- if (nrow(support_set_df)) {
-    sprintf(
-      "For robustness, the report also keeps %d support-set models with `delta_AIC <= 10` in view.",
-      nrow(support_set_df)
-    )
+if (nrow(selected_model_summary_df) || nrow(shortlist_df)) {
+  shortlist_note <- if (nrow(shortlist_df)) {
+    paste(shortlist_df$model_id, collapse = ", ")
   } else {
-    "No broader support set was available under the current threshold."
+    "no aggregated shortlist"
   }
-
+  shortlist_verdict <- if (nrow(shortlist_df)) {
+    pos_pred <- shortlist_df %>% filter(!is.na(mean_transfer_gain), mean_transfer_gain > 0)
+    pos_param <- shortlist_df %>% filter(!is.na(mean_parameter_log_error_improvement), mean_parameter_log_error_improvement > 0)
+    if (!nrow(pos_pred) && !nrow(pos_param)) {
+      "Across the shortlist, there is no model that is positive on average for either predictive transfer or parameter transfer."
+    } else if (nrow(pos_pred) && !nrow(pos_param)) {
+      "Across the shortlist, some models improve predictive transfer, but none show positive average parameter-transfer improvement."
+    } else if (!nrow(pos_pred) && nrow(pos_param)) {
+      "Across the shortlist, some models improve parameter transfer, but none show positive average predictive transfer gain."
+    } else {
+      "Across the shortlist, at least some models are positive on both predictive and parameter-transfer summaries."
+    }
+  } else {
+    "No shortlist-level verdict could be formed."
+  }
   knitr::asis_output(sprintf(
-    "**Interpretation.** %s %s The predictive summaries should be treated as a benchmark, but the parameter-transfer summaries remain the more direct readout for the biological question.\n",
-    build_selected_model_takeaway(selected_model_summary_df),
-    support_note
+    paste(
+      "**Interpretation.**",
+      "Primary interpretation should now be based on the aggregated shortlist rather than a single winner.",
+      sprintf("The current shortlist is: %s.", shortlist_note),
+      shortlist_verdict,
+      if (nrow(selected_model_summary_df)) sprintf("For single-model views, the representative model is `%s`.", selected_model_summary_df$model_id[[1]]) else "",
+      "The predictive summaries remain a benchmark, but parameter transfer is still the more direct scientific readout."
+    )
   ))
 }
 ```

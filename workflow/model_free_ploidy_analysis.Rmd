@@ -57,7 +57,8 @@ paths <- list(
   signature_effects = file.path(analysis_root, "signature_effects_long.Rds"),
   transfer_predictions = file.path(analysis_root, "transfer_predictions.Rds"),
   transfer_feature_summary = file.path(analysis_root, "transfer_feature_summary.Rds"),
-  transfer_case_summary = file.path(analysis_root, "transfer_case_summary.Rds")
+  transfer_case_summary = file.path(analysis_root, "transfer_case_summary.Rds"),
+  agent_text = file.path("workflow", "model_free_ploidy_analysis.txt")
 )
 
 safe_read_rds <- function(path) {
@@ -77,6 +78,10 @@ if (is.null(feature_panel) && !file.exists(paths$stan_data)) {
 }
 
 feature_panel_required_cols <- c(
+  "exp_growth_rate_70",
+  "exp_growth_fit_end_time_70",
+  "exp_growth_fit_n_points_70",
+  "exp_growth_fit_r2_70",
   "max_growth_rate_raw",
   "max_growth_rate",
   "max_death_rate_raw",
@@ -195,6 +200,77 @@ print_feature_details <- function(features) {
   }
 }
 
+write_model_free_agent_text_report <- function(
+  path = paths$agent_text,
+  feature_catalog,
+  feature_panel,
+  signature_panel,
+  signature_effects,
+  transfer_feature_summary,
+  transfer_case_summary
+) {
+  exp_fit_qc <- feature_panel %>%
+    filter(G0 %in% c(5, 25)) %>%
+    group_by(cellLine, ploidy_metric) %>%
+    summarise(
+      n_highG_wells = sum(is.finite(exp_growth_rate_70)),
+      median_exp_growth_rate_70 = safe_median(exp_growth_rate_70),
+      median_fit_end_time_70 = safe_median(exp_growth_fit_end_time_70),
+      median_fit_n_points_70 = safe_median(exp_growth_fit_n_points_70),
+      median_fit_r2_70 = safe_median(exp_growth_fit_r2_70),
+      median_initial_live_highG = safe_median(live_initial),
+      .groups = "drop"
+    )
+
+  signature_long <- signature_panel %>%
+    select(cellLine, ploidy_metric, all_of(feature_catalog$feature)) %>%
+    pivot_longer(cols = all_of(feature_catalog$feature), names_to = "feature", values_to = "value") %>%
+    left_join(feature_catalog %>% select(feature, short_label, category), by = "feature") %>%
+    arrange(category, short_label, cellLine, ploidy_metric)
+
+  effect_table <- signature_effects %>%
+    left_join(feature_catalog %>% select(feature, short_label, category), by = "feature") %>%
+    arrange(desc(abs(effect_per_ploidy)), category, short_label, cellLine)
+
+  transfer_table <- transfer_feature_summary %>%
+    left_join(feature_catalog %>% select(feature, short_label, category), by = "feature") %>%
+    select(feature, short_label, category, n_cases, scaled_mae_null, scaled_mae_transfer, mean_scaled_err_improvement, transfer_win_rate, sign_accuracy) %>%
+    arrange(desc(mean_scaled_err_improvement), desc(transfer_win_rate), short_label)
+
+  feature_definitions <- feature_catalog %>%
+    select(feature, short_label, category, definition, interpretation)
+
+  lines <- c(
+    "Model-Free Ploidy Analysis Summary",
+    "",
+    sprintf("Generated: %s", Sys.time()),
+    sprintf("Stan data: %s", paths$stan_data),
+    sprintf("Feature panel source: %s", if (file.exists(paths$feature_panel)) paths$feature_panel else "rebuilt in notebook from stan_data"),
+    "",
+    "Feature Definitions",
+    capture.output(print(as.data.frame(feature_definitions), row.names = FALSE)),
+    "",
+    "Per-Line Signature Values",
+    capture.output(print(as.data.frame(signature_long), row.names = FALSE)),
+    "",
+    "Paired Ploidy Effects Per Feature",
+    capture.output(print(as.data.frame(effect_table), row.names = FALSE)),
+    "",
+    "Transfer Ranking",
+    capture.output(print(as.data.frame(transfer_table), row.names = FALSE)),
+    "",
+    "Transfer Case Summary",
+    capture.output(print(as.data.frame(transfer_case_summary %>% arrange(desc(mean_scaled_err_improvement), desc(transfer_win_rate))), row.names = FALSE)),
+    "",
+    "High-G Exponential Fit QC",
+    capture.output(print(as.data.frame(exp_fit_qc), row.names = FALSE)),
+    ""
+  )
+
+  writeLines(lines, path, useBytes = TRUE)
+  invisible(path)
+}
+
 plot_feature_scatter <- function(raw_col, title, ylab) {
   ggplot(feature_panel, aes(as_g0_factor(G0), .data[[raw_col]], color = factor(ploidy_metric))) +
     geom_point(size = 2) +
@@ -245,6 +321,7 @@ plot_signature_values <- function(sig_col, title, ylab) {
 
 build_live_reference_df <- function() {
   feature_panel %>%
+    filter(G0 %in% c(5, 25)) %>%
     group_by(cellLine, ploidy_metric) %>%
     summarise(
       initial_live_median = median(live_initial, na.rm = TRUE),
@@ -275,7 +352,7 @@ build_live_reference_df <- function() {
     ungroup()
 }
 
-plot_trajectory_view <- function(value_col, title, ylab, add_live_reference = FALSE) {
+plot_trajectory_view <- function(value_col, title, ylab, add_live_reference = FALSE, swap_facets = FALSE) {
   count_long <- feature_panel %>%
     select(cellLine, ploidy_metric, G0, well_idx)
 
@@ -283,10 +360,15 @@ plot_trajectory_view <- function(value_col, title, ylab, add_live_reference = FA
     inner_join(count_long, by = c("well_idx", "cellLine", "ploidy_metric", "G0")) %>%
     ggplot(aes(hours, .data[[value_col]], color = as_g0_factor(G0), group = interaction(well_idx, G0))) +
     geom_line(alpha = 0.7) +
-    facet_grid(rows = vars(factor(ploidy_metric)), cols = vars(cellLine), scales = "free_y") +
     scale_color_brewer(palette = "Spectral", name = "G0") +
     labs(title = title, x = "hours", y = ylab) +
     theme_bw()
+
+  if (swap_facets) {
+    p <- p + facet_grid(rows = vars(cellLine), cols = vars(factor(ploidy_metric)), scales = "free_y")
+  } else {
+    p <- p + facet_grid(rows = vars(factor(ploidy_metric)), cols = vars(cellLine), scales = "free_y")
+  }
 
   if (add_live_reference && identical(value_col, "live_cells")) {
     p <- p +
@@ -341,13 +423,11 @@ plot_yield_inputs <- function() {
 print_feature_details(c("growth_lowG_median", "growth_highG_median"))
 ```
 
-The trajectory plot should be read as a shape check on the growth feature. Colored lines are observed live-cell trajectories by initial glucose. The dashed black line in each panel is a simple reference curve built from the median initial live-cell count for that cell line and ploidy plus the corresponding `growth_highG_median` exponential-phase rate. That rate is now defined from `G0 = 5` and `G0 = 25` wells only, using a log-linear fit from `t = 0` to the first time the well reaches 70% of its own maximum live-cell count. It is not a fit to any one well. It is there to show whether the summarized high-glucose growth rate is in the right ballpark for the observed early live-cell expansion.
+The trajectory plot should be read as a shape check on the growth feature. Colored lines are observed live-cell trajectories by initial glucose. The dashed black line in each panel is a simple reference curve built from the median initial live-cell count from `G0 = 5` and `G0 = 25` wells for that cell line and ploidy, plus the corresponding `growth_highG_median` exponential-phase rate. That rate is defined from `G0 = 5` and `G0 = 25` wells only, using a log-linear fit from `t = 0` to the first time the well reaches 70% of its own maximum live-cell count. It is not a fit to any one well. It is there to show whether the summarized high-glucose growth rate is in the right ballpark for the observed early live-cell expansion.
 
 ```{r growth-plot, fig.height=6, fig.width=10}
-plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories With High-G Growth Reference", "live cells", add_live_reference = TRUE)
+plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories With High-G Growth Reference", "live cells", add_live_reference = TRUE, swap_facets = TRUE)
 ```
-
-This processing plot still shows what smoothing does to the older derivative-based growth summary. It remains useful as a QC view for trajectory shape, but the high-glucose growth signature below is no longer taken from these smoothed maxima. Instead, the high-glucose signature now uses the explicit exponential-phase fit described above.
 
 ```{r growth-processing, fig.height=6, fig.width=10}
 plot_rate_processing(
@@ -493,3 +573,15 @@ transfer_case_summary %>%
 - `peak_total_yield_per_glucose` uses net gain in `live + dead` over the glucose-measurement window, divided by glucose drawdown, with negative net gains floored at zero before conversion to yield.
 - Transfer is now evaluated only on the curated eight-feature panel.
 - Cross-feature comparisons use scaled errors, so large-magnitude yield features no longer dominate the summary.
+
+```{r agent-text-export, include=FALSE}
+write_model_free_agent_text_report(
+  path = paths$agent_text,
+  feature_catalog = feature_catalog,
+  feature_panel = feature_panel,
+  signature_panel = signature_panel,
+  signature_effects = signature_effects,
+  transfer_feature_summary = transfer_feature_summary,
+  transfer_case_summary = transfer_case_summary
+)
+```

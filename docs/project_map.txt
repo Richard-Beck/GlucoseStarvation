@@ -115,7 +115,7 @@
   cross-line ploidy effect per signature as the transferred effect and reporting scaled error summaries so
   heterogeneous feature magnitudes do not dominate. workflow/model_free_ploidy_analysis.Rmd is the reporting notebook
   for this branch and now presents one section per curated feature with rationale plus the corresponding computation
-  plot.
+  plot; it also writes workflow/model_free_ploidy_analysis.txt as an agent-readable results companion.
 
   Image-derived feature branch
 

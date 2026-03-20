@@ -158,7 +158,7 @@ feature_panel %>%
 
 ## Effect Overview
 
-This heatmap is only for pattern screening across cell lines. Each feature is standardized within feature before plotting, so color shows whether a cell line has a relatively stronger or weaker ploidy effect for that feature, not the absolute effect magnitude. The main use is to see whether growth, death, and yield features tell a consistent story across lines.
+This heatmap is only for pattern screening across cell lines. Each feature is standardized within feature before plotting, so color shows whether a cell line has a relatively stronger or weaker ploidy effect for that feature, not the absolute effect magnitude. The growth and death entries here come from the smoothed summaries (`growth_*_median`, `death_*_median`), not the raw derivative estimates. The main use is to see whether growth, death, and yield features tell a consistent story across lines.
 
 ```{r effect-heatmap, fig.height=5, fig.width=10}
 signature_effects %>%
@@ -247,6 +247,7 @@ build_live_reference_df <- function() {
     group_by(cellLine, ploidy_metric) %>%
     summarise(
       initial_live_median = median(live_initial, na.rm = TRUE),
+      max_live_obs = max(live_peak, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     left_join(
@@ -267,7 +268,8 @@ build_live_reference_df <- function() {
       ref_live_cells = pmax(
         expm1(log1p(initial_live_median) + growth_highG_median * (hours - start_hour)),
         0
-      )
+      ),
+      ref_live_cells = if_else(ref_live_cells <= max_live_obs, ref_live_cells, NA_real_)
     ) %>%
     ungroup()
 }

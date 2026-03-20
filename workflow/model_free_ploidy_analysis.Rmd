@@ -51,6 +51,8 @@ analysis_root <- file.path("data", "model_free_ploidy")
 paths <- list(
   stan_data = resolve_stan_data_path(),
   feature_panel = file.path(analysis_root, "feature_panel.Rds"),
+  count_summary = file.path(analysis_root, "count_summary.Rds"),
+  glucose_summary = file.path(analysis_root, "glucose_summary.Rds"),
   signature_panel = file.path(analysis_root, "signature_panel.Rds"),
   signature_effects = file.path(analysis_root, "signature_effects_long.Rds"),
   transfer_predictions = file.path(analysis_root, "transfer_predictions.Rds"),
@@ -66,6 +68,8 @@ safe_read_rds <- function(path) {
 }
 
 feature_panel <- safe_read_rds(paths$feature_panel)
+count_summary <- safe_read_rds(paths$count_summary)
+glucose_summary <- safe_read_rds(paths$glucose_summary)
 signature_panel <- safe_read_rds(paths$signature_panel)
 signature_effects <- safe_read_rds(paths$signature_effects)
 transfer_predictions <- safe_read_rds(paths$transfer_predictions)
@@ -76,6 +80,16 @@ feature_catalog <- get_model_free_feature_catalog()
 required_paths <- unlist(paths[c("feature_panel", "signature_panel", "signature_effects", "transfer_predictions", "transfer_feature_summary")])
 if (!all(file.exists(required_paths))) {
   stop("Required outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
+}
+
+if (is.null(count_summary) || is.null(glucose_summary)) {
+  tables <- build_model_free_tables(paths$stan_data)
+  if (is.null(count_summary)) {
+    count_summary <- tables$count_summary
+  }
+  if (is.null(glucose_summary)) {
+    glucose_summary <- tables$glucose_summary
+  }
 }
 
 cat("Working directory:", getwd(), "\n")

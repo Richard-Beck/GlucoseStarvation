@@ -140,6 +140,64 @@ calc_smoothed_rate_extrema <- function(hours, value, log1p_scale = FALSE, spar =
   )
 }
 
+fit_exponential_phase <- function(hours, live_cells, frac_of_max = 0.7) {
+  ok <- is.finite(hours) & is.finite(live_cells)
+  hours <- hours[ok]
+  live_cells <- live_cells[ok]
+
+  if (length(hours) < 3L) {
+    return(list(
+      rate = NA_real_,
+      intercept = NA_real_,
+      end_time = NA_real_,
+      n_fit_points = 0L,
+      fit_r_squared = NA_real_
+    ))
+  }
+
+  ord <- order(hours)
+  hours <- hours[ord]
+  live_cells <- live_cells[ord]
+
+  max_live <- max(live_cells, na.rm = TRUE)
+  threshold <- frac_of_max * max_live
+  hit_idx <- which(live_cells >= threshold)
+  if (!length(hit_idx)) {
+    return(list(
+      rate = NA_real_,
+      intercept = NA_real_,
+      end_time = NA_real_,
+      n_fit_points = 0L,
+      fit_r_squared = NA_real_
+    ))
+  }
+
+  end_idx <- min(hit_idx)
+  fit_hours <- hours[seq_len(end_idx)]
+  fit_live <- live_cells[seq_len(end_idx)]
+
+  if (length(fit_hours) < 3L || length(unique(fit_hours)) < 2L) {
+    return(list(
+      rate = NA_real_,
+      intercept = NA_real_,
+      end_time = hours[end_idx],
+      n_fit_points = length(fit_hours),
+      fit_r_squared = NA_real_
+    ))
+  }
+
+  fit <- lm(log1p(fit_live) ~ fit_hours)
+  coef_fit <- coef(fit)
+
+  list(
+    rate = unname(coef_fit[["fit_hours"]]),
+    intercept = unname(coef_fit[["(Intercept)"]]),
+    end_time = hours[end_idx],
+    n_fit_points = length(fit_hours),
+    fit_r_squared = summary(fit)$r.squared
+  )
+}
+
 time_to_threshold <- function(hours, value, threshold, direction = c("below", "above")) {
   direction <- match.arg(direction)
   ok <- is.finite(hours) & is.finite(value)
@@ -260,6 +318,7 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
   dead_rate_raw <- calc_rate_extrema(count_df$hours, count_df$dead_cells, log1p_scale = TRUE)
   live_rate <- calc_smoothed_rate_extrema(count_df$hours, count_df$live_cells, log1p_scale = TRUE)
   dead_rate <- calc_smoothed_rate_extrema(count_df$hours, count_df$dead_cells, log1p_scale = TRUE)
+  exp_phase_fit <- fit_exponential_phase(count_df$hours, count_df$live_cells, frac_of_max = 0.7)
   dead_frac_rate <- calc_rate_extrema(count_df$hours, count_df$dead_fraction, log1p_scale = FALSE)
   glucose_rate <- calc_rate_extrema(glucose_df$hours, glucose_df$glucose_hat, log1p_scale = FALSE)
 
@@ -316,6 +375,11 @@ summarize_one_well_features <- function(well_meta_row, count_df, glucose_df, glu
     live_fold_change = if (nrow(count_df)) (dplyr::last(count_df$live_cells) + 1) / (count_df$live_cells[1] + 1) else NA_real_,
     live_auc = safe_trapz(count_df$hours, count_df$live_cells),
     live_auc_glucose_window = live_auc_glucose_window,
+    exp_growth_rate_70 = exp_phase_fit$rate,
+    exp_growth_intercept_70 = exp_phase_fit$intercept,
+    exp_growth_fit_end_time_70 = exp_phase_fit$end_time,
+    exp_growth_fit_n_points_70 = exp_phase_fit$n_fit_points,
+    exp_growth_fit_r2_70 = exp_phase_fit$fit_r_squared,
     max_growth_rate_raw = live_rate_raw$max_rate,
     max_decline_rate_raw = live_rate_raw$min_rate,
     max_growth_rate = live_rate$max_rate,
@@ -482,7 +546,7 @@ get_model_free_feature_catalog <- function() {
     ),
     definition = c(
       "Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.",
-      "Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.",
+      "Restrict to wells with G0 equal to 5 or 25. For each such well, fit log1p(live_cells) ~ hours from time 0 through the first timepoint where live_cells reaches 70% of that well's maximum observed live-cell count. The feature is the median fitted slope within each cell line and ploidy.",
       "Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.",
       "Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.",
       "For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the intercept from regressing that quantity on log1p(G0), using only G0 <= 1.",
@@ -492,7 +556,7 @@ get_model_free_feature_catalog <- function() {
     ),
     rationale = c(
       "Median maximum live-cell growth rate under severe glucose limitation (G0 <= 0.25). Tests whether ploidy changes the ability to grow when glucose is scarce.",
-      "Median maximum live-cell growth rate when glucose is more available (G0 >= 1). Tests whether ploidy shifts proliferative capacity in permissive conditions rather than starvation response.",
+      "Median exponential-phase live-cell growth rate from high-glucose wells (G0 = 5 or 25). Targets the pre-depletion, pre-confluence proliferation constant rather than the steepest local derivative.",
       "Median maximum dead-cell accumulation rate under severe glucose limitation (G0 <= 0.25). Targets starvation-associated death pressure.",
       "Median maximum dead-cell accumulation rate when glucose is more available (G0 >= 1). Checks whether any ploidy-associated death effect persists outside the strongest starvation regime.",
       "Intercept from regression of alive-cell AUC on log1p(G0). Captures baseline cumulative alive biomass at near-zero glucose.",
@@ -502,7 +566,7 @@ get_model_free_feature_catalog <- function() {
     ),
     computation = c(
       "Median of per-condition smoothed max_growth_rate across G0 <= 0.25.",
-      "Median of per-condition smoothed max_growth_rate across G0 >= 1.",
+      "Median of per-well exp_growth_rate_70 across G0 %in% c(5, 25). Each exp_growth_rate_70 comes from lm(log1p(live_cells) ~ hours) fit from t = 0 to the first time live_cells reaches 70% of that well's maximum.",
       "Median of per-condition smoothed max_death_rate across G0 <= 0.25.",
       "Median of per-condition smoothed max_death_rate across G0 >= 1.",
       "Intercept from lm(live_auc_glucose_window ~ log1p(G0)) fit only on G0 <= 1.",
@@ -512,7 +576,7 @@ get_model_free_feature_catalog <- function() {
     ),
     interpretation = c(
       "Higher values mean faster best-case live-cell expansion under very low glucose.",
-      "Higher values mean faster best-case live-cell expansion when glucose is not strongly limiting.",
+      "Higher values mean a faster estimated exponential-phase live-cell growth constant in high-glucose wells.",
       "Higher values mean faster dead-cell accumulation under very low glucose.",
       "Higher values mean faster dead-cell accumulation when glucose is not strongly limiting.",
       "Higher values mean higher baseline cumulative live-cell burden near zero glucose.",
@@ -529,6 +593,14 @@ median_in_g0_band <- function(g0, y, lower = -Inf, upper = Inf) {
     return(NA_real_)
   }
   median(y[keep], na.rm = TRUE)
+}
+
+safe_median <- function(x) {
+  x <- x[is.finite(x)]
+  if (!length(x)) {
+    return(NA_real_)
+  }
+  median(x, na.rm = TRUE)
 }
 
 summarize_glucose_signatures <- function(feature_panel) {
@@ -549,7 +621,7 @@ summarize_glucose_signatures <- function(feature_panel) {
       has_starvation = df$has_starvation[1],
       n_glucose_conditions = nrow(df),
       growth_lowG_median = median_in_g0_band(g0, df$max_growth_rate, upper = 0.25),
-      growth_highG_median = median_in_g0_band(g0, df$max_growth_rate, lower = 1),
+      growth_highG_median = safe_median(df$exp_growth_rate_70[g0 %in% c(5, 25)]),
       growth_logG_slope = fit_log_glucose_response(g0, df$max_growth_rate)$slope,
       growth_peak_time_highG = median_in_g0_band(g0, df$time_max_growth_rate, lower = 1),
       death_lowG_median = median_in_g0_band(g0, df$max_death_rate, upper = 0.25),

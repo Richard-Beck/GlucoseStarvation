@@ -70,16 +70,10 @@ safe_read_rds <- function(path) {
 feature_panel <- safe_read_rds(paths$feature_panel)
 count_summary <- safe_read_rds(paths$count_summary)
 glucose_summary <- safe_read_rds(paths$glucose_summary)
-signature_panel <- safe_read_rds(paths$signature_panel)
-signature_effects <- safe_read_rds(paths$signature_effects)
-transfer_predictions <- safe_read_rds(paths$transfer_predictions)
-transfer_feature_summary <- safe_read_rds(paths$transfer_feature_summary)
-transfer_case_summary <- safe_read_rds(paths$transfer_case_summary)
 feature_catalog <- get_model_free_feature_catalog()
 
-required_paths <- unlist(paths[c("feature_panel", "signature_panel", "signature_effects", "transfer_predictions", "transfer_feature_summary")])
-if (!all(file.exists(required_paths))) {
-  stop("Required outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
+if (is.null(feature_panel) && !file.exists(paths$stan_data)) {
+  stop("Neither feature_panel nor stan_data is available. Run the extraction script or provide stan_ready_data before rendering this notebook.")
 }
 
 feature_panel_required_cols <- c(
@@ -111,6 +105,13 @@ if (!all(feature_panel_required_cols %in% names(feature_panel))) {
     paste(setdiff(feature_panel_required_cols, names(feature_panel)), collapse = ", ")
   )
 }
+
+signature_panel <- summarize_glucose_signatures(feature_panel)
+signature_effects <- compute_empirical_effects(signature_panel)$paired_effects_long
+transfer <- evaluate_transfer_predictions(signature_panel)
+transfer_predictions <- transfer$predictions
+transfer_feature_summary <- transfer$feature_summary
+transfer_case_summary <- transfer$case_summary
 
 cat("Working directory:", getwd(), "\n")
 cat("stan_data path:", paths$stan_data, "\n")
@@ -340,13 +341,13 @@ plot_yield_inputs <- function() {
 print_feature_details(c("growth_lowG_median", "growth_highG_median"))
 ```
 
-The trajectory plot should be read as a shape check on the growth feature. Colored lines are observed live-cell trajectories by initial glucose. The dashed black line in each panel is a simple reference curve built from the median initial live-cell count for that cell line and ploidy plus the corresponding `growth_highG_median` smoothed rate. It is not a fit to any one well. It is there to show whether the summarized high-glucose growth rate is in the right ballpark for the observed live-cell expansion.
+The trajectory plot should be read as a shape check on the growth feature. Colored lines are observed live-cell trajectories by initial glucose. The dashed black line in each panel is a simple reference curve built from the median initial live-cell count for that cell line and ploidy plus the corresponding `growth_highG_median` exponential-phase rate. That rate is now defined from `G0 = 5` and `G0 = 25` wells only, using a log-linear fit from `t = 0` to the first time the well reaches 70% of its own maximum live-cell count. It is not a fit to any one well. It is there to show whether the summarized high-glucose growth rate is in the right ballpark for the observed early live-cell expansion.
 
 ```{r growth-plot, fig.height=6, fig.width=10}
 plot_trajectory_view("live_cells", "Underlying Live-Cell Trajectories With High-G Growth Reference", "live cells", add_live_reference = TRUE)
 ```
 
-This processing plot shows exactly what smoothing is changing. Each condition contributes a raw max growth rate and a smoothed max growth rate; large separations indicate that pointwise derivatives were noisy for that condition. The summarized growth signatures below are built from the smoothed values, not the raw ones.
+This processing plot still shows what smoothing does to the older derivative-based growth summary. It remains useful as a QC view for trajectory shape, but the high-glucose growth signature below is no longer taken from these smoothed maxima. Instead, the high-glucose signature now uses the explicit exponential-phase fit described above.
 
 ```{r growth-processing, fig.height=6, fig.width=10}
 plot_rate_processing(
@@ -357,11 +358,11 @@ plot_rate_processing(
 )
 ```
 
-These bars are the actual transferred growth features. Within each cell line, compare the two ploidy values directly. The high-G bar uses the same smoothed per-condition rates that define the black reference curves above.
+These bars are the actual transferred growth features. Within each cell line, compare the two ploidy values directly. The low-G bar still uses the smoothed maximum derivative summary under severe starvation. The high-G bar now uses the median exponential-phase slope from `G0 = 5` and `G0 = 25` wells, matching the black reference curves above.
 
 ```{r growth-signatures, fig.height=7, fig.width=10}
 plot_signature_values("growth_lowG_median", "Aggregated Feature: Growth Low-G Median", "median smoothed max growth rate at G0 <= 0.25") /
-  plot_signature_values("growth_highG_median", "Aggregated Feature: Growth High-G Median", "median smoothed max growth rate at G0 >= 1")
+  plot_signature_values("growth_highG_median", "Aggregated Feature: Growth High-G Median", "median exponential-phase growth rate from G0 = 5, 25")
 ```
 
 ### Death Features

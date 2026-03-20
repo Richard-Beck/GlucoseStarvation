@@ -220,14 +220,33 @@ load_optim_init_from_dir <- function(
   pick <- sorted_idx[(as.integer(chain_id) - 1L) %% length(sorted_idx) + 1L]
   draw_obj <- draws_list[[pick]]
 
-  if (is.matrix(draw_obj)) {
-    x_named <- draw_obj[1, , drop = TRUE]
-    if (!is.null(colnames(draw_obj))) {
-      names(x_named) <- colnames(draw_obj)
+  x_named <- tryCatch({
+    dm <- posterior::as_draws_matrix(draw_obj)
+    if (!nrow(dm)) {
+      stop("chosen optimization start has zero rows")
     }
-  } else {
-    x_named <- draw_obj
-  }
+    vals <- as.numeric(dm[1, , drop = TRUE])
+    names(vals) <- colnames(dm)
+    vals
+  }, error = function(e) {
+    if (is.matrix(draw_obj)) {
+      vals <- as.numeric(draw_obj[1, , drop = TRUE])
+      names(vals) <- colnames(draw_obj)
+      return(vals)
+    }
+
+    if (is.data.frame(draw_obj)) {
+      vals <- as.numeric(draw_obj[1, , drop = TRUE])
+      names(vals) <- colnames(draw_obj)
+      return(vals)
+    }
+
+    vals <- draw_obj
+    if (!is.null(dim(vals)) && length(dim(vals)) >= 1L) {
+      vals <- vals[1, , drop = TRUE]
+    }
+    vals
+  })
 
   if (is.null(names(x_named)) || !length(names(x_named))) {
     stop(sprintf("Chosen optimization start %d in '%s' has no parameter names", pick, path))

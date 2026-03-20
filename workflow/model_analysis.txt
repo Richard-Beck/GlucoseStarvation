@@ -1,8 +1,57 @@
 Model Analysis Summary
 
-Generated: 2026-03-20 10:55:49.055545
-Stan data: ecology/stan_ready_data.Rds
-Audit export root: C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis
+Generated: 2026-03-20 15:04:16.497318
+Stan data: data/stan_ready_data.Rds
+Audit export root: /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis
+
+Representative Model
+model_id: 1R_1P_0W_C0_M1
+alias: 1R-1P Dense
+selection_basis: best mean rank within the aggregated shortlist; used for single-model plots only
+delta_AIC: 4001.458
+prop_within_1: 0.373
+prop_within_5: 0.411
+directional_agreement: 1.000
+mean_transfer_gain: -38.229
+mean_parameter_log_error_improvement: 0.028
+parameter_win_rate: 0.338
+mean_rank: 4.200
+
+Aggregated Shortlist
+       model_id                        alias delta_AIC prop_within_1
+ 1R_1P_0W_C0_M1                  1R-1P Dense  4001.458    0.37341772
+ 2R_2P_1W_C1_M0 2R-2P Specialized, 1W (Mult)  1224.546    0.02732240
+ 1R_1P_1W_C0_M1        1R-1P Dense, 1W (Add)  2452.242    0.44927536
+ 2R_1P_1W_C0_M0       2R-1P Dense, 1W (Mult)  1164.524    0.19125683
+ 1R_1P_1W_C0_M0       1R-1P Dense, 1W (Mult)  2027.596    0.42045455
+ 2R_2P_0W_C0_M1                  2R-2P Dense   462.450    0.14880952
+ 2R_1P_1W_C0_M1        2R-1P Dense, 1W (Add)  1677.810    0.10880829
+ 2R_2P_1W_C0_M1        2R-2P Dense, 1W (Add)   181.808    0.05681818
+ 2R_2P_1W_C0_M0       2R-2P Dense, 1W (Mult)     0.000    0.07602339
+ prop_directional_agreement_model mean_transfer_gain
+                            1.000          -38.22857
+                            0.925          -36.61557
+                            1.000         -100.48407
+                            0.950         -905.31028
+                            1.000         -313.77290
+                            0.825         -621.95466
+                            0.900         -559.10990
+                            0.775        -1044.96381
+                            0.675        -1579.85447
+ mean_parameter_log_error_improvement mean_rank     shortlist_source
+                           0.02768217       4.2 pareto+top_mean_rank
+                           0.08091052       4.4 pareto+top_mean_rank
+                          -0.02048719       4.4 pareto+top_mean_rank
+                           0.03470661       4.6 pareto+top_mean_rank
+                          -0.03370378       4.6               pareto
+                          -0.07155767       6.6               pareto
+                          -0.06093436       6.8               pareto
+                          -0.16364920       8.6               pareto
+                          -0.09912730       8.8               pareto
+
+AIC Support Set
+       model_id                  alias delta_AIC  k prop_within_1 prop_within_5
+ 2R_2P_1W_C0_M0 2R-2P Dense, 1W (Mult)         0 66    0.07602339     0.0877193
 
 Current Provenance
                          artifact_group
@@ -12,27 +61,56 @@ Current Provenance
  Selected optimisation transfer summary
     Selected parameter transfer summary
          Selected NUTS transfer summary
-                                                                 path
-                                          ecology/stan_ready_data.Rds
-                               models/gpath/v1/assessment_run_ids.txt
-                                                                 <NA>
-      data/gpath_transfer_cv/gpath/NA/transfer_comparison_summary.Rds
-       data/gpath_transfer_cv/gpath/NA/parameter_transfer_summary.Rds
- data/gpath_transfer_cv_nuts/gpath/NA/transfer_comparison_summary.Rds
-                                                                     provenance
-                                                       Rscript R/prepare_data.R
-                              Current ranking is restricted to these model IDs.
-                                        No selected optimisation run available.
-       Loaded by the predictive transfer summary blocks for the selected model.
- Loaded by the parameter-transfer interpretation blocks for the selected model.
-             Optional comparison source for posterior-averaged transfer checks.
-                                           status
- Confirmed on 2026-03-20 by byte-identical rerun.
-                             Concrete input file.
-                                         Missing.
-            Concrete current source when present.
-            Concrete current source when present.
-           Concrete comparison path when present.
+                                                                             path
+                                                         data/stan_ready_data.Rds
+                                           models/gpath/v1/assessment_run_ids.txt
+           data/runs/gpath/v1/optim/gstarvation_v1/1R_1P_0W_C0_M1/20260313_141710
+      data/gpath_transfer_cv/gpath/1R_1P_0W_C0_M1/transfer_comparison_summary.Rds
+       data/gpath_transfer_cv/gpath/1R_1P_0W_C0_M1/parameter_transfer_summary.Rds
+ data/gpath_transfer_cv_nuts/gpath/1R_1P_0W_C0_M1/transfer_comparison_summary.Rds
+                                                                                         provenance
+                                                                           Rscript R/prepare_data.R
+                                                  Current ranking is restricted to these model IDs.
+ Manifest: data/runs/gpath/v1/optim/gstarvation_v1/1R_1P_0W_C0_M1/20260313_141710/run_manifest.json
+                           Loaded by the predictive transfer summary blocks for the selected model.
+                     Loaded by the parameter-transfer interpretation blocks for the selected model.
+                                 Optional comparison source for posterior-averaged transfer checks.
+                                                                        status
+                              Confirmed on 2026-03-20 by byte-identical rerun.
+                                                          Concrete input file.
+ Concrete current source for selected-model ranking and best-fit coefficients.
+                                         Concrete current source when present.
+                                         Concrete current source when present.
+                                        Concrete comparison path when present.
+
+Model Ranking
+       model_id                        alias   best_lp  k      AIC delta_AIC
+ 2R_2P_1W_C0_M0       2R-2P Dense, 1W (Mult) -47188.51 66 94509.02     0.000
+ 2R_2P_1W_C0_M1        2R-2P Dense, 1W (Add) -47279.41 66 94690.83   181.808
+ 2R_2P_0W_C0_M1                  2R-2P Dense -47431.73 54 94971.47   462.450
+ 2R_1P_1W_C0_M0       2R-1P Dense, 1W (Mult) -47782.77 54 95673.54  1164.524
+ 2R_2P_1W_C1_M0 2R-2P Specialized, 1W (Mult) -47812.78 54 95733.56  1224.546
+ 2R_1P_1W_C0_M1        2R-1P Dense, 1W (Add) -48039.41 54 96186.83  1677.810
+ 2R_1P_0W_C0_M1                  2R-1P Dense -48174.41 42 96432.82  1923.806
+ 1R_1P_1W_C0_M0       1R-1P Dense, 1W (Mult) -48238.31 30 96536.61  2027.596
+ 2R_2P_1W_C1_M1  2R-2P Specialized, 1W (Add) -48234.42 54 96576.85  2067.830
+ 2R_2P_0W_C1_M0            2R-2P Specialized -48355.60 42 96795.19  2286.174
+ 1R_1P_1W_C0_M1        1R-1P Dense, 1W (Add) -48450.63 30 96961.26  2452.242
+ 1R_1P_0W_C0_M1                  1R-1P Dense -49231.24 24 98510.48  4001.458
+
+Directional Agreement Of raw_theta_ploidy With Global Fit
+ parameter n_cases prop_directional_agreement mean_abs_shift_from_global
+     ae[1]     120                  0.9000000                  0.2575399
+     ah[1]     120                  0.7166667                  0.3468240
+    Y_R[1]     120                  0.9000000                  0.3998775
+         m     120                  0.9333333                  1.1917330
+
+Focused Parameter Summary
+ parameter mean_log_error_improvement mean_win_rate
+         m                 0.02463311     0.5750000
+    Y_R[1]                -0.02043968     0.6166667
+     ae[1]                -0.03921027     0.5833333
+     ah[1]                -0.08213961     0.4750000
 
 Metric Glossary
                                     metric
@@ -57,10 +135,11 @@ Metric Glossary
                                           Fraction of reconstructed held-out parameters for which transfer beats null; above 0.5 favors transfer.
 
 Interpretation Verdict
-verdict: no shortlist available.
+shortlist_models: 1R_1P_0W_C0_M1, 2R_2P_1W_C1_M0, 1R_1P_1W_C0_M1, 2R_1P_1W_C0_M0, 1R_1P_1W_C0_M0, 2R_2P_0W_C0_M1, 2R_1P_1W_C0_M1, 2R_2P_1W_C0_M1, 2R_2P_1W_C0_M0
+verdict: some shortlisted models improve parameter transfer, but none are positive on average for predictive transfer.
 
 Key Audit Artifacts
-- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_df.csv
-- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_transfer_df.csv
-- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_df.csv
-- C:/Users/4473331/Documents/projects/006_ploidyModeling/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_hit_df.csv
+- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_df.csv
+- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/raw_theta_ploidy_transfer_df.csv
+- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_df.csv
+- /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/report_exports/model_analysis/focused_parameter_hit_df.csv

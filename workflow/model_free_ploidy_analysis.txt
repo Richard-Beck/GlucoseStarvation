@@ -1,6 +1,6 @@
 MODEL_FREE_PLOIDY_ANALYSIS
-generated	2026-03-20 15:15:24.290879
-stan_data	ecology/stan_ready_data.Rds
+generated	2026-03-20 19:16:37.709214
+stan_data	data/stan_ready_data.Rds
 feature_panel_source	data/model_free_ploidy/feature_panel.Rds
 
 SECTION	KEY_RESULTS
@@ -12,7 +12,7 @@ death_lowG_median	Death Low-G Median	Death	10	-0.0863665400806957	0.6	0.6	0.3252
 death_highG_median	Death High-G Median	Death	10	-0.13758210062287	0.6	0.6	0.334451998708889	0.472034099331759
 peak_total_yield_slope	Peak Total Yield Regression Slope	Yield	10	-0.137597411919072	0	0	0.895080088128693	1.03267750004777
 yield_alive_auc_intercept	Alive AUC Regression Intercept	Yield	10	-0.169026647844809	0	0	0.463613923463253	0.632640571308062
-growth_lowG_median	Growth Low-G Median	Growth	10	-0.332355573203985	0	0.2	2.13115847341835	2.46351404662233
+growth_lowG_median	Growth Low-G Median	Growth	10	-0.332355573203983	0	0.2	2.13115847341834	2.46351404662233
 
 SECTION	HIGH_G_EXP_GROWTH_QC
 cellLine	ploidy_metric	n_highG_wells	median_exp_growth_rate_70	median_fit_end_time_70	median_fit_n_points_70	median_fit_r2_70	median_initial_live_highG	qc_flag
@@ -52,7 +52,7 @@ SNU668	0	1	1	peak_total_yield_slope	49.4728237527929	49.4728237527929	Peak Total
 MDA-MB-231	0	0.33	0.33	growth_lowG_median	0.178690676638258	0.541486898903811	Growth Low-G Median	Growth	positive
 MDA-MB-231	0	0.33	0.33	growth_highG_median	0.0450726198382074	0.136583696479416	Growth High-G Median	Growth	positive
 SUM-159-chem	0	1	1	growth_lowG_median	-0.0967022266768959	-0.0967022266768959	Growth Low-G Median	Growth	negative
-SNU668	0	1	1	growth_lowG_median	0.0355362177035866	0.0355362177035866	Growth Low-G Median	Growth	positive
+SNU668	0	1	1	growth_lowG_median	0.0355362177035864	0.0355362177035864	Growth Low-G Median	Growth	positive
 MCF10A	0	1	1	growth_lowG_median	-0.0231686288014863	-0.0231686288014863	Growth Low-G Median	Growth	negative
 MCF10A	0	1	1	death_lowG_median	-0.0228852196034413	-0.0228852196034413	Death Low-G Median	Death	negative
 SUM-159-fuse	0	1	1	death_highG_median	-0.0224498811144119	-0.0224498811144119	Death High-G Median	Death	negative
@@ -74,14 +74,14 @@ SECTION	TRANSFER_CASE_SUMMARY
 cellLine	direction	n_features	mean_abs_err_improvement	mean_scaled_err_improvement	transfer_win_rate	sign_accuracy
 MDA-MB-231	low_to_high	8	-450.383575915741	-0.0396448136184593	0.25	0.375
 MDA-MB-231	high_to_low	8	-450.38357591574	-0.0396448136184594	0.25	0.375
-SUM-159-fuse	high_to_low	8	-2532.84370787518	-0.0587583866400737	0.25	0.375
-SUM-159-fuse	low_to_high	8	-2532.84370787518	-0.0587583866400737	0.25	0.375
-MCF10A	low_to_high	8	1041.8008932765	-0.0826162013439369	0.5	0.5
-MCF10A	high_to_low	8	1041.8008932765	-0.082616201343937	0.5	0.5
+SUM-159-fuse	high_to_low	8	-2532.84370787518	-0.0587583866400733	0.25	0.375
+SUM-159-fuse	low_to_high	8	-2532.84370787518	-0.0587583866400734	0.25	0.375
+MCF10A	low_to_high	8	1041.8008932765	-0.0826162013439365	0.5	0.5
+MCF10A	high_to_low	8	1041.8008932765	-0.0826162013439366	0.5	0.5
 SNU668	high_to_low	8	1320.10588650143	-0.163666467417534	0.375	0.375
 SNU668	low_to_high	8	1320.10588650143	-0.163666467417534	0.375	0.375
-SUM-159-chem	low_to_high	8	969.437331418124	-0.218768003853343	0.25	0.25
 SUM-159-chem	high_to_low	8	969.437331418124	-0.218768003853343	0.25	0.25
+SUM-159-chem	low_to_high	8	969.437331418124	-0.218768003853343	0.25	0.25
 
 SECTION	FEATURE_DEFINITIONS
 feature	short_label	category	definition	interpretation

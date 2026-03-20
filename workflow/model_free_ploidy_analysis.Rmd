@@ -82,14 +82,34 @@ if (!all(file.exists(required_paths))) {
   stop("Required outputs are missing. Run the extraction and transfer scripts before rendering this notebook.")
 }
 
-if (is.null(count_summary) || is.null(glucose_summary)) {
-  tables <- build_model_free_tables(paths$stan_data)
+feature_panel_required_cols <- c(
+  "max_growth_rate_raw",
+  "max_growth_rate",
+  "max_death_rate_raw",
+  "max_death_rate"
+)
+
+need_rebuild_feature_panel <- is.null(feature_panel) ||
+  !all(feature_panel_required_cols %in% names(feature_panel))
+
+if (need_rebuild_feature_panel || is.null(count_summary) || is.null(glucose_summary)) {
+  rebuilt <- build_feature_panel(paths$stan_data)
+  if (need_rebuild_feature_panel) {
+    feature_panel <- rebuilt$feature_panel
+  }
   if (is.null(count_summary)) {
-    count_summary <- tables$count_summary
+    count_summary <- rebuilt$count_summary
   }
   if (is.null(glucose_summary)) {
-    glucose_summary <- tables$glucose_summary
+    glucose_summary <- rebuilt$glucose_summary
   }
+}
+
+if (!all(feature_panel_required_cols %in% names(feature_panel))) {
+  stop(
+    "feature_panel is missing required rate columns even after rebuild: ",
+    paste(setdiff(feature_panel_required_cols, names(feature_panel)), collapse = ", ")
+  )
 }
 
 cat("Working directory:", getwd(), "\n")

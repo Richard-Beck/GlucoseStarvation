@@ -1,412 +1,178 @@
-Model-Free Ploidy Analysis Summary
+MODEL_FREE_PLOIDY_ANALYSIS
+generated	2026-03-20 15:15:24.290879
+stan_data	ecology/stan_ready_data.Rds
+feature_panel_source	data/model_free_ploidy/feature_panel.Rds
 
-Generated: 2026-03-20 19:06:17.490611
-Stan data: data/stan_ready_data.Rds
-Feature panel source: data/model_free_ploidy/feature_panel.Rds
+SECTION	KEY_RESULTS
+feature	short_label	category	n_cases	mean_scaled_err_improvement	transfer_win_rate	sign_accuracy	scaled_mae_null	scaled_mae_transfer
+yield_alive_auc_slope	Alive AUC Regression Slope	Yield	10	0.0380240063486577	0.6	0.8	0.394125690125142	0.356101683776485
+growth_highG_median	Growth High-G Median	Growth	10	-0.0319922601325573	0.6	0.6	0.284168236409458	0.316160496542016
+peak_total_yield_intercept	Peak Total Yield Regression Intercept	Yield	10	-0.0446296691420227	0.2	0.2	0.683634187057286	0.728263856199308
+death_lowG_median	Death Low-G Median	Death	10	-0.0863665400806957	0.6	0.6	0.325254382803258	0.411620922883953
+death_highG_median	Death High-G Median	Death	10	-0.13758210062287	0.6	0.6	0.334451998708889	0.472034099331759
+peak_total_yield_slope	Peak Total Yield Regression Slope	Yield	10	-0.137597411919072	0	0	0.895080088128693	1.03267750004777
+yield_alive_auc_intercept	Alive AUC Regression Intercept	Yield	10	-0.169026647844809	0	0	0.463613923463253	0.632640571308062
+growth_lowG_median	Growth Low-G Median	Growth	10	-0.332355573203985	0	0.2	2.13115847341835	2.46351404662233
 
-Feature Definitions
-                    feature                           short_label category
-         growth_lowG_median                   Growth Low-G Median   Growth
-        growth_highG_median                  Growth High-G Median   Growth
-          death_lowG_median                    Death Low-G Median    Death
-         death_highG_median                   Death High-G Median    Death
-  yield_alive_auc_intercept        Alive AUC Regression Intercept    Yield
-      yield_alive_auc_slope            Alive AUC Regression Slope    Yield
- peak_total_yield_intercept Peak Total Yield Regression Intercept    Yield
-     peak_total_yield_slope     Peak Total Yield Regression Slope    Yield
-                                                                                                                                                                                                                                                                                                                                                               definition
-                                                                                                                                                                     Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.
-                                                                             Restrict to wells with G0 equal to 5 or 25. For each such well, fit log1p(live_cells) ~ hours from time 0 through the first timepoint where live_cells reaches 70% of that well's maximum observed live-cell count. The feature is the median fitted slope within each cell line and ploidy.
-                                                                                                                                                                     Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.
-                                                                                                                                                                        Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.
-                                                                                                                    For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the intercept from regressing that quantity on log1p(G0), using only G0 <= 1.
-                                                                                                                        For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the slope from regressing that quantity on log1p(G0), using only G0 <= 1.
- For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the intercept from regressing that quantity on log1p(G0).
-     For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the slope from regressing that quantity on log1p(G0).
-                                                                                                      interpretation
-                                     Higher values mean faster best-case live-cell expansion under very low glucose.
-            Higher values mean a faster estimated exponential-phase live-cell growth constant in high-glucose wells.
-                                            Higher values mean faster dead-cell accumulation under very low glucose.
-                             Higher values mean faster dead-cell accumulation when glucose is not strongly limiting.
-                                   Higher values mean higher baseline cumulative live-cell burden near zero glucose.
-                               Higher values mean alive-cell burden rises more steeply as initial glucose increases.
-         Higher values mean better baseline conversion of consumed glucose into total cell output near zero glucose.
- Higher values mean glucose-to-total-cell conversion efficiency improves more strongly as initial glucose increases.
+SECTION	HIGH_G_EXP_GROWTH_QC
+cellLine	ploidy_metric	n_highG_wells	median_exp_growth_rate_70	median_fit_end_time_70	median_fit_n_points_70	median_fit_r2_70	median_initial_live_highG	qc_flag
+SUM-159-chem	1	2	0.0785913982287656	80	11	0.77652905834336	0	ok
+SNU668	0	2	0.123511432028337	76	10.5	0.798332211770535	0	ok
+SUM-159-chem	0	2	0.0867514116749153	88	12	0.805017606651878	0	ok
+MDA-MB-231	0	2	0.030745776663229	100	13.5	0.936545298631509	190	ok
+SUM-159-fuse	1	2	0.0378283506423041	72	9	0.969702832234927	434	ok
+SUM-159-fuse	0	2	0.0308210166985491	84	10.5	0.977856891192679	397.25	ok
+MCF10A	0	2	0.0457140673473111	48	7	0.986408254474715	1151.75	ok
+MCF10A	1	2	0.033939224415026	44	6.5	0.996796634012117	2178.75	ok
+SNU668	1	2	0.109187077392748	60	8.5	0.678728134330907	0	low_fit_r2
+MDA-MB-231	0.33	2	0.0758183965014364	96	13	0.688047765023276	0	low_fit_r2
 
-Per-Line Signature Values
-     cellLine ploidy_metric                    feature         value
-       MCF10A          0.00         death_highG_median  4.997496e-02
-       MCF10A          1.00         death_highG_median  3.146662e-02
-   MDA-MB-231          0.00         death_highG_median  6.628024e-02
-   MDA-MB-231          0.33         death_highG_median  5.969414e-02
-       SNU668          0.00         death_highG_median  2.855633e-02
-       SNU668          1.00         death_highG_median  4.174930e-02
- SUM-159-chem          0.00         death_highG_median  8.573214e-03
- SUM-159-chem          1.00         death_highG_median  2.452933e-02
- SUM-159-fuse          0.00         death_highG_median  8.267443e-02
- SUM-159-fuse          1.00         death_highG_median  6.022455e-02
-       MCF10A          0.00          death_lowG_median  3.983583e-02
-       MCF10A          1.00          death_lowG_median  1.695061e-02
-   MDA-MB-231          0.00          death_lowG_median  3.681885e-02
-   MDA-MB-231          0.33          death_lowG_median  3.077236e-02
-       SNU668          0.00          death_lowG_median  1.829424e-02
-       SNU668          1.00          death_lowG_median  3.023140e-02
- SUM-159-chem          0.00          death_lowG_median  6.674866e-03
- SUM-159-chem          1.00          death_lowG_median  6.801785e-03
- SUM-159-fuse          0.00          death_lowG_median  6.533662e-02
- SUM-159-fuse          1.00          death_lowG_median  5.672805e-02
-       MCF10A          0.00        growth_highG_median  4.571407e-02
-       MCF10A          1.00        growth_highG_median  3.393922e-02
-   MDA-MB-231          0.00        growth_highG_median  3.074578e-02
-   MDA-MB-231          0.33        growth_highG_median  7.581840e-02
-       SNU668          0.00        growth_highG_median  1.235114e-01
-       SNU668          1.00        growth_highG_median  1.091871e-01
- SUM-159-chem          0.00        growth_highG_median  8.675141e-02
- SUM-159-chem          1.00        growth_highG_median  7.859140e-02
- SUM-159-fuse          0.00        growth_highG_median  3.082102e-02
- SUM-159-fuse          1.00        growth_highG_median  3.782835e-02
-       MCF10A          0.00         growth_lowG_median  2.982808e-02
-       MCF10A          1.00         growth_lowG_median  6.659449e-03
-   MDA-MB-231          0.00         growth_lowG_median  8.316209e-03
-   MDA-MB-231          0.33         growth_lowG_median  1.870069e-01
-       SNU668          0.00         growth_lowG_median  1.773221e-01
-       SNU668          1.00         growth_lowG_median  2.128583e-01
- SUM-159-chem          0.00         growth_lowG_median  1.300993e-01
- SUM-159-chem          1.00         growth_lowG_median  3.339706e-02
- SUM-159-fuse          0.00         growth_lowG_median  2.064226e-02
- SUM-159-fuse          1.00         growth_lowG_median  2.340147e-02
-       MCF10A          0.00  yield_alive_auc_intercept  9.619894e+04
-       MCF10A          1.00  yield_alive_auc_intercept  9.002165e+04
-   MDA-MB-231          0.00  yield_alive_auc_intercept  6.223155e+03
-   MDA-MB-231          0.33  yield_alive_auc_intercept  2.674287e+03
-       SNU668          0.00  yield_alive_auc_intercept  6.386281e+03
-       SNU668          1.00  yield_alive_auc_intercept  1.915174e+04
- SUM-159-chem          0.00  yield_alive_auc_intercept -5.904426e+02
- SUM-159-chem          1.00  yield_alive_auc_intercept  5.821300e+03
- SUM-159-fuse          0.00  yield_alive_auc_intercept  3.963773e+04
- SUM-159-fuse          1.00  yield_alive_auc_intercept  3.894163e+04
-       MCF10A          0.00      yield_alive_auc_slope  4.336067e+05
-       MCF10A          1.00      yield_alive_auc_slope  3.263530e+05
-   MDA-MB-231          0.00      yield_alive_auc_slope  8.691777e+04
-   MDA-MB-231          0.33      yield_alive_auc_slope  8.492375e+04
-       SNU668          0.00      yield_alive_auc_slope  7.028226e+04
-       SNU668          1.00      yield_alive_auc_slope  5.353828e+04
- SUM-159-chem          0.00      yield_alive_auc_slope  5.733128e+04
- SUM-159-chem          1.00      yield_alive_auc_slope  3.553222e+04
- SUM-159-fuse          0.00      yield_alive_auc_slope  7.505900e+04
- SUM-159-fuse          1.00      yield_alive_auc_slope  8.341092e+04
-       MCF10A          0.00 peak_total_yield_intercept  1.315942e+04
-       MCF10A          1.00 peak_total_yield_intercept  4.129521e+03
-   MDA-MB-231          0.00 peak_total_yield_intercept  1.772425e+03
-   MDA-MB-231          0.33 peak_total_yield_intercept  1.958470e+03
-       SNU668          0.00 peak_total_yield_intercept  4.047457e+03
-       SNU668          1.00 peak_total_yield_intercept  3.500721e+03
- SUM-159-chem          0.00 peak_total_yield_intercept  1.315015e+03
- SUM-159-chem          1.00 peak_total_yield_intercept  4.271481e+02
- SUM-159-fuse          0.00 peak_total_yield_intercept  3.750079e+03
- SUM-159-fuse          1.00 peak_total_yield_intercept  5.491765e+03
-       MCF10A          0.00     peak_total_yield_slope -4.352191e+03
-       MCF10A          1.00     peak_total_yield_slope -8.655674e+02
-   MDA-MB-231          0.00     peak_total_yield_slope -1.395885e+02
-   MDA-MB-231          0.33     peak_total_yield_slope -3.194343e+02
-       SNU668          0.00     peak_total_yield_slope -1.312246e+03
-       SNU668          1.00     peak_total_yield_slope -1.262773e+03
- SUM-159-chem          0.00     peak_total_yield_slope -2.380321e+02
- SUM-159-chem          1.00     peak_total_yield_slope  2.590244e+01
- SUM-159-fuse          0.00     peak_total_yield_slope -1.107122e+03
- SUM-159-fuse          1.00     peak_total_yield_slope -1.541534e+03
-                           short_label category
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                    Death Low-G Median    Death
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
+SECTION	PAIRED_PLOIDY_EFFECTS
+cellLine	observed_ploidy	holdout_ploidy	delta_ploidy	feature	delta_value	effect_per_ploidy	short_label	category	direction
+MCF10A	0	1	1	yield_alive_auc_slope	-107253.685796386	-107253.685796386	Alive AUC Regression Slope	Yield	negative
+SUM-159-chem	0	1	1	yield_alive_auc_slope	-21799.0628241922	-21799.0628241922	Alive AUC Regression Slope	Yield	negative
+SNU668	0	1	1	yield_alive_auc_slope	-16743.9725097117	-16743.9725097117	Alive AUC Regression Slope	Yield	negative
+SNU668	0	1	1	yield_alive_auc_intercept	12765.4628959508	12765.4628959508	Alive AUC Regression Intercept	Yield	positive
+MDA-MB-231	0	0.33	0.33	yield_alive_auc_intercept	-3548.86839981456	-10754.1466661047	Alive AUC Regression Intercept	Yield	negative
+MCF10A	0	1	1	peak_total_yield_intercept	-9029.90170890147	-9029.90170890147	Peak Total Yield Regression Intercept	Yield	negative
+SUM-159-fuse	0	1	1	yield_alive_auc_slope	8351.92181214996	8351.92181214996	Alive AUC Regression Slope	Yield	positive
+SUM-159-chem	0	1	1	yield_alive_auc_intercept	6411.74223827141	6411.74223827141	Alive AUC Regression Intercept	Yield	positive
+MCF10A	0	1	1	yield_alive_auc_intercept	-6177.2892722137	-6177.2892722137	Alive AUC Regression Intercept	Yield	negative
+MDA-MB-231	0	0.33	0.33	yield_alive_auc_slope	-1994.02001139834	-6042.48488302529	Alive AUC Regression Slope	Yield	negative
+MCF10A	0	1	1	peak_total_yield_slope	3486.62401321126	3486.62401321126	Peak Total Yield Regression Slope	Yield	positive
+SUM-159-fuse	0	1	1	peak_total_yield_intercept	1741.68587130022	1741.68587130022	Peak Total Yield Regression Intercept	Yield	positive
+SUM-159-chem	0	1	1	peak_total_yield_intercept	-887.867216919194	-887.867216919194	Peak Total Yield Regression Intercept	Yield	negative
+SUM-159-fuse	0	1	1	yield_alive_auc_intercept	-696.09646329542	-696.09646329542	Alive AUC Regression Intercept	Yield	negative
+MDA-MB-231	0	0.33	0.33	peak_total_yield_intercept	186.045355495987	563.773804533293	Peak Total Yield Regression Intercept	Yield	positive
+SNU668	0	1	1	peak_total_yield_intercept	-546.736685563065	-546.736685563065	Peak Total Yield Regression Intercept	Yield	negative
+MDA-MB-231	0	0.33	0.33	peak_total_yield_slope	-179.845740095611	-544.987091198821	Peak Total Yield Regression Slope	Yield	negative
+SUM-159-fuse	0	1	1	peak_total_yield_slope	-434.411133928546	-434.411133928546	Peak Total Yield Regression Slope	Yield	negative
+SUM-159-chem	0	1	1	peak_total_yield_slope	263.934588069618	263.934588069618	Peak Total Yield Regression Slope	Yield	positive
+SNU668	0	1	1	peak_total_yield_slope	49.4728237527929	49.4728237527929	Peak Total Yield Regression Slope	Yield	positive
+MDA-MB-231	0	0.33	0.33	growth_lowG_median	0.178690676638258	0.541486898903811	Growth Low-G Median	Growth	positive
+MDA-MB-231	0	0.33	0.33	growth_highG_median	0.0450726198382074	0.136583696479416	Growth High-G Median	Growth	positive
+SUM-159-chem	0	1	1	growth_lowG_median	-0.0967022266768959	-0.0967022266768959	Growth Low-G Median	Growth	negative
+SNU668	0	1	1	growth_lowG_median	0.0355362177035866	0.0355362177035866	Growth Low-G Median	Growth	positive
+MCF10A	0	1	1	growth_lowG_median	-0.0231686288014863	-0.0231686288014863	Growth Low-G Median	Growth	negative
+MCF10A	0	1	1	death_lowG_median	-0.0228852196034413	-0.0228852196034413	Death Low-G Median	Death	negative
+SUM-159-fuse	0	1	1	death_highG_median	-0.0224498811144119	-0.0224498811144119	Death High-G Median	Death	negative
+MDA-MB-231	0	0.33	0.33	death_highG_median	-0.00658610000109205	-0.019957878791188	Death High-G Median	Death	negative
+MCF10A	0	1	1	death_highG_median	-0.0185083412586599	-0.0185083412586599	Death High-G Median	Death	negative
+MDA-MB-231	0	0.33	0.33	death_lowG_median	-0.00604648680084136	-0.0183226872752769	Death Low-G Median	Death	negative
+SUM-159-chem	0	1	1	death_highG_median	0.0159561163925145	0.0159561163925145	Death High-G Median	Death	positive
+SNU668	0	1	1	growth_highG_median	-0.0143243546355898	-0.0143243546355898	Growth High-G Median	Growth	negative
+SNU668	0	1	1	death_highG_median	0.0131929681620589	0.0131929681620589	Death High-G Median	Death	positive
+SNU668	0	1	1	death_lowG_median	0.0119371635650595	0.0119371635650595	Death Low-G Median	Death	positive
+MCF10A	0	1	1	growth_highG_median	-0.0117748429322851	-0.0117748429322851	Growth High-G Median	Growth	negative
+SUM-159-fuse	0	1	1	death_lowG_median	-0.0086085658973715	-0.0086085658973715	Death Low-G Median	Death	negative
+SUM-159-chem	0	1	1	growth_highG_median	-0.00816001344614974	-0.00816001344614974	Growth High-G Median	Growth	negative
+SUM-159-fuse	0	1	1	growth_highG_median	0.00700733394375499	0.00700733394375499	Growth High-G Median	Growth	positive
+SUM-159-fuse	0	1	1	growth_lowG_median	0.00275921001084509	0.00275921001084509	Growth Low-G Median	Growth	positive
+SUM-159-chem	0	1	1	death_lowG_median	0.000126919326651613	0.000126919326651613	Death Low-G Median	Death	positive
 
-Paired Ploidy Effects Per Feature
-     cellLine observed_ploidy holdout_ploidy delta_ploidy
-       MCF10A               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
-       SNU668               0           1.00         1.00
-       SNU668               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
-       MCF10A               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
-       MCF10A               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
-       MCF10A               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
-       SNU668               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
- SUM-159-fuse               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
-       SNU668               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
-   MDA-MB-231               0           0.33         0.33
- SUM-159-chem               0           1.00         1.00
-       SNU668               0           1.00         1.00
-       MCF10A               0           1.00         1.00
-       MCF10A               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
-       MCF10A               0           1.00         1.00
-   MDA-MB-231               0           0.33         0.33
- SUM-159-chem               0           1.00         1.00
-       SNU668               0           1.00         1.00
-       SNU668               0           1.00         1.00
-       SNU668               0           1.00         1.00
-       MCF10A               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
- SUM-159-fuse               0           1.00         1.00
- SUM-159-chem               0           1.00         1.00
-                    feature   delta_value effect_per_ploidy
-      yield_alive_auc_slope -1.072537e+05     -1.072537e+05
-      yield_alive_auc_slope -2.179906e+04     -2.179906e+04
-      yield_alive_auc_slope -1.674397e+04     -1.674397e+04
-  yield_alive_auc_intercept  1.276546e+04      1.276546e+04
-  yield_alive_auc_intercept -3.548868e+03     -1.075415e+04
- peak_total_yield_intercept -9.029902e+03     -9.029902e+03
-      yield_alive_auc_slope  8.351922e+03      8.351922e+03
-  yield_alive_auc_intercept  6.411742e+03      6.411742e+03
-  yield_alive_auc_intercept -6.177289e+03     -6.177289e+03
-      yield_alive_auc_slope -1.994020e+03     -6.042485e+03
-     peak_total_yield_slope  3.486624e+03      3.486624e+03
- peak_total_yield_intercept  1.741686e+03      1.741686e+03
- peak_total_yield_intercept -8.878672e+02     -8.878672e+02
-  yield_alive_auc_intercept -6.960965e+02     -6.960965e+02
- peak_total_yield_intercept  1.860454e+02      5.637738e+02
- peak_total_yield_intercept -5.467367e+02     -5.467367e+02
-     peak_total_yield_slope -1.798457e+02     -5.449871e+02
-     peak_total_yield_slope -4.344111e+02     -4.344111e+02
-     peak_total_yield_slope  2.639346e+02      2.639346e+02
-     peak_total_yield_slope  4.947282e+01      4.947282e+01
-         growth_lowG_median  1.786907e-01      5.414869e-01
-        growth_highG_median  4.507262e-02      1.365837e-01
-         growth_lowG_median -9.670223e-02     -9.670223e-02
-         growth_lowG_median  3.553622e-02      3.553622e-02
-         growth_lowG_median -2.316863e-02     -2.316863e-02
-          death_lowG_median -2.288522e-02     -2.288522e-02
-         death_highG_median -2.244988e-02     -2.244988e-02
-         death_highG_median -6.586100e-03     -1.995788e-02
-         death_highG_median -1.850834e-02     -1.850834e-02
-          death_lowG_median -6.046487e-03     -1.832269e-02
-         death_highG_median  1.595612e-02      1.595612e-02
-        growth_highG_median -1.432435e-02     -1.432435e-02
-         death_highG_median  1.319297e-02      1.319297e-02
-          death_lowG_median  1.193716e-02      1.193716e-02
-        growth_highG_median -1.177484e-02     -1.177484e-02
-          death_lowG_median -8.608566e-03     -8.608566e-03
-        growth_highG_median -8.160013e-03     -8.160013e-03
-        growth_highG_median  7.007334e-03      7.007334e-03
-         growth_lowG_median  2.759210e-03      2.759210e-03
-          death_lowG_median  1.269193e-04      1.269193e-04
-                           short_label category
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-            Alive AUC Regression Slope    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
-            Alive AUC Regression Slope    Yield
-        Alive AUC Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
-            Alive AUC Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
-        Alive AUC Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
- Peak Total Yield Regression Intercept    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-     Peak Total Yield Regression Slope    Yield
-                   Growth Low-G Median   Growth
-                  Growth High-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                   Growth Low-G Median   Growth
-                    Death Low-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                   Death High-G Median    Death
-                    Death Low-G Median    Death
-                   Death High-G Median    Death
-                  Growth High-G Median   Growth
-                   Death High-G Median    Death
-                    Death Low-G Median    Death
-                  Growth High-G Median   Growth
-                    Death Low-G Median    Death
-                  Growth High-G Median   Growth
-                  Growth High-G Median   Growth
-                   Growth Low-G Median   Growth
-                    Death Low-G Median    Death
+SECTION	TRANSFER_CASE_SUMMARY
+cellLine	direction	n_features	mean_abs_err_improvement	mean_scaled_err_improvement	transfer_win_rate	sign_accuracy
+MDA-MB-231	low_to_high	8	-450.383575915741	-0.0396448136184593	0.25	0.375
+MDA-MB-231	high_to_low	8	-450.38357591574	-0.0396448136184594	0.25	0.375
+SUM-159-fuse	high_to_low	8	-2532.84370787518	-0.0587583866400737	0.25	0.375
+SUM-159-fuse	low_to_high	8	-2532.84370787518	-0.0587583866400737	0.25	0.375
+MCF10A	low_to_high	8	1041.8008932765	-0.0826162013439369	0.5	0.5
+MCF10A	high_to_low	8	1041.8008932765	-0.082616201343937	0.5	0.5
+SNU668	high_to_low	8	1320.10588650143	-0.163666467417534	0.375	0.375
+SNU668	low_to_high	8	1320.10588650143	-0.163666467417534	0.375	0.375
+SUM-159-chem	low_to_high	8	969.437331418124	-0.218768003853343	0.25	0.25
+SUM-159-chem	high_to_low	8	969.437331418124	-0.218768003853343	0.25	0.25
 
-Transfer Ranking
-                    feature                           short_label category
-      yield_alive_auc_slope            Alive AUC Regression Slope    Yield
-        growth_highG_median                  Growth High-G Median   Growth
- peak_total_yield_intercept Peak Total Yield Regression Intercept    Yield
-          death_lowG_median                    Death Low-G Median    Death
-         death_highG_median                   Death High-G Median    Death
-     peak_total_yield_slope     Peak Total Yield Regression Slope    Yield
-  yield_alive_auc_intercept        Alive AUC Regression Intercept    Yield
-         growth_lowG_median                   Growth Low-G Median   Growth
- n_cases scaled_mae_null scaled_mae_transfer mean_scaled_err_improvement
-      10       0.3941257           0.3561017                  0.03802401
-      10       0.2841682           0.3161605                 -0.03199226
-      10       0.6836342           0.7282639                 -0.04462967
-      10       0.3252544           0.4116209                 -0.08636654
-      10       0.3344520           0.4720341                 -0.13758210
-      10       0.8950801           1.0326775                 -0.13759741
-      10       0.4636139           0.6326406                 -0.16902665
-      10       2.1311585           2.4635140                 -0.33235557
- transfer_win_rate sign_accuracy
-               0.6           0.8
-               0.6           0.6
-               0.2           0.2
-               0.6           0.6
-               0.6           0.6
-               0.0           0.0
-               0.0           0.0
-               0.0           0.2
+SECTION	FEATURE_DEFINITIONS
+feature	short_label	category	definition	interpretation
+growth_lowG_median	Growth Low-G Median	Growth	Per condition, compute the smoothed maximum upward derivative of log1p(live_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.	Higher values mean faster best-case live-cell expansion under very low glucose.
+growth_highG_median	Growth High-G Median	Growth	Restrict to wells with G0 equal to 5 or 25. For each such well, fit log1p(live_cells) ~ hours from time 0 through the first timepoint where live_cells reaches 70% of that well's maximum observed live-cell count. The feature is the median fitted slope within each cell line and ploidy.	Higher values mean a faster estimated exponential-phase live-cell growth constant in high-glucose wells.
+death_lowG_median	Death Low-G Median	Death	Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 <= 0.25 within each cell line and ploidy.	Higher values mean faster dead-cell accumulation under very low glucose.
+death_highG_median	Death High-G Median	Death	Per condition, compute the smoothed maximum upward derivative of log1p(dead_cells) over time, then take the median of those per-condition values across G0 >= 1 within each cell line and ploidy.	Higher values mean faster dead-cell accumulation when glucose is not strongly limiting.
+yield_alive_auc_intercept	Alive AUC Regression Intercept	Yield	For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the intercept from regressing that quantity on log1p(G0), using only G0 <= 1.	Higher values mean higher baseline cumulative live-cell burden near zero glucose.
+yield_alive_auc_slope	Alive AUC Regression Slope	Yield	For each condition, live_auc_glucose_window is the trapezoidal area under the live-cell trajectory between the first and last glucose measurement times. The feature is the slope from regressing that quantity on log1p(G0), using only G0 <= 1.	Higher values mean alive-cell burden rises more steeply as initial glucose increases.
+peak_total_yield_intercept	Peak Total Yield Regression Intercept	Yield	For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the intercept from regressing that quantity on log1p(G0).	Higher values mean better baseline conversion of consumed glucose into total cell output near zero glucose.
+peak_total_yield_slope	Peak Total Yield Regression Slope	Yield	For each condition, peak_total_yield_per_glucose is max(live_cells + dead_cells) up to the last glucose measurement, minus the initial total cell count at the first glucose measurement, divided by glucose_initial - glucose_final. Negative net gain is floored at zero before division, and the feature is the slope from regressing that quantity on log1p(G0).	Higher values mean glucose-to-total-cell conversion efficiency improves more strongly as initial glucose increases.
 
-Transfer Case Summary
-     cellLine   direction n_features mean_abs_err_improvement
-   MDA-MB-231 low_to_high          8                -450.3836
-   MDA-MB-231 high_to_low          8                -450.3836
- SUM-159-fuse high_to_low          8               -2532.8437
- SUM-159-fuse low_to_high          8               -2532.8437
-       MCF10A low_to_high          8                1041.8009
-       MCF10A high_to_low          8                1041.8009
-       SNU668 high_to_low          8                1320.1059
-       SNU668 low_to_high          8                1320.1059
- SUM-159-chem high_to_low          8                 969.4373
- SUM-159-chem low_to_high          8                 969.4373
- mean_scaled_err_improvement transfer_win_rate sign_accuracy
-                 -0.03964481             0.250         0.375
-                 -0.03964481             0.250         0.375
-                 -0.05875839             0.250         0.375
-                 -0.05875839             0.250         0.375
-                 -0.08261620             0.500         0.500
-                 -0.08261620             0.500         0.500
-                 -0.16366647             0.375         0.375
-                 -0.16366647             0.375         0.375
-                 -0.21876800             0.250         0.250
-                 -0.21876800             0.250         0.250
-
-High-G Exponential Fit QC
-     cellLine ploidy_metric n_highG_wells median_exp_growth_rate_70
-       MCF10A          0.00             2                0.04571407
-       MCF10A          1.00             2                0.03393922
-   MDA-MB-231          0.00             2                0.03074578
-   MDA-MB-231          0.33             2                0.07581840
-       SNU668          0.00             2                0.12351143
-       SNU668          1.00             2                0.10918708
- SUM-159-chem          0.00             2                0.08675141
- SUM-159-chem          1.00             2                0.07859140
- SUM-159-fuse          0.00             2                0.03082102
- SUM-159-fuse          1.00             2                0.03782835
- median_fit_end_time_70 median_fit_n_points_70 median_fit_r2_70
-                     48                    7.0        0.9864083
-                     44                    6.5        0.9967966
-                    100                   13.5        0.9365453
-                     96                   13.0        0.6880478
-                     76                   10.5        0.7983322
-                     60                    8.5        0.6787281
-                     88                   12.0        0.8050176
-                     80                   11.0        0.7765291
-                     84                   10.5        0.9778569
-                     72                    9.0        0.9697028
- median_initial_live_highG
-                   1151.75
-                   2178.75
-                    190.00
-                      0.00
-                      0.00
-                      0.00
-                      0.00
-                      0.00
-                    397.25
-                    434.00
-
+SECTION	PER_LINE_SIGNATURE_VALUES
+cellLine	ploidy_metric	feature	value	short_label	category
+MCF10A	0	death_highG_median	0.0499749637943331	Death High-G Median	Death
+MCF10A	1	death_highG_median	0.0314666225356732	Death High-G Median	Death
+MDA-MB-231	0	death_highG_median	0.0662802410696995	Death High-G Median	Death
+MDA-MB-231	0.33	death_highG_median	0.0596941410686075	Death High-G Median	Death
+SNU668	0	death_highG_median	0.0285563300899438	Death High-G Median	Death
+SNU668	1	death_highG_median	0.0417492982520027	Death High-G Median	Death
+SUM-159-chem	0	death_highG_median	0.00857321386910811	Death High-G Median	Death
+SUM-159-chem	1	death_highG_median	0.0245293302616226	Death High-G Median	Death
+SUM-159-fuse	0	death_highG_median	0.0826744334626888	Death High-G Median	Death
+SUM-159-fuse	1	death_highG_median	0.0602245523482769	Death High-G Median	Death
+MCF10A	0	death_lowG_median	0.0398358338924145	Death Low-G Median	Death
+MCF10A	1	death_lowG_median	0.0169506142889732	Death Low-G Median	Death
+MDA-MB-231	0	death_lowG_median	0.0368188500735853	Death Low-G Median	Death
+MDA-MB-231	0.33	death_lowG_median	0.0307723632727439	Death Low-G Median	Death
+SNU668	0	death_lowG_median	0.0182942386036854	Death Low-G Median	Death
+SNU668	1	death_lowG_median	0.0302314021687449	Death Low-G Median	Death
+SUM-159-chem	0	death_lowG_median	0.00667486560779074	Death Low-G Median	Death
+SUM-159-chem	1	death_lowG_median	0.00680178493444235	Death Low-G Median	Death
+SUM-159-fuse	0	death_lowG_median	0.0653366151964059	Death Low-G Median	Death
+SUM-159-fuse	1	death_lowG_median	0.0567280492990344	Death Low-G Median	Death
+MCF10A	0	growth_highG_median	0.0457140673473111	Growth High-G Median	Growth
+MCF10A	1	growth_highG_median	0.033939224415026	Growth High-G Median	Growth
+MDA-MB-231	0	growth_highG_median	0.030745776663229	Growth High-G Median	Growth
+MDA-MB-231	0.33	growth_highG_median	0.0758183965014364	Growth High-G Median	Growth
+SNU668	0	growth_highG_median	0.123511432028337	Growth High-G Median	Growth
+SNU668	1	growth_highG_median	0.109187077392748	Growth High-G Median	Growth
+SUM-159-chem	0	growth_highG_median	0.0867514116749153	Growth High-G Median	Growth
+SUM-159-chem	1	growth_highG_median	0.0785913982287656	Growth High-G Median	Growth
+SUM-159-fuse	0	growth_highG_median	0.0308210166985491	Growth High-G Median	Growth
+SUM-159-fuse	1	growth_highG_median	0.0378283506423041	Growth High-G Median	Growth
+MCF10A	0	growth_lowG_median	0.0298280781301385	Growth Low-G Median	Growth
+MCF10A	1	growth_lowG_median	0.00665944932865215	Growth Low-G Median	Growth
+MDA-MB-231	0	growth_lowG_median	0.00831620936566513	Growth Low-G Median	Growth
+MDA-MB-231	0.33	growth_lowG_median	0.187006886003923	Growth Low-G Median	Growth
+SNU668	0	growth_lowG_median	0.177322078886382	Growth Low-G Median	Growth
+SNU668	1	growth_lowG_median	0.212858296589968	Growth Low-G Median	Growth
+SUM-159-chem	0	growth_lowG_median	0.130099284365167	Growth Low-G Median	Growth
+SUM-159-chem	1	growth_lowG_median	0.0333970576882708	Growth Low-G Median	Growth
+SUM-159-fuse	0	growth_lowG_median	0.0206422632040745	Growth Low-G Median	Growth
+SUM-159-fuse	1	growth_lowG_median	0.0234014732149196	Growth Low-G Median	Growth
+MCF10A	0	yield_alive_auc_intercept	96198.9362463934	Alive AUC Regression Intercept	Yield
+MCF10A	1	yield_alive_auc_intercept	90021.6469741797	Alive AUC Regression Intercept	Yield
+MDA-MB-231	0	yield_alive_auc_intercept	6223.15519080881	Alive AUC Regression Intercept	Yield
+MDA-MB-231	0.33	yield_alive_auc_intercept	2674.28679099425	Alive AUC Regression Intercept	Yield
+SNU668	0	yield_alive_auc_intercept	6386.28077168973	Alive AUC Regression Intercept	Yield
+SNU668	1	yield_alive_auc_intercept	19151.7436676406	Alive AUC Regression Intercept	Yield
+SUM-159-chem	0	yield_alive_auc_intercept	-590.442615341426	Alive AUC Regression Intercept	Yield
+SUM-159-chem	1	yield_alive_auc_intercept	5821.29962292998	Alive AUC Regression Intercept	Yield
+SUM-159-fuse	0	yield_alive_auc_intercept	39637.7277589078	Alive AUC Regression Intercept	Yield
+SUM-159-fuse	1	yield_alive_auc_intercept	38941.6312956124	Alive AUC Regression Intercept	Yield
+MCF10A	0	yield_alive_auc_slope	433606.69876238	Alive AUC Regression Slope	Yield
+MCF10A	1	yield_alive_auc_slope	326353.012965995	Alive AUC Regression Slope	Yield
+MDA-MB-231	0	yield_alive_auc_slope	86917.7739965146	Alive AUC Regression Slope	Yield
+MDA-MB-231	0.33	yield_alive_auc_slope	84923.7539851162	Alive AUC Regression Slope	Yield
+SNU668	0	yield_alive_auc_slope	70282.2555554232	Alive AUC Regression Slope	Yield
+SNU668	1	yield_alive_auc_slope	53538.2830457115	Alive AUC Regression Slope	Yield
+SUM-159-chem	0	yield_alive_auc_slope	57331.2830470235	Alive AUC Regression Slope	Yield
+SUM-159-chem	1	yield_alive_auc_slope	35532.2202228313	Alive AUC Regression Slope	Yield
+SUM-159-fuse	0	yield_alive_auc_slope	75058.9973146183	Alive AUC Regression Slope	Yield
+SUM-159-fuse	1	yield_alive_auc_slope	83410.9191267682	Alive AUC Regression Slope	Yield
+MCF10A	0	peak_total_yield_intercept	13159.4230685629	Peak Total Yield Regression Intercept	Yield
+MCF10A	1	peak_total_yield_intercept	4129.52135966148	Peak Total Yield Regression Intercept	Yield
+MDA-MB-231	0	peak_total_yield_intercept	1772.42509758632	Peak Total Yield Regression Intercept	Yield
+MDA-MB-231	0.33	peak_total_yield_intercept	1958.47045308231	Peak Total Yield Regression Intercept	Yield
+SNU668	0	peak_total_yield_intercept	4047.45737482586	Peak Total Yield Regression Intercept	Yield
+SNU668	1	peak_total_yield_intercept	3500.72068926279	Peak Total Yield Regression Intercept	Yield
+SUM-159-chem	0	peak_total_yield_intercept	1315.015275665	Peak Total Yield Regression Intercept	Yield
+SUM-159-chem	1	peak_total_yield_intercept	427.148058745804	Peak Total Yield Regression Intercept	Yield
+SUM-159-fuse	0	peak_total_yield_intercept	3750.07926942419	Peak Total Yield Regression Intercept	Yield
+SUM-159-fuse	1	peak_total_yield_intercept	5491.76514072441	Peak Total Yield Regression Intercept	Yield
+MCF10A	0	peak_total_yield_slope	-4352.19136948726	Peak Total Yield Regression Slope	Yield
+MCF10A	1	peak_total_yield_slope	-865.567356276008	Peak Total Yield Regression Slope	Yield
+MDA-MB-231	0	peak_total_yield_slope	-139.588514740772	Peak Total Yield Regression Slope	Yield
+MDA-MB-231	0.33	peak_total_yield_slope	-319.434254836383	Peak Total Yield Regression Slope	Yield
+SNU668	0	peak_total_yield_slope	-1312.24551906776	Peak Total Yield Regression Slope	Yield
+SNU668	1	peak_total_yield_slope	-1262.77269531497	Peak Total Yield Regression Slope	Yield
+SUM-159-chem	0	peak_total_yield_slope	-238.03214948495	Peak Total Yield Regression Slope	Yield
+SUM-159-chem	1	peak_total_yield_slope	25.9024385846675	Peak Total Yield Regression Slope	Yield
+SUM-159-fuse	0	peak_total_yield_slope	-1107.12239857558	Peak Total Yield Regression Slope	Yield
+SUM-159-fuse	1	peak_total_yield_slope	-1541.53353250413	Peak Total Yield Regression Slope	Yield

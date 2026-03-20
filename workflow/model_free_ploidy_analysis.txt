@@ -1,7 +1,7 @@
 Model-Free Ploidy Analysis Summary
 
-Generated: 2026-03-20 15:04:36.640742
-Stan data: ecology/stan_ready_data.Rds
+Generated: 2026-03-20 19:06:17.490611
+Stan data: data/stan_ready_data.Rds
 Feature panel source: data/model_free_ploidy/feature_panel.Rds
 
 Feature Definitions
@@ -361,8 +361,8 @@ Transfer Case Summary
        MCF10A high_to_low          8                1041.8009
        SNU668 high_to_low          8                1320.1059
        SNU668 low_to_high          8                1320.1059
- SUM-159-chem low_to_high          8                 969.4373
  SUM-159-chem high_to_low          8                 969.4373
+ SUM-159-chem low_to_high          8                 969.4373
  mean_scaled_err_improvement transfer_win_rate sign_accuracy
                  -0.03964481             0.250         0.375
                  -0.03964481             0.250         0.375

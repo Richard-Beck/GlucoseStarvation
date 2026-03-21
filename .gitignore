@@ -11,5 +11,6 @@ ecology/model_selection/data
 .nfs*
 slurm/runs
 slurm/logs
+slurm/logs*
 models/gpath/v1/gpath_hier
 *.html

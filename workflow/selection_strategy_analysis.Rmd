@@ -122,6 +122,16 @@ strategy_levels <- strategy_sign_summary$strategy_code
 strategy_score_plot_df <- strategy_sign_summary %>%
   mutate(strategy_code = factor(strategy_code, levels = strategy_levels))
 
+strategy_extreme_codes <- c(
+  head(strategy_sign_summary$strategy_code, 25),
+  tail(strategy_sign_summary$strategy_code, 25)
+)
+strategy_extreme_codes <- unique(strategy_extreme_codes)
+
+strategy_heatmap_summary <- strategy_sign_summary %>%
+  filter(strategy_code %in% strategy_extreme_codes) %>%
+  mutate(strategy_code = factor(strategy_code, levels = strategy_extreme_codes))
+
 strategy_design_long <- bind_rows(
   strategy_sign_summary %>%
     transmute(strategy_code, stage = "day0", value = g0_day0, action_label = "seed"),
@@ -131,50 +141,77 @@ strategy_design_long <- bind_rows(
     transmute(strategy_code, stage = "day4", value = g0_day4, action_label = if_else(day4_action == "carry", "carry", "refresh"))
 ) %>%
   mutate(
-    strategy_code = factor(strategy_code, levels = strategy_levels),
+    glucose_label = if_else(action_label == "carry", "carry", as.character(value)),
     stage = factor(stage, levels = c("day0", "day2", "day4")),
-    glucose_plot = if_else(is.na(value), -1, value)
+    glucose_label = factor(glucose_label, levels = c("carry", as.character(sort(glucose_values))))
   )
+
+strategy_design_heatmap <- strategy_design_long %>%
+  filter(strategy_code %in% strategy_extreme_codes) %>%
+  mutate(strategy_code = factor(strategy_code, levels = strategy_extreme_codes))
 ```
 
-```{r strategy-ordering, fig.height=18}
-p_score <- ggplot(strategy_score_plot_df, aes(x = signed_consistency, y = strategy_code, fill = mean_log_ratio)) +
-  geom_col(width = 0.8) +
-  geom_vline(xintercept = 0, color = "grey40", linewidth = 0.4) +
+```{r strategy-consistency-line, fig.height=5}
+ggplot(strategy_sign_summary, aes(seq_along(signed_consistency), signed_consistency)) +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = 0.4) +
+  geom_line(linewidth = 0.8, color = "black") +
+  labs(
+    title = "Per-Strategy Directional Consistency",
+    subtitle = "Ordered from consistently against high ploidy to consistently for high ploidy",
+    x = "strategies ordered by signed consistency",
+    y = "signed consistency = frac_for - frac_against"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+```{r strategy-ordering-heatmap, fig.height=16}
+p_score_heat <- ggplot(strategy_heatmap_summary, aes(x = 1, y = strategy_code, fill = signed_consistency)) +
+  geom_tile(color = "white") +
   scale_fill_gradient2(
     low = "#2166ac",
     mid = "white",
     high = "#b2182b",
     midpoint = 0,
-    name = "Mean log ratio"
+    limits = c(-1, 1),
+    name = "signed\nconsistency"
   ) +
   labs(
-    title = "Per-Strategy Directional Consistency",
-    subtitle = "Ordered from consistently against high ploidy to consistently for high ploidy",
-    x = "signed consistency = frac_for - frac_against",
+    title = "Most Consistent Strategies",
+    subtitle = "Bottom 25 and top 25 strategies by signed consistency",
+    x = NULL,
     y = "strategy code"
   ) +
-  theme_minimal(base_size = 11)
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
 
-p_design <- ggplot(strategy_design_long, aes(stage, strategy_code, fill = glucose_plot)) +
+p_design <- ggplot(strategy_design_heatmap, aes(stage, strategy_code, fill = glucose_label)) +
   geom_tile(color = "white") +
-  geom_text(aes(label = if_else(action_label == "carry", "carry", scales::number(value, accuracy = 0.1))), size = 2.6) +
-  scale_fill_gradientn(
-    colours = c("#bdbdbd", "#f7fbff", "#6baed6", "#08519c"),
-    values = scales::rescale(c(-1, min(glucose_values), median(glucose_values), max(glucose_values))),
-    name = "glucose / carry",
-    breaks = c(-1, glucose_values),
-    labels = c("carry", as.character(glucose_values))
+  scale_fill_manual(
+    values = c(
+      "carry" = "#bdbdbd",
+      "0" = "#f7fbff",
+      "0.1" = "#deebf7",
+      "0.25" = "#c6dbef",
+      "0.5" = "#9ecae1",
+      "1" = "#6baed6",
+      "5" = "#3182bd",
+      "25" = "#08519c"
+    ),
+    drop = FALSE,
+    name = "glucose"
   ) +
   labs(
     title = "Strategy Design",
-    subtitle = "Seed glucose at day 0, then day-2 and day-4 actions",
+    subtitle = "Day-0 seed, then day-2/day-4 action",
     x = NULL,
     y = NULL
   ) +
   theme_minimal(base_size = 11)
 
-p_score + p_design + patchwork::plot_layout(widths = c(1.6, 1))
+p_score_heat + p_design + patchwork::plot_layout(widths = c(0.5, 1))
 ```
 
 ## Main Result: Robust Strategies That Select Against High Ploidy

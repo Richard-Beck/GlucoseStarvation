@@ -187,7 +187,7 @@ rep_rows <- top_by_group %>%
     model_id %in% rep_model_ids
   ) %>%
   group_by(model_id, fit_context, direction, fit_type) %>%
-  slice_head(n = min(3L, n())) %>%
+  slice_head(n = 3L) %>%
   ungroup()
 
 detail_df <- rerun_selected_strategies_detailed(

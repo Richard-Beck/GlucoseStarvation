@@ -831,26 +831,7 @@ collect_selection_outputs <- function(config) {
     stop(sprintf("Selection strategy output root not found: %s", root_dir))
   }
 
-  bind_align <- function(paths) {
-    if (!length(paths)) {
-      return(data.frame())
-    }
-
-    dfs <- lapply(paths, readRDS)
-    all_names <- unique(unlist(lapply(dfs, names)))
-
-    dfs <- lapply(dfs, function(df) {
-      missing <- setdiff(all_names, names(df))
-      if (length(missing)) {
-        for (nm in missing) {
-          df[[nm]] <- NA
-        }
-      }
-      df[, all_names, drop = FALSE]
-    })
-
-    do.call(rbind, dfs)
-  }
+  bind_align <- function(paths) bind_rows_align(paths, reader = readRDS)
 
   final_files <- list.files(root_dir, pattern = "^final_summary\\.Rds$", recursive = TRUE, full.names = TRUE)
   interval_files <- list.files(root_dir, pattern = "^interval_summary\\.Rds$", recursive = TRUE, full.names = TRUE)
@@ -863,6 +844,27 @@ collect_selection_outputs <- function(config) {
     detail = bind_align(detail_files),
     task_meta = bind_align(meta_files)
   )
+}
+
+bind_rows_align <- function(objects, reader = identity) {
+  if (!length(objects)) {
+    return(data.frame())
+  }
+
+  dfs <- lapply(objects, reader)
+  all_names <- unique(unlist(lapply(dfs, names)))
+
+  dfs <- lapply(dfs, function(df) {
+    missing <- setdiff(all_names, names(df))
+    if (length(missing)) {
+      for (nm in missing) {
+        df[[nm]] <- NA
+      }
+    }
+    df[, all_names, drop = FALSE]
+  })
+
+  do.call(rbind, dfs)
 }
 
 rerun_selected_strategies_detailed <- function(config, selected_rows, time_step_hours = NULL) {
@@ -895,5 +897,5 @@ rerun_selected_strategies_detailed <- function(config, selected_rows, time_step_
   }
 
   config$detailed_time_step_hours <- saved_step
-  do.call(rbind, out)
+  bind_rows_align(out)
 }

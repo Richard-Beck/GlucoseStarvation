@@ -19,22 +19,26 @@ knitr::opts_knit$set(root.dir = normalizePath("../"))
 
 ## Purpose
 
-This notebook summarizes the mixed-ploidy selection-strategy simulations. Each strategy is a three-digit code:
+This notebook reports the main selection-strategy result from the mixed-ploidy simulations: which 6-day media schedules most strongly select for or against high ploidy by day 6.
+
+Each strategy is a three-digit code:
 
 - digit 1: initial glucose condition at day 0,
 - digit 2: action at day 2 (`0` = no refresh, `1:7` = refresh to one of the tested glucose conditions),
 - digit 3: action at day 4 (`0` = no refresh, `1:7` = refresh to one of the tested glucose conditions).
 
-The simulation resets media variables at refresh and rescales the mixed culture back to the fitted average starting density for the low- and high-ploidy states of that line, while preserving the current high/low composition.
+The primary outcome is the day-6 log ratio:
+
+`log_ratio_final = log(N_high / N_low)`
+
+More negative values mean stronger selection against high ploidy. More positive values mean stronger selection for high ploidy.
 
 ## Setup
 
 ```{r libraries}
 library(dplyr)
 library(tidyr)
-library(tibble)
 library(ggplot2)
-library(purrr)
 library(scales)
 
 source("R/selection_strategy_utils.R")
@@ -58,68 +62,72 @@ if (!nrow(final_summary)) {
 }
 
 final_summary <- final_summary %>%
-  left_join(line_map, by = "line_id")
-
-interval_summary <- interval_summary %>%
-  left_join(line_map, by = "line_id")
-
-top_by_group <- final_summary %>%
-  group_by(model_id, line_id, cell_line, fit_context, direction, fit_type) %>%
-  group_modify(~ select_top_strategies(.x, n_top = 3L)) %>%
-  ungroup() %>%
+  left_join(line_map, by = "line_id") %>%
   left_join(
     strategy_grid %>%
       select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
     by = "strategy_code"
-  )
-```
-
-## Coverage
-
-```{r coverage}
-coverage_tbl <- final_summary %>%
-  distinct(model_id, line_id, cell_line, fit_context, direction, fit_type) %>%
-  dplyr::count(model_id, fit_context, direction, fit_type, name = "n_line_contexts") %>%
-  arrange(model_id, fit_context, direction, fit_type)
-
-print(coverage_tbl, n = 20)
-```
-
-## Basic Criteria
-
-The ranking logic is intentionally simple:
-
-- `select_against_high_score`: maximize depletion of high ploidy relative to low ploidy at day 6.
-- `against_high_viable`: same target, but only keep strategies where low ploidy at least maintained its own starting abundance.
-- `select_for_high_score` and `for_high_viable`: the analogous enrichment criteria for high ploidy.
-
-```{r criteria-preview}
-criteria_tbl <- top_by_group %>%
-  select(
-    model_id, cell_line, fit_context, direction, fit_type,
-    selection_objective, rank, strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4,
-    select_against_high_score, against_high_viable, select_for_high_score, for_high_viable,
-    total_live, N_low, N_high, high_fraction_final
   ) %>%
-  arrange(model_id, cell_line, fit_context, direction, fit_type, selection_objective, rank)
+  mutate(
+    context_label = if_else(fit_context == "global", "global", paste(direction, fit_type, sep = " | ")),
+    select_against_high_score = -log_ratio_final,
+    select_for_high_score = log_ratio_final
+  )
 
-print(head(criteria_tbl, 24), n = 24)
+task_meta <- task_meta %>%
+  left_join(line_map, by = "line_id")
 ```
 
-## Top Strategies
+## Objects
 
-```{r top-heatmap, fig.height=10}
-against_top <- top_by_group %>%
-  filter(selection_objective == "select_against_high_viable", rank == 1) %>%
-  mutate(context_label = if_else(fit_context == "global", "global", paste(direction, fit_type, sep = " | ")))
+The main objects used below are:
 
-ggplot(against_top, aes(model_id, cell_line, fill = select_against_high_score)) +
+- `final_summary`: one row per `model x fit_context x line x strategy`, containing the day-6 outcome and ranking metrics.
+- `interval_summary`: one row per interval end (`48h`, `96h`, `144h`) for the same simulations.
+- `task_meta`: one row per simulated fit context, including the fitted run path and the inferred mixed-culture starting density.
+
+The on-disk artefacts are:
+
+- `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/final_summary.Rds`
+- `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/interval_summary.Rds`
+- `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/detail.Rds` when detailed mode was requested
+- `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/task_meta.Rds`
+
+```{r task-summary}
+print(
+  task_meta %>%
+    select(model_id, cell_line, fit_context, direction, fit_type, run_label, seed_total_n) %>%
+    arrange(model_id, cell_line, fit_context, direction, fit_type),
+  n = 20
+)
+```
+
+## Main Result: Select Against High Ploidy
+
+For each `model x fit-context x cell-line` combination, take the single best strategy for selecting against high ploidy, using the day-6 log ratio directly.
+
+```{r against-heatmap-prep}
+against_top <- final_summary %>%
+  group_by(model_id, cell_line, context_label) %>%
+  slice_min(order_by = log_ratio_final, n = 1, with_ties = FALSE) %>%
+  ungroup()
+```
+
+```{r against-heatmap, fig.height=12}
+ggplot(against_top, aes(model_id, cell_line, fill = log_ratio_final)) +
   geom_tile(color = "white") +
   geom_text(aes(label = strategy_code), size = 3) +
   facet_wrap(~ context_label, ncol = 1) +
-  scale_fill_viridis_c(option = "C", name = "Against-high score") +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    name = "Day-6 log(N_high / N_low)"
+  ) +
   labs(
-    title = "Top Viable Strategies That Select Against High Ploidy",
+    title = "Best Day-6 Strategies For Selecting Against High Ploidy",
+    subtitle = "Tile color is the achieved day-6 log ratio; tile label is the winning strategy code",
     x = "model",
     y = "cell line"
   ) +
@@ -127,136 +135,125 @@ ggplot(against_top, aes(model_id, cell_line, fill = select_against_high_score)) 
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-```{r top-table}
-print(
-  against_top %>%
-    select(model_id, cell_line, fit_context, direction, fit_type, strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4, select_against_high_score, total_live, high_fraction_final) %>%
-    arrange(model_id, cell_line, fit_context, direction, fit_type),
-  n = 20
-)
+## Main Result: Select For High Ploidy
+
+Now do the same, but take the best strategy for selecting for high ploidy.
+
+```{r for-heatmap-prep}
+for_top <- final_summary %>%
+  group_by(model_id, cell_line, context_label) %>%
+  slice_max(order_by = log_ratio_final, n = 1, with_ties = FALSE) %>%
+  ungroup()
 ```
 
-## Stability Against Global Ranking
-
-```{r stability-summary}
-global_top <- top_by_group %>%
-  filter(selection_objective == "select_against_high_viable", rank == 1, fit_context == "global") %>%
-  select(model_id, line_id, global_strategy_code = strategy_code)
-
-transfer_rank_tbl <- final_summary %>%
-  filter(fit_context == "transfer") %>%
-  group_by(model_id, line_id, direction, fit_type) %>%
-  group_modify(~ {
-    ranked <- rank_strategy_table(.x, score_col = "against_high_viable", decreasing = TRUE)
-    ranked %>% select(strategy_code, rank)
-  }) %>%
-  ungroup() %>%
-  left_join(global_top, by = c("model_id", "line_id")) %>%
-  filter(strategy_code == global_strategy_code)
-
-stability_tbl <- transfer_rank_tbl %>%
-  left_join(line_map, by = "line_id") %>%
-  group_by(model_id, cell_line, fit_type) %>%
-  summarise(
-    mean_rank_of_global_top = mean(rank, na.rm = TRUE),
-    max_rank_of_global_top = max(rank, na.rm = TRUE),
-    n_transfer_contexts = n(),
-    .groups = "drop"
-  ) %>%
-  arrange(mean_rank_of_global_top, max_rank_of_global_top)
-
-print(stability_tbl, n = 20)
+```{r for-heatmap, fig.height=12}
+ggplot(for_top, aes(model_id, cell_line, fill = log_ratio_final)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = strategy_code), size = 3) +
+  facet_wrap(~ context_label, ncol = 1) +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    name = "Day-6 log(N_high / N_low)"
+  ) +
+  labs(
+    title = "Best Day-6 Strategies For Selecting For High Ploidy",
+    subtitle = "Tile color is the achieved day-6 log ratio; tile label is the winning strategy code",
+    x = "model",
+    y = "cell line"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-## Representative Detailed Trajectories
+## Consistency Of Winning Strategy Codes
+
+This view ignores effect magnitude and just asks whether the same strategy codes recur across models and fit contexts.
+
+```{r strategy-frequency, fig.height=8}
+strategy_freq <- bind_rows(
+  against_top %>% mutate(objective = "against_high"),
+  for_top %>% mutate(objective = "for_high")
+) %>%
+  dplyr::count(objective, strategy_code, sort = TRUE)
+
+ggplot(strategy_freq, aes(reorder(strategy_code, n), n, fill = objective)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(
+    title = "How Often Winning Strategy Codes Recur",
+    x = "strategy code",
+    y = "winning contexts"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+## Optional Detailed Follow-Up
+
+This section reruns a very small number of representative top strategies in detailed mode. It is secondary to the two heatmaps above.
 
 ```{r representative-selection}
 rep_model_ids <- cfg$representative_model_ids
 if (is.null(rep_model_ids) || !length(rep_model_ids)) {
-  rep_model_ids <- against_top %>%
-    distinct(model_id) %>%
-    head(2L) %>%
-    pull(model_id)
+  rep_model_ids <- unique(head(against_top$model_id, 2L))
 }
 
-rep_rows <- top_by_group %>%
-  filter(
-    selection_objective == "select_against_high_viable",
-    rank == 1,
-    fit_context %in% cfg$representative_fit_contexts,
-    model_id %in% rep_model_ids
-  ) %>%
-  group_by(model_id, fit_context, direction, fit_type) %>%
-  slice_head(n = 3L) %>%
-  ungroup()
+rep_rows <- bind_rows(
+  against_top %>%
+    filter(model_id %in% rep_model_ids) %>%
+    group_by(model_id, context_label) %>%
+    slice_head(n = 1L) %>%
+    ungroup() %>%
+    mutate(selection_objective = "against_high"),
+  for_top %>%
+    filter(model_id %in% rep_model_ids) %>%
+    group_by(model_id, context_label) %>%
+    slice_head(n = 1L) %>%
+    ungroup() %>%
+    mutate(selection_objective = "for_high")
+)
 
 detail_df <- rerun_selected_strategies_detailed(
   config = cfg,
   selected_rows = rep_rows,
   time_step_hours = cfg$detailed_time_step_hours
 )
+
 detail_df <- detail_df %>%
   left_join(line_map, by = "line_id")
 ```
 
-```{r detailed-live, fig.height=10}
+```{r detailed-ratio, fig.height=10}
 if (nrow(detail_df)) {
-  ggplot(detail_df, aes(time_global / 24, N_low, color = "low ploidy")) +
-    geom_line(linewidth = 0.8) +
-    geom_line(aes(y = N_high, color = "high ploidy"), linewidth = 0.8) +
+  detail_ratio <- detail_df %>%
+    mutate(log_ratio = log((N_high + 1e-8) / (N_low + 1e-8)))
+
+  ggplot(detail_ratio, aes(time_global / 24, log_ratio, color = selection_objective, group = interaction(model_id, cell_line, strategy_code, selection_objective))) +
+    geom_line(linewidth = 0.9) +
     facet_grid(cell_line ~ model_id, scales = "free_y") +
-    scale_color_manual(values = c("low ploidy" = "#1b9e77", "high ploidy" = "#d95f02"), name = NULL) +
     labs(
-      title = "Detailed Live-Cell Trajectories For Top Against-High Strategies",
-      subtitle = "One top viable strategy per representative model and selected line contexts",
+      title = "Representative Detailed Log-Ratio Trajectories",
       x = "days",
-      y = "live cells"
+      y = "log(N_high / N_low)",
+      color = "objective"
     ) +
     theme_minimal(base_size = 11)
 }
 ```
 
-```{r detailed-fraction, fig.height=10}
-if (nrow(detail_df)) {
-  frac_df <- detail_df %>%
-    mutate(high_fraction = N_high / pmax(N_low + N_high, 1e-8))
-
-  ggplot(frac_df, aes(time_global / 24, high_fraction, color = strategy_code, group = interaction(strategy_code, cell_line, model_id))) +
-    geom_line(linewidth = 0.8) +
-    facet_grid(cell_line ~ model_id) +
-    scale_y_continuous(labels = percent_format(accuracy = 1)) +
-    labs(
-      title = "High-Ploidy Fraction Under Selected Strategies",
-      x = "days",
-      y = "high-ploidy fraction",
-      color = "strategy"
-    ) +
-    theme_minimal(base_size = 11)
-}
-```
-
-```{r detailed-resource, fig.height=10}
+```{r detailed-glucose, fig.height=10}
 if (nrow(detail_df) && "G1" %in% names(detail_df)) {
-  ggplot(detail_df, aes(time_global / 24, G1, color = strategy_code, group = interaction(strategy_code, cell_line, model_id))) +
-    geom_line(linewidth = 0.8) +
+  ggplot(detail_df, aes(time_global / 24, G1, color = selection_objective, group = interaction(model_id, cell_line, strategy_code, selection_objective))) +
+    geom_line(linewidth = 0.9) +
     facet_grid(cell_line ~ model_id, scales = "free_y") +
     labs(
-      title = "Glucose Trajectories For Selected Strategies",
+      title = "Representative Detailed Glucose Trajectories",
       x = "days",
       y = "glucose",
-      color = "strategy"
+      color = "objective"
     ) +
     theme_minimal(base_size = 11)
 }
-```
-
-## Key Tables
-
-```{r interval-end-table}
-interval_end_tbl <- interval_summary %>%
-  filter(segment_end_hours %in% c(48, 96, 144)) %>%
-  select(model_id, cell_line, fit_context, direction, fit_type, strategy_code, segment_end_hours, N_low, N_high, total_live, high_fraction) %>%
-  arrange(model_id, cell_line, fit_context, direction, fit_type, strategy_code, segment_end_hours)
-
-print(head(interval_end_tbl, 24), n = 24)
 ```

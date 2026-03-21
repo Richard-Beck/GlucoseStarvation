@@ -439,35 +439,98 @@ if (nrow(detail_df)) {
 ## Agent Summary
 
 ```{r agent-summary, include=FALSE}
-against_text <- against_strategy_summary %>%
-  slice_head(n = 5) %>%
-  transmute(
-    line = sprintf(
-      "%s | mean_rank=%.2f | top5=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
-      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
-    )
-  ) %>%
-  pull(line)
+fmt_strategy <- function(df, direction_label) {
+  if (!nrow(df)) {
+    return(character(0))
+  }
 
-for_text <- for_strategy_summary %>%
-  slice_head(n = 5) %>%
-  transmute(
-    line = sprintf(
-      "%s | mean_rank=%.2f | top5=%.2f | frac_for=%.2f | mean_log_ratio=%.3f",
-      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
-    )
-  ) %>%
-  pull(line)
+  df %>%
+    slice_head(n = 5) %>%
+    transmute(
+      line = sprintf(
+        "%s | d0=%s d2=%s d4=%s | mean_rank=%.2f | top5=%.2f | frac_%s=%.2f | mean_log_ratio=%.3f",
+        strategy_code,
+        as.character(g0_day0),
+        if_else(day2_action == "carry", "carry", as.character(g0_day2)),
+        if_else(day4_action == "carry", "carry", as.character(g0_day4)),
+        mean_rank,
+        top5_fraction,
+        direction_label,
+        favorable_fraction,
+        mean_log_ratio
+      )
+    ) %>%
+    pull(line)
+}
+
+best_against <- against_strategy_summary %>%
+  left_join(
+    strategy_grid %>%
+      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
+    by = "strategy_code"
+  )
+
+best_for <- for_strategy_summary %>%
+  left_join(
+    strategy_grid %>%
+      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
+    by = "strategy_code"
+  )
+
+against_text <- best_against %>%
+  fmt_strategy(direction_label = "against")
+
+for_text <- best_for %>%
+  fmt_strategy(direction_label = "for")
 
 consistency_extremes <- strategy_sign_summary %>%
   slice(unique(c(seq_len(min(5, nrow(strategy_sign_summary))), seq.int(max(1, nrow(strategy_sign_summary) - 4), nrow(strategy_sign_summary))))) %>%
+  left_join(
+    strategy_grid %>%
+      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
+    by = "strategy_code"
+  ) %>%
   transmute(
     line = sprintf(
-      "%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
-      strategy_code, signed_consistency, frac_for, frac_against, mean_log_ratio
+      "%s | d0=%s d2=%s d4=%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code,
+      as.character(g0_day0),
+      if_else(day2_action == "carry", "carry", as.character(g0_day2)),
+      if_else(day4_action == "carry", "carry", as.character(g0_day4)),
+      signed_consistency,
+      frac_for,
+      frac_against,
+      mean_log_ratio
     )
   ) %>%
   pull(line)
+
+against_best <- against_strategy_summary %>% slice_head(n = 1)
+for_best <- for_strategy_summary %>% slice_head(n = 1)
+
+verdict_lines <- c(
+  sprintf(
+    "best_against_high\t%s | mean_rank=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+    against_best$strategy_code[[1]],
+    against_best$mean_rank[[1]],
+    against_best$favorable_fraction[[1]],
+    against_best$mean_log_ratio[[1]]
+  ),
+  sprintf(
+    "best_for_high\t%s | mean_rank=%.2f | frac_for=%.2f | mean_log_ratio=%.3f",
+    for_best$strategy_code[[1]],
+    for_best$mean_rank[[1]],
+    for_best$favorable_fraction[[1]],
+    for_best$mean_log_ratio[[1]]
+  ),
+  sprintf(
+    "verdict\tRobust selection FOR high ploidy is substantially stronger than robust selection AGAINST high ploidy in this strategy space. Best-for strategies reach frac_for around %.2f-%.2f, whereas best-against strategies only reach frac_against around %.2f-%.2f.",
+    min(head(for_strategy_summary$favorable_fraction, 5)),
+    max(head(for_strategy_summary$favorable_fraction, 5)),
+    min(head(against_strategy_summary$favorable_fraction, 5)),
+    max(head(against_strategy_summary$favorable_fraction, 5))
+  )
+)
 
 summary_lines <- c(
   "SELECTION_STRATEGY_ANALYSIS",
@@ -477,6 +540,9 @@ summary_lines <- c(
   sprintf("n_models\t%d", dplyr::n_distinct(final_summary$model_id)),
   sprintf("n_contexts\t%d", dplyr::n_distinct(paste(final_summary$model_id, final_summary$line_id, final_summary$context_label, sep = '||'))),
   sprintf("n_strategies\t%d", dplyr::n_distinct(final_summary$strategy_code)),
+  "",
+  "VERDICT",
+  verdict_lines,
   "",
   "TOP_AGAINST_HIGH",
   against_text,

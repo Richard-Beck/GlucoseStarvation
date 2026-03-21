@@ -1,10 +1,15 @@
 SELECTION_STRATEGY_ANALYSIS
-generated	2026-03-21 20:21:06.527609
+generated	2026-03-21 20:34:59.507
 config	scripts/selection_strategy_config.R
 output_root	data/selection_strategy/gpath/v1/gstarvation_v1
 n_models	12
 n_contexts	180
 n_strategies	448
+
+VERDICT
+best_against_high	574 | mean_rank=97.76 | frac_against=0.57 | mean_log_ratio=-0.091
+best_for_high	100 | mean_rank=52.49 | frac_for=0.83 | mean_log_ratio=0.825
+verdict	Robust selection FOR high ploidy is substantially stronger than robust selection AGAINST high ploidy in this strategy space. Best-for strategies reach frac_for around 0.83-0.84, whereas best-against strategies only reach frac_against around 0.56-0.57.
 
 TOP_AGAINST_HIGH
 574 | mean_rank=97.76 | top5=0.12 | frac_against=0.57 | mean_log_ratio=-0.091

@@ -444,15 +444,16 @@ fmt_strategy <- function(df, direction_label) {
     return(character(0))
   }
 
-  needed_cols <- c("g0_day0", "day2_action", "g0_day2", "day4_action", "g0_day4")
-  if (!all(needed_cols %in% names(df))) {
-    df <- df %>%
-      left_join(
-        strategy_grid %>%
-          select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
-        by = "strategy_code"
-      )
-  }
+  lookup <- strategy_grid %>%
+    select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4) %>%
+    distinct()
+
+  idx <- match(df$strategy_code, lookup$strategy_code)
+  df$g0_day0 <- lookup$g0_day0[idx]
+  df$day2_action <- lookup$day2_action[idx]
+  df$g0_day2 <- lookup$g0_day2[idx]
+  df$day4_action <- lookup$day4_action[idx]
+  df$g0_day4 <- lookup$g0_day4[idx]
 
   df %>%
     slice_head(n = 5) %>%

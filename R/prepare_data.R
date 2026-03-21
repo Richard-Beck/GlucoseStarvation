@@ -2,6 +2,123 @@ library(dplyr)
 library(data.table)
 library(stringr)
 
+area_quantile_probs <- c(0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1)
+
+format_prob_label <- function(p) {
+  if (!is.finite(p)) return("NA")
+  if (abs(p - round(p)) < 1e-12) return(as.character(as.integer(round(p))))
+  sub("\\.?0+$", "", formatC(p, format = "f", digits = 4))
+}
+
+build_area_summary_matrix <- function(long_counts, quantile_probs = area_quantile_probs) {
+  counts_csv <- "data/counts/batch_results_TEMP_MEASURE_SIZE.csv"
+  if (!file.exists(counts_csv)) {
+    stop("Expected area-measurement source at 'data/counts/batch_results_TEMP_MEASURE_SIZE.csv'.")
+  }
+
+  size_raw <- data.table::fread(counts_csv)
+  if (!nrow(size_raw)) {
+    stop("Area-measurement source is empty: 'data/counts/batch_results_TEMP_MEASURE_SIZE.csv'.")
+  }
+
+  if (!("fname" %in% names(size_raw))) {
+    names(size_raw)[1] <- "fname"
+  }
+
+  meta_path <- "data/counts/image_metadata.Rds"
+  if (file.exists(meta_path)) {
+    meta <- readRDS(meta_path)
+  } else {
+    source("scripts/define_plate_maps.R")
+    meta <- dplyr::bind_rows(lapply(unique(size_raw$fname), get_meta))
+    meta$fname <- unique(size_raw$fname)
+  }
+
+  if (!("fname" %in% names(meta))) {
+    stop("Image metadata must contain a 'fname' column.")
+  }
+
+  size_dt <- meta %>%
+    dplyr::inner_join(as.data.frame(size_raw), by = "fname") %>%
+    dplyr::filter(predicted_label_name == "alive", is.finite(cell_size_px)) %>%
+    dplyr::mutate(
+      glucose = as.character(glucose),
+      experiment = as.character(experiment),
+      cellLine = as.character(cellLine),
+      plateID = as.character(plateID),
+      ploidy = as.character(ploidy),
+      hours = as.numeric(hours)
+    )
+
+  if (!nrow(size_dt)) {
+    stop("No alive objects with finite cell_size_px were found after joining area measurements to metadata.")
+  }
+
+  size_summary <- size_dt %>%
+    dplyr::group_by(cellLine, experiment, plateID, ploidy, glucose, hours) %>%
+    dplyr::summarise(
+      n_area_alive = dplyr::n(),
+      area_quantiles = list(stats::quantile(
+        cell_size_px,
+        probs = quantile_probs,
+        na.rm = TRUE,
+        names = FALSE,
+        type = 7
+      )),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      quantile_key = paste(cellLine, experiment, plateID, ploidy, glucose, hours, sep = "\r")
+    )
+
+  key_counts <- paste(
+    long_counts$cellLine,
+    long_counts$experiment,
+    long_counts$plateID,
+    long_counts$ploidy,
+    long_counts$G0,
+    long_counts$hours,
+    sep = "\r"
+  )
+  matched_idx <- match(key_counts, size_summary$quantile_key)
+
+  qmat <- matrix(
+    NA_real_,
+    nrow = nrow(long_counts),
+    ncol = length(quantile_probs),
+    dimnames = list(
+      NULL,
+      paste0("q", vapply(quantile_probs, format_prob_label, character(1)))
+    )
+  )
+
+  has_match <- !is.na(matched_idx)
+  if (any(has_match)) {
+    qmat[has_match, ] <- do.call(
+      rbind,
+      size_summary$area_quantiles[matched_idx[has_match]]
+    )
+  }
+
+  n_area_alive <- rep.int(NA_integer_, nrow(long_counts))
+  n_area_alive[has_match] <- size_summary$n_area_alive[matched_idx[has_match]]
+
+  missing_keys <- unique(key_counts[!has_match])
+  if (length(missing_keys)) {
+    warning(sprintf(
+      "Area summaries were missing for %d count rows across %d unique condition/replicate/time keys.",
+      sum(!has_match),
+      length(missing_keys)
+    ))
+  }
+
+  list(
+    area_quantile_probs = quantile_probs,
+    area_alive_quantiles = qmat,
+    n_area_alive = n_area_alive
+  )
+}
+
 # ==============================================================================
 # 1. CONFIGURATION
 # ==============================================================================
@@ -97,7 +214,7 @@ counts$N_live <- counts$N - counts$D
 
 counts <- counts %>%
   rename(G0 = glucose) %>%
-  select(cellLine, experiment, ploidy_metric, ploidy_val, plateID, G0, hours, N_live, D) %>%
+  select(cellLine, experiment, ploidy, ploidy_metric, ploidy_val, plateID, G0, hours, N_live, D) %>%
   arrange(cellLine, experiment, G0, hours)
 
 # ==============================================================================
@@ -245,7 +362,8 @@ for (i in 1:N_wells) {
            ploidy_metric == cond$ploidy_metric, G0 == cond$G0)
   sub_c$well_idx <- i
   sub_c$grid_idx <- get_grid_idx(sub_c$hours)
-  obs_counts_list[[i]] <- sub_c %>% select(well_idx, grid_idx, plateID, N_live, D)
+  obs_counts_list[[i]] <- sub_c %>%
+    select(well_idx, grid_idx, cellLine, experiment, ploidy, plateID, G0, hours, N_live, D)
   
   # For glucose data matching, we might have NAs in ploidy if not mapped perfectly,
   # but main mapping is done.
@@ -265,6 +383,7 @@ for (i in 1:N_wells) {
 
 long_counts <- do.call(rbind, obs_counts_list)
 long_gluc   <- do.call(rbind, obs_gluc_list)
+area_summary <- build_area_summary_matrix(long_counts)
 
 all_calib_raw$exp_idx <- calib_map_int[all_calib_raw$calib_batch]
 
@@ -387,3 +506,10 @@ stan_data$N_G1 <- max(stan_data$g1_id)
 stan_data$g1_ref_well <- match(seq_len(stan_data$N_G1), stan_data$g1_id)
 saveRDS(stan_data, "data/stan_ready_data.Rds")
 cat("Data saved to 'data/stan_ready_data.Rds'.\n")
+
+stan_data_area <- c(
+  stan_data,
+  area_summary
+)
+saveRDS(stan_data_area, "data/stan_ready_data_with_area.Rds")
+cat("Area-augmented data saved to 'data/stan_ready_data_with_area.Rds'.\n")

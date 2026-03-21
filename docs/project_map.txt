@@ -10,10 +10,12 @@
      runs optimize_counts() in src/optimize_counts.R:2, which calls preprocess_dt() and calculate_total_cost() in src/
      count_smoothing.cpp, then writes data/counts/corrected.Rds at workflow/adaptive_cell_count.Rmd:156.
   3. Stan data construction
-     The actual Stan input is built only by R/prepare_data.R. Key functions are as_corrected_counts() at line 39,
-     get_grid_idx() at line 221, and costf() at line 291. This script reads data/counts/uncorrected.Rds at R/
-     prepare_data.R:72, merges glucose calibration/data CSVs, constructs the stan_data list at R/prepare_data.R:333, and
-     saves data/stan_ready_data.Rds at R/prepare_data.R:388.
+     The actual Stan input is built only by R/prepare_data.R. Key functions are as_corrected_counts() at line 101,
+     build_area_summary_matrix() at line 16, get_grid_idx() at line 313, and costf() at line 384. This script reads
+     data/counts/uncorrected.Rds at R/prepare_data.R:134, merges glucose calibration/data CSVs, aligns alive-cell size
+     quantiles from data/counts/batch_results_TEMP_MEASURE_SIZE.csv to the count-observation rows, constructs the
+     stan_data list at R/prepare_data.R:426, and saves both data/stan_ready_data.Rds and
+     data/stan_ready_data_with_area.Rds.
   4. Model configuration, compilation, optimization, sampling
      The active model family is gpath and has now been versioned outside ecology. The current code version is
      models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. Core helpers are parse_run_id(),

@@ -6,6 +6,7 @@ output: html_document
 params:
   config_path: "scripts/selection_strategy_config.R"
   output_root: !r file.path("data", "selection_strategy", "gpath", "v1", "gstarvation_v1")
+  include_detailed: false
 ---
 
 ```{r setup, include=FALSE}
@@ -72,6 +73,8 @@ final_summary <- final_summary %>%
     cell_line = if_else(is.na(cell_line) | !nzchar(cell_line), sprintf("line_%02d", as.integer(line_id)), cell_line),
     context_label = if_else(fit_context == "global", "global", paste(direction, fit_type, sep = " | "))
   )
+
+agent_text_path <- file.path("workflow", "selection_strategy_analysis.txt")
 ```
 
 ## Objects
@@ -132,6 +135,26 @@ strategy_heatmap_summary <- strategy_sign_summary %>%
   filter(strategy_code %in% strategy_extreme_codes) %>%
   mutate(strategy_code = factor(strategy_code, levels = strategy_extreme_codes))
 
+strategy_effect_heatmap <- final_summary %>%
+  filter(strategy_code %in% strategy_extreme_codes) %>%
+  group_by(strategy_code) %>%
+  summarise(
+    q10 = quantile(log_ratio_final, probs = 0.10, na.rm = TRUE, names = FALSE),
+    median = median(log_ratio_final, na.rm = TRUE),
+    q90 = quantile(log_ratio_final, probs = 0.90, na.rm = TRUE, names = FALSE),
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_longer(cols = c(q10, median, q90), names_to = "summary_stat", values_to = "value") %>%
+  mutate(
+    strategy_code = factor(strategy_code, levels = strategy_extreme_codes),
+    summary_stat = factor(summary_stat, levels = c("q10", "median", "q90"))
+  )
+
+effect_limit <- max(abs(strategy_effect_heatmap$value), na.rm = TRUE)
+if (!is.finite(effect_limit) || effect_limit <= 0) {
+  effect_limit <- 1
+}
+
 strategy_design_long <- bind_rows(
   strategy_sign_summary %>%
     transmute(strategy_code, stage = "day0", value = g0_day0, action_label = "seed"),
@@ -187,6 +210,24 @@ p_score_heat <- ggplot(strategy_heatmap_summary, aes(x = 1, y = strategy_code, f
     axis.ticks.x = element_blank()
   )
 
+p_effect <- ggplot(strategy_effect_heatmap, aes(summary_stat, strategy_code, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    limits = c(-effect_limit, effect_limit),
+    name = "log ratio"
+  ) +
+  labs(
+    title = "Outcome Summary",
+    subtitle = "q10, median, q90 across all contexts",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11)
+
 p_design <- ggplot(strategy_design_heatmap, aes(stage, strategy_code, fill = glucose_label)) +
   geom_tile(color = "white") +
   scale_fill_manual(
@@ -211,7 +252,7 @@ p_design <- ggplot(strategy_design_heatmap, aes(stage, strategy_code, fill = glu
   ) +
   theme_minimal(base_size = 11)
 
-p_score_heat + p_design + patchwork::plot_layout(widths = c(0.5, 1))
+p_score_heat + p_effect + p_design + patchwork::plot_layout(widths = c(0.45, 0.8, 1))
 ```
 
 ## Main Result: Robust Strategies That Select Against High Ploidy
@@ -340,7 +381,7 @@ ggplot(for_plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
 
 This section reruns a very small number of representative top strategies in detailed mode. It is secondary to the heatmaps above.
 
-```{r representative-selection}
+```{r representative-selection, eval=params$include_detailed}
 rep_model_ids <- cfg$representative_model_ids
 if (is.null(rep_model_ids) || !length(rep_model_ids)) {
   rep_model_ids <- unique(head(as.character(against_plot_df$model_id), 2L))
@@ -377,7 +418,7 @@ if (nrow(detail_df)) {
 }
 ```
 
-```{r detailed-ratio, fig.height=10}
+```{r detailed-ratio, fig.height=10, eval=params$include_detailed}
 if (nrow(detail_df)) {
   detail_ratio <- detail_df %>%
     mutate(log_ratio = log((N_high + 1e-8) / (N_low + 1e-8)))
@@ -393,4 +434,59 @@ if (nrow(detail_df)) {
     ) +
     theme_minimal(base_size = 11)
 }
+```
+
+## Agent Summary
+
+```{r agent-summary, include=FALSE}
+against_text <- against_strategy_summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
+
+for_text <- for_strategy_summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_for=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
+
+consistency_extremes <- strategy_sign_summary %>%
+  slice(unique(c(seq_len(min(5, nrow(strategy_sign_summary))), seq.int(max(1, nrow(strategy_sign_summary) - 4), nrow(strategy_sign_summary))))) %>%
+  transmute(
+    line = sprintf(
+      "%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code, signed_consistency, frac_for, frac_against, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
+
+summary_lines <- c(
+  "SELECTION_STRATEGY_ANALYSIS",
+  sprintf("generated\t%s", as.character(Sys.time())),
+  sprintf("config\t%s", params$config_path),
+  sprintf("output_root\t%s", params$output_root),
+  sprintf("n_models\t%d", dplyr::n_distinct(final_summary$model_id)),
+  sprintf("n_contexts\t%d", dplyr::n_distinct(paste(final_summary$model_id, final_summary$line_id, final_summary$context_label, sep = '||'))),
+  sprintf("n_strategies\t%d", dplyr::n_distinct(final_summary$strategy_code)),
+  "",
+  "TOP_AGAINST_HIGH",
+  against_text,
+  "",
+  "TOP_FOR_HIGH",
+  for_text,
+  "",
+  "CONSISTENCY_EXTREMES",
+  consistency_extremes
+)
+
+writeLines(summary_lines, agent_text_path)
 ```

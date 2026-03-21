@@ -40,6 +40,7 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(scales)
+library(patchwork)
 
 source("R/selection_strategy_utils.R")
 
@@ -84,6 +85,97 @@ On disk these live under:
 
 - `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/final_summary.Rds`
 - `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/detail.Rds`
+
+## Global Strategy Ordering
+
+This view ignores model identity and asks a simpler question: across all simulated contexts, how consistently does each strategy push selection in one direction?
+
+For each strategy:
+
+- `frac_for` = fraction of contexts with `log_ratio_final > 0`
+- `frac_against` = fraction of contexts with `log_ratio_final < 0`
+- `signed_consistency = frac_for - frac_against`
+
+So:
+
+- values near `+1` mean the strategy almost always selects for high ploidy
+- values near `-1` mean the strategy almost always selects against high ploidy
+- values near `0` mean the strategy has no clear directional tendency
+
+```{r strategy-ordering-prep}
+strategy_sign_summary <- final_summary %>%
+  group_by(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4) %>%
+  summarise(
+    n_contexts = n(),
+    frac_for = mean(log_ratio_final > 0, na.rm = TRUE),
+    frac_against = mean(log_ratio_final < 0, na.rm = TRUE),
+    frac_neutral = mean(log_ratio_final == 0, na.rm = TRUE),
+    signed_consistency = frac_for - frac_against,
+    abs_consistency = pmax(frac_for, frac_against),
+    mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(signed_consistency, desc(abs_consistency), mean_log_ratio)
+
+strategy_levels <- strategy_sign_summary$strategy_code
+
+strategy_score_plot_df <- strategy_sign_summary %>%
+  mutate(strategy_code = factor(strategy_code, levels = strategy_levels))
+
+strategy_design_long <- bind_rows(
+  strategy_sign_summary %>%
+    transmute(strategy_code, stage = "day0", value = g0_day0, action_label = "seed"),
+  strategy_sign_summary %>%
+    transmute(strategy_code, stage = "day2", value = g0_day2, action_label = if_else(day2_action == "carry", "carry", "refresh")),
+  strategy_sign_summary %>%
+    transmute(strategy_code, stage = "day4", value = g0_day4, action_label = if_else(day4_action == "carry", "carry", "refresh"))
+) %>%
+  mutate(
+    strategy_code = factor(strategy_code, levels = strategy_levels),
+    stage = factor(stage, levels = c("day0", "day2", "day4")),
+    glucose_plot = if_else(is.na(value), -1, value)
+  )
+```
+
+```{r strategy-ordering, fig.height=18}
+p_score <- ggplot(strategy_score_plot_df, aes(x = signed_consistency, y = strategy_code, fill = mean_log_ratio)) +
+  geom_col(width = 0.8) +
+  geom_vline(xintercept = 0, color = "grey40", linewidth = 0.4) +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    name = "Mean log ratio"
+  ) +
+  labs(
+    title = "Per-Strategy Directional Consistency",
+    subtitle = "Ordered from consistently against high ploidy to consistently for high ploidy",
+    x = "signed consistency = frac_for - frac_against",
+    y = "strategy code"
+  ) +
+  theme_minimal(base_size = 11)
+
+p_design <- ggplot(strategy_design_long, aes(stage, strategy_code, fill = glucose_plot)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = if_else(action_label == "carry", "carry", scales::number(value, accuracy = 0.1))), size = 2.6) +
+  scale_fill_gradientn(
+    colours = c("#bdbdbd", "#f7fbff", "#6baed6", "#08519c"),
+    values = scales::rescale(c(-1, min(glucose_values), median(glucose_values), max(glucose_values))),
+    name = "glucose / carry",
+    breaks = c(-1, glucose_values),
+    labels = c("carry", as.character(glucose_values))
+  ) +
+  labs(
+    title = "Strategy Design",
+    subtitle = "Seed glucose at day 0, then day-2 and day-4 actions",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11)
+
+p_score + p_design + patchwork::plot_layout(widths = c(1.6, 1))
+```
 
 ## Main Result: Robust Strategies That Select Against High Ploidy
 

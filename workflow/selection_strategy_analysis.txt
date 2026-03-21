@@ -1,0 +1,33 @@
+SELECTION_STRATEGY_ANALYSIS
+generated	2026-03-21 20:21:06.527609
+config	scripts/selection_strategy_config.R
+output_root	data/selection_strategy/gpath/v1/gstarvation_v1
+n_models	12
+n_contexts	180
+n_strategies	448
+
+TOP_AGAINST_HIGH
+574 | mean_rank=97.76 | top5=0.12 | frac_against=0.57 | mean_log_ratio=-0.091
+674 | mean_rank=99.13 | top5=0.09 | frac_against=0.56 | mean_log_ratio=-0.121
+565 | mean_rank=99.24 | top5=0.09 | frac_against=0.56 | mean_log_ratio=-0.123
+514 | mean_rank=99.24 | top5=0.07 | frac_against=0.56 | mean_log_ratio=-0.122
+774 | mean_rank=100.08 | top5=0.03 | frac_against=0.56 | mean_log_ratio=-0.125
+
+TOP_FOR_HIGH
+100 | mean_rank=52.49 | top5=0.59 | frac_for=0.83 | mean_log_ratio=0.825
+200 | mean_rank=58.93 | top5=0.29 | frac_for=0.84 | mean_log_ratio=0.794
+170 | mean_rank=63.69 | top5=0.52 | frac_for=0.83 | mean_log_ratio=0.776
+107 | mean_rank=64.39 | top5=0.52 | frac_for=0.83 | mean_log_ratio=0.772
+110 | mean_rank=68.37 | top5=0.04 | frac_for=0.83 | mean_log_ratio=0.713
+
+CONSISTENCY_EXTREMES
+574 | signed_consistency=-0.133 | frac_for=0.43 | frac_against=0.57 | mean_log_ratio=-0.091
+576 | signed_consistency=-0.122 | frac_for=0.44 | frac_against=0.56 | mean_log_ratio=-0.163
+756 | signed_consistency=-0.122 | frac_for=0.44 | frac_against=0.56 | mean_log_ratio=-0.161
+724 | signed_consistency=-0.122 | frac_for=0.44 | frac_against=0.56 | mean_log_ratio=-0.160
+566 | signed_consistency=-0.122 | frac_for=0.44 | frac_against=0.56 | mean_log_ratio=-0.159
+100 | signed_consistency=0.656 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.825
+110 | signed_consistency=0.667 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.713
+107 | signed_consistency=0.667 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.772
+170 | signed_consistency=0.667 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.776
+200 | signed_consistency=0.689 | frac_for=0.84 | frac_against=0.16 | mean_log_ratio=0.794

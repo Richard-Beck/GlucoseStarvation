@@ -439,79 +439,32 @@ if (nrow(detail_df)) {
 ## Agent Summary
 
 ```{r agent-summary, include=FALSE}
-fmt_strategy <- function(df, direction_label) {
-  if (!nrow(df)) {
-    return(character(0))
-  }
+against_text <- against_strategy_summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
 
-  lookup <- strategy_grid %>%
-    select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4) %>%
-    distinct()
-
-  idx <- match(df$strategy_code, lookup$strategy_code)
-  df$g0_day0 <- lookup$g0_day0[idx]
-  df$day2_action <- lookup$day2_action[idx]
-  df$g0_day2 <- lookup$g0_day2[idx]
-  df$day4_action <- lookup$day4_action[idx]
-  df$g0_day4 <- lookup$g0_day4[idx]
-
-  df %>%
-    slice_head(n = 5) %>%
-    transmute(
-      line = sprintf(
-        "%s | d0=%s d2=%s d4=%s | mean_rank=%.2f | top5=%.2f | frac_%s=%.2f | mean_log_ratio=%.3f",
-        strategy_code,
-        as.character(g0_day0),
-        if_else(day2_action == "carry", "carry", as.character(g0_day2)),
-        if_else(day4_action == "carry", "carry", as.character(g0_day4)),
-        mean_rank,
-        top5_fraction,
-        direction_label,
-        favorable_fraction,
-        mean_log_ratio
-      )
-    ) %>%
-    pull(line)
-}
-
-best_against <- against_strategy_summary %>%
-  left_join(
-    strategy_grid %>%
-      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
-    by = "strategy_code"
-  )
-
-best_for <- for_strategy_summary %>%
-  left_join(
-    strategy_grid %>%
-      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
-    by = "strategy_code"
-  )
-
-against_text <- best_against %>%
-  fmt_strategy(direction_label = "against")
-
-for_text <- best_for %>%
-  fmt_strategy(direction_label = "for")
+for_text <- for_strategy_summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_for=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
 
 consistency_extremes <- strategy_sign_summary %>%
   slice(unique(c(seq_len(min(5, nrow(strategy_sign_summary))), seq.int(max(1, nrow(strategy_sign_summary) - 4), nrow(strategy_sign_summary))))) %>%
-  left_join(
-    strategy_grid %>%
-      select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
-    by = "strategy_code"
-  ) %>%
   transmute(
     line = sprintf(
-      "%s | d0=%s d2=%s d4=%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
-      strategy_code,
-      as.character(g0_day0),
-      if_else(day2_action == "carry", "carry", as.character(g0_day2)),
-      if_else(day4_action == "carry", "carry", as.character(g0_day4)),
-      signed_consistency,
-      frac_for,
-      frac_against,
-      mean_log_ratio
+      "%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code, signed_consistency, frac_for, frac_against, mean_log_ratio
     )
   ) %>%
   pull(line)

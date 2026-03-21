@@ -91,8 +91,15 @@ High-level workflow
   `data/counts/batch_results_TEMP_MEASURE_SIZE.csv` to build
   `data/counts/uncorrected_features.Rds` and a series of size- and position-based
   exploratory summaries.
-- This feature branch is exploratory; it does not feed the active Stan-data
-  construction path.
+- That feature table remains exploratory; it does not feed the main
+  `data/stan_ready_data.Rds` construction path.
+- Current status: `R/prepare_data.R` now also reads
+  `data/counts/batch_results_TEMP_MEASURE_SIZE.csv` to align alive-cell size
+  quantiles onto the count observations and writes
+  `data/stan_ready_data_with_area.Rds`.
+- `workflow/area_quantile_eda.Rmd` is the reporting notebook for that
+  area-augmented object. So image-derived measurements now support an auxiliary
+  area-aware analysis path, but not a standalone modelling branch.
 
 Expected intermediate files under `data/`
 
@@ -106,6 +113,9 @@ data/counts
 - `wells/well_ids.txt`
 - `wells/batch_results.csv`
 - `wells/wells/*.tif`
+
+data
+- `stan_ready_data_with_area.Rds`
 
 data/train
 - `train_image_ids.csv`

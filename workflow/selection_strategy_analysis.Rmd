@@ -444,6 +444,16 @@ fmt_strategy <- function(df, direction_label) {
     return(character(0))
   }
 
+  needed_cols <- c("g0_day0", "day2_action", "g0_day2", "day4_action", "g0_day4")
+  if (!all(needed_cols %in% names(df))) {
+    df <- df %>%
+      left_join(
+        strategy_grid %>%
+          select(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4),
+        by = "strategy_code"
+      )
+  }
+
   df %>%
     slice_head(n = 5) %>%
     transmute(

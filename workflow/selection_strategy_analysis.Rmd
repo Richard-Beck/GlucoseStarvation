@@ -79,10 +79,10 @@ top_by_group <- final_summary %>%
 ```{r coverage}
 coverage_tbl <- final_summary %>%
   distinct(model_id, line_id, cell_line, fit_context, direction, fit_type) %>%
-  count(model_id, fit_context, direction, fit_type, name = "n_line_contexts") %>%
+  dplyr::count(model_id, fit_context, direction, fit_type, name = "n_line_contexts") %>%
   arrange(model_id, fit_context, direction, fit_type)
 
-knitr::kable(coverage_tbl)
+print(coverage_tbl, n = 20)
 ```
 
 ## Basic Criteria
@@ -103,7 +103,7 @@ criteria_tbl <- top_by_group %>%
   ) %>%
   arrange(model_id, cell_line, fit_context, direction, fit_type, selection_objective, rank)
 
-knitr::kable(head(criteria_tbl, 24), digits = 3)
+print(head(criteria_tbl, 24), n = 24)
 ```
 
 ## Top Strategies
@@ -128,11 +128,11 @@ ggplot(against_top, aes(model_id, cell_line, fill = select_against_high_score)) 
 ```
 
 ```{r top-table}
-knitr::kable(
+print(
   against_top %>%
     select(model_id, cell_line, fit_context, direction, fit_type, strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4, select_against_high_score, total_live, high_fraction_final) %>%
     arrange(model_id, cell_line, fit_context, direction, fit_type),
-  digits = 3
+  n = 20
 )
 ```
 
@@ -165,7 +165,7 @@ stability_tbl <- transfer_rank_tbl %>%
   ) %>%
   arrange(mean_rank_of_global_top, max_rank_of_global_top)
 
-knitr::kable(stability_tbl, digits = 2)
+print(stability_tbl, n = 20)
 ```
 
 ## Representative Detailed Trajectories
@@ -175,7 +175,7 @@ rep_model_ids <- cfg$representative_model_ids
 if (is.null(rep_model_ids) || !length(rep_model_ids)) {
   rep_model_ids <- against_top %>%
     distinct(model_id) %>%
-    slice_head(n = min(2L, n())) %>%
+    head(2L) %>%
     pull(model_id)
 }
 
@@ -258,5 +258,5 @@ interval_end_tbl <- interval_summary %>%
   select(model_id, cell_line, fit_context, direction, fit_type, strategy_code, segment_end_hours, N_low, N_high, total_live, high_fraction) %>%
   arrange(model_id, cell_line, fit_context, direction, fit_type, strategy_code, segment_end_hours)
 
-knitr::kable(head(interval_end_tbl, 24), digits = 3)
+print(head(interval_end_tbl, 24), n = 24)
 ```

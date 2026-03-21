@@ -831,16 +831,37 @@ collect_selection_outputs <- function(config) {
     stop(sprintf("Selection strategy output root not found: %s", root_dir))
   }
 
+  bind_align <- function(paths) {
+    if (!length(paths)) {
+      return(data.frame())
+    }
+
+    dfs <- lapply(paths, readRDS)
+    all_names <- unique(unlist(lapply(dfs, names)))
+
+    dfs <- lapply(dfs, function(df) {
+      missing <- setdiff(all_names, names(df))
+      if (length(missing)) {
+        for (nm in missing) {
+          df[[nm]] <- NA
+        }
+      }
+      df[, all_names, drop = FALSE]
+    })
+
+    do.call(rbind, dfs)
+  }
+
   final_files <- list.files(root_dir, pattern = "^final_summary\\.Rds$", recursive = TRUE, full.names = TRUE)
   interval_files <- list.files(root_dir, pattern = "^interval_summary\\.Rds$", recursive = TRUE, full.names = TRUE)
   detail_files <- list.files(root_dir, pattern = "^detail\\.Rds$", recursive = TRUE, full.names = TRUE)
   meta_files <- list.files(root_dir, pattern = "^task_meta\\.Rds$", recursive = TRUE, full.names = TRUE)
 
   list(
-    final_summary = if (length(final_files)) do.call(rbind, lapply(final_files, readRDS)) else data.frame(),
-    interval_summary = if (length(interval_files)) do.call(rbind, lapply(interval_files, readRDS)) else data.frame(),
-    detail = if (length(detail_files)) do.call(rbind, lapply(detail_files, readRDS)) else data.frame(),
-    task_meta = if (length(meta_files)) do.call(rbind, lapply(meta_files, readRDS)) else data.frame()
+    final_summary = bind_align(final_files),
+    interval_summary = bind_align(interval_files),
+    detail = bind_align(detail_files),
+    task_meta = bind_align(meta_files)
   )
 }
 

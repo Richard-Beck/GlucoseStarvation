@@ -93,9 +93,8 @@ clamp_constrained_init <- function(init, maxG0) {
   init
 }
 
-flat_to_init_list <- function(
-  x_named,
-  param_names = c(
+default_init_param_names <- function() {
+  c(
     "raw_theta_line",
     "raw_theta_ploidy",
     "raw_N0",
@@ -104,9 +103,18 @@ flat_to_init_list <- function(
     "raw_sigma_rel",
     "nu_N",
     "G1_0"
-  ),
+  )
+}
+
+flat_to_init_list <- function(
+  x_named,
+  param_names = NULL,
   maxG0
 ) {
+  if (is.null(param_names)) {
+    param_names <- default_init_param_names()
+  }
+
   keep <- !grepl("__$", names(x_named)) & names(x_named) != "lp__"
   x_named <- x_named[keep]
   x_named <- x_named[is.finite(x_named)]
@@ -173,10 +181,6 @@ sample_posterior_init <- function(draws, seed, maxG0, param_names = NULL) {
   x_named <- dm[pick, , drop = TRUE]
   x_named <- x_named[is.finite(x_named)]
   x_named <- x_named[!is.na(x_named)]
-
-  if (is.null(param_names)) {
-    return(flat_to_init_list(x_named = x_named, maxG0 = maxG0))
-  }
 
   flat_to_init_list(
     x_named = x_named,

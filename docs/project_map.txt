@@ -84,6 +84,9 @@
 
      There is also a plotting helper script, ecology/model_selection/models/gpath/plot_fits.R, with
      generate_line_data(), plot_line_trajectories(), and prep_line_diag_exact() for simulated-vs-observed fit plots.
+     For the branch-local latent-state fallback, latent_state_hpc_branch/code/plot_best_fit_all_wells.R loads the
+     best portable family fit and exports all-well observed-vs-fitted overlays for live counts and glucose
+     luminescence under latent_state_hpc_branch/figures/.
      Transfer-CV plotting now lives in R/transfer_cv_plot_utils.R and scripts/plot_gpath_transfer_cv.R, which load the
      best optimization start per null/transfer/oracle condition, simulate the held-out line, and overlay fits with
      color by fit type and linetype by transfer direction. Batch export of annotated transfer overlays now lives in
@@ -128,11 +131,21 @@
   Paired ploidy-effect summaries are computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R
   then performs a leave-one-line directional transfer benchmark on the curated signature panel, using the median
   cross-line ploidy effect per signature as the transferred effect and reporting scaled error summaries so
-  heterogeneous feature magnitudes do not dominate. Here again, the transfer benchmark is mainly a check on whether
-  the observed ploidy signatures are stable enough across lines to support broader selection-oriented hypotheses.
+  heterogeneous feature magnitudes do not dominate. The same script now also writes a simple outlier-robustness sidecar:
+  robust per-line discordance scores in signature-effect space plus leave-one-training-line influence summaries for the
+  remaining holdout lines, so any proposed line exclusion is auditable rather than ad hoc. Here again, the transfer
+  benchmark is mainly a check on whether the observed ploidy signatures are stable enough across lines to support
+  broader selection-oriented hypotheses.
   workflow/model_free_ploidy_analysis.Rmd is the reporting notebook for this branch and now presents one section per
-  curated feature with rationale plus the corresponding computation plot; it also writes
-  workflow/model_free_ploidy_analysis.txt as an agent-readable results companion.
+  curated feature with rationale plus the corresponding computation plot, and now includes an explicit outlier-robustness
+  section; it also writes workflow/model_free_ploidy_analysis.txt as an agent-readable results companion.
+  workflow/transfer_spline_first_attempt.Rmd is a separate exploratory notebook that rebuilds observed total-cell and
+  estimated-glucose trajectories from `stan_ready_data`, fits conservative positive smooth splines per
+  cellLine/ploidy/G0 panel, derives empirical rate-vs-glucose relationships after dropping any well with censored
+  glucose, and screens reduced residual models to ask which extra state summaries (density, time, lagged or integrated
+  history, well effects) tighten those relationships. The notebook frames those findings mainly as support for hidden
+  state in general, with the active `gpath` resource/waste states as plausible carriers of the slow structure, rather
+  than as a direct critique of the mechanistic workflow.
 
   Selection-strategy simulation branch
 
@@ -148,10 +161,22 @@
   `interval_summary.Rds`, `final_summary.Rds`, optional `detail.Rds`, and `task_meta.Rds` under
   data/selection_strategy/gpath/v1/<dataset>/... . workflow/selection_strategy_analysis.Rmd is the reporting notebook;
   it aggregates those outputs, applies basic ranking criteria for selecting for or against high ploidy, and reruns a
-  small number of top strategies in detailed mode for trajectory plots. scripts/render_gpath_selection_strategy_report.R
-  renders that notebook without requiring positional arguments. Cluster execution now follows the standard manifest
+  small number of top strategies in detailed mode for trajectory plots. The notebook now also contains a SUM-159
+  competition-validation section that maps `data/counts/competition/SUM-159-fuse.Rds` onto the mixed-culture state
+  variables, treats each frame as 8 hours, reruns no-refresh detailed trajectories for line 5 from the existing fitted
+  contexts, and compares observed-versus-simulated composition/live-burden trajectories as a credibility check on the
+  selection branch. scripts/render_gpath_selection_strategy_report.R renders that notebook without requiring positional
+  arguments. Cluster execution now follows the standard manifest
   pattern via scripts/make_gpath_selection_strategy_manifest.R, slurm/jobs/gpath_selection_strategy_array.sh, and
   slurm/submit_gpath_selection_strategy_pipeline.sh.
+
+  Competition-validation side branch
+
+  data/counts/competition/ currently holds empirical mixed-culture count tables that are not part of the Stan training
+  path. workflow/competition_analysis.Rmd is the lightweight report for this branch: it audits the object structure,
+  reconstructs 2N/4N/dead competition summaries such as `frac_4N`, `log(4N/2N)`, total-live, and dead-fraction
+  trajectories, and frames those summaries as validation targets for the mixed-culture selection-strategy simulations
+  rather than as model-fitting input.
 
   Image-derived feature branch
 
@@ -163,11 +188,21 @@
   extension is an area-aware sidecar in R/prepare_data.R:
   it aligns alive-cell size quantiles from batch_results_TEMP_MEASURE_SIZE.csv to the count-observation rows and writes
   data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd is the new lightweight reporting notebook for that
-  object: it plots q50/q99/tail-ratio trajectories, within-line ploidy contrasts, early-morphology-vs-late-outcome
-  checks, morphology-versus-glucose relationships, and a cleaned-up port of the size-to-glucose-cost scaling idea from
-  workflow/volume_aware_anal.Rmd. Current status: morphology is now available as an auxiliary analysis dataset, but only
-  through this area-quantile side path; there is still no downstream fitting or transfer workflow that treats the
-  broader image-derived feature panel as a primary branch.
+  object: it plots q50/q99/tail-ratio trajectories, derives a crowding-adjusted latent volume proxy from the central
+  area quantiles, shows within-line ploidy contrasts, morphology-versus-glucose relationships, and a cleaned-up port of
+  the size-to-glucose-cost scaling idea from workflow/volume_aware_anal.Rmd. Current status: morphology is now
+  available as an auxiliary analysis dataset, but only through this area-quantile side path; there is still no
+  downstream fitting or transfer workflow that treats the broader image-derived feature panel as a primary branch.
+
+  Agent-sidecar utilities
+
+  agent-dev/ is a local handoff folder for agent reruns. It now contains a localized `1R_1P_0W_C0_M0` sidecar:
+  agent-dev/gpath_hier.stan is a fixed-dimension specialization of the gpath hierarchy for one resource / one pathway /
+  no waste, agent-dev/minimal_model_utils.R rebuilds the reduced Stan data directly from data/stan_ready_data.Rds plus
+  the manifest-backed best-fit parameter row, agent-dev/run_log_lik.R recompiles that copy and prints the
+  corresponding `best_lp` and `log_lik`, and agent-dev/run_optimize.R performs graceful hybrid-random multistart BFGS
+  optimization against the simplified model while reporting hit rates relative to the canonical `log_lik`. The
+  parameter source is still the canonical `1R_1P_0W_C0_M1` optimization output because `M` is irrelevant when `W=0`.
 
   Dead code / duplicated pathways
 

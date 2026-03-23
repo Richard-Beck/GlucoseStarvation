@@ -1,0 +1,892 @@
+---
+title: "Transfer Trajectory Spline First Attempt"
+author: "Codex"
+date: "2026-03-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+knitr::opts_knit$set(root.dir = normalizePath("../"))
+```
+
+## Purpose
+
+This notebook is a first pass at fitting smooth empirical trajectories for each cell line in a layout similar to the transfer CV overlays in `R/transfer_cv_plot_utils.R::plot_transfer_line_trajectories`.
+
+The goals for this first attempt are:
+
+1. keep the fitted curves fairly smooth rather than highly adaptive,
+2. preserve positivity by fitting on a `log1p` scale and back-transforming,
+3. show where the approach is likely useful and where it may need stronger shape constraints.
+
+## Setup
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(purrr)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(mgcv)
+
+source("R/project_paths.R")
+source("R/gpath_run_utils.R")
+source("R/model_free_ploidy_utils.R")
+```
+
+```{r data}
+tables <- build_model_free_tables()
+
+line_levels <- tables$well_meta %>%
+  distinct(cellLine) %>%
+  arrange(cellLine) %>%
+  pull(cellLine)
+
+excluded_censored_wells <- tables$glucose_obs %>%
+  group_by(well_idx) %>%
+  summarise(any_censored = any(is_censored == 1L), .groups = "drop") %>%
+  filter(any_censored) %>%
+  pull(well_idx)
+
+included_wells <- tables$well_meta %>%
+  filter(!well_idx %in% excluded_censored_wells) %>%
+  pull(well_idx)
+
+count_df <- tables$count_obs %>%
+  filter(well_idx %in% included_wells) %>%
+  left_join(
+    tables$well_meta %>%
+      select(well_idx, cellLine, line_id, ploidy_abs, ploidy_metric, G0),
+    by = "well_idx"
+  ) %>%
+  transmute(
+    cellLine,
+    line_id,
+    ploidy_abs,
+    ploidy_metric,
+    G0,
+    well_idx,
+    hours,
+    variable = "N",
+    value = total_cells
+  )
+
+glucose_df <- tables$glucose_summary %>%
+  filter(well_idx %in% included_wells, any_glucose_censored == 0L) %>%
+  transmute(
+    cellLine,
+    line_id,
+    ploidy_abs,
+    ploidy_metric,
+    G0,
+    well_idx,
+    hours,
+    variable = "R1",
+    value = glucose_hat
+  )
+
+obs_df <- bind_rows(count_df, glucose_df) %>%
+  mutate(
+    value = pmax(value, 0),
+    cellLine = factor(cellLine, levels = line_levels),
+    variable = factor(variable, levels = c("N", "R1"))
+  )
+
+line_counts <- obs_df %>%
+  distinct(cellLine, ploidy_abs, G0, variable, well_idx) %>%
+  count(cellLine, variable, name = "n_wells")
+
+count_point_counts <- count_df %>%
+  count(cellLine, ploidy_abs, G0, well_idx, hours, name = "n_points_at_time")
+
+line_counts
+```
+
+```{r censor-diagnostics}
+tibble(
+  n_total_wells = nrow(tables$well_meta),
+  n_excluded_censored_wells = length(excluded_censored_wells),
+  n_included_wells = length(included_wells)
+)
+```
+
+## Spline Strategy
+
+The first pass pooled all wells inside a panel, which makes the cell-count fits too blunt when replicate wells diverge. This revision instead fits each well separately, which is closer to the original transfer trajectory overlays.
+
+The plotting now shows all raw `N_obs` count observations as individual points. The spline fitting still uses the same well-level table being plotted, so `N` fits now see the raw count replicates rather than the earlier per-time medians.
+
+The fitting rules are:
+
+1. fit on the `log1p(value)` scale and back-transform with `expm1` to preserve positivity,
+2. use a lighter smoothing level for `N` than for `R1`,
+3. keep `cv = FALSE` so the fits remain fairly regular rather than chasing every point.
+
+```{r spline-helpers}
+default_spar_by_variable <- c(
+  N = 0.45,
+  R1 = 0.70
+)
+
+fit_positive_spline <- function(df, spar = 0.72, min_unique_x = 4L, n_eval = 200L) {
+  df <- df %>%
+    filter(is.finite(hours), is.finite(value)) %>%
+    arrange(hours)
+
+  unique_x <- sort(unique(df$hours))
+  if (nrow(df) < min_unique_x || length(unique_x) < min_unique_x) {
+    return(NULL)
+  }
+
+  fit <- try(
+    stats::smooth.spline(
+      x = df$hours,
+      y = log1p(pmax(df$value, 0)),
+      spar = spar,
+      cv = FALSE
+    ),
+    silent = TRUE
+  )
+
+  if (inherits(fit, "try-error")) {
+    return(NULL)
+  }
+
+  eval_hours <- seq(min(df$hours), max(df$hours), length.out = n_eval)
+  pred <- predict(fit, x = eval_hours)
+  deriv <- predict(fit, x = eval_hours, deriv = 1)
+
+  fit_value <- pmax(expm1(pred$y), 0)
+  fit_deriv <- pmax(exp(pred$y), 1) * deriv$y
+
+  tibble(
+    hours = eval_hours,
+    fit_value = fit_value,
+    fit_deriv = fit_deriv,
+    spar = spar,
+    n_obs = nrow(df),
+    n_unique_hours = length(unique_x)
+  )
+}
+
+fit_panel_splines <- function(df, spar_map = default_spar_by_variable) {
+  nested <- df %>%
+    group_by(cellLine, line_id, ploidy_abs, ploidy_metric, G0, variable, well_idx) %>%
+    nest()
+
+  fits <- nested %>%
+    mutate(
+      fit_spar = unname(spar_map[as.character(variable)]),
+      fit_spar = ifelse(is.na(fit_spar), 0.65, fit_spar),
+      fit = map2(data, fit_spar, fit_positive_spline),
+      fit_ok = map_lgl(fit, ~ !is.null(.x))
+    )
+
+  fit_df <- fits %>%
+    filter(fit_ok) %>%
+    select(-data, -fit_ok) %>%
+    unnest(fit)
+
+  fit_qc <- fits %>%
+    transmute(
+      cellLine,
+      ploidy_abs,
+      G0,
+      variable,
+      well_idx,
+      fit_spar,
+      n_obs = map_int(data, nrow),
+      n_unique_hours = map_int(data, ~ length(unique(.x$hours))),
+      fit_ok
+    ) %>%
+    arrange(cellLine, variable, ploidy_abs, G0)
+
+  list(
+    fit_df = fit_df,
+    fit_qc = fit_qc
+  )
+}
+
+spline_results <- fit_panel_splines(obs_df)
+fit_df <- spline_results$fit_df
+fit_qc <- spline_results$fit_qc
+
+fit_qc %>%
+  count(variable, fit_ok)
+```
+
+```{r rate-helpers}
+build_rate_relationships <- function(fit_df, min_n = 1) {
+  n_fit <- fit_df %>%
+    filter(variable == "N") %>%
+    transmute(
+      cellLine,
+      line_id,
+      ploidy_abs,
+      ploidy_metric,
+      G0,
+      well_idx,
+      hours,
+      N_fit = fit_value,
+      dN_dt = fit_deriv
+    )
+
+  r1_fit <- fit_df %>%
+    filter(variable == "R1") %>%
+    transmute(
+      cellLine,
+      line_id,
+      ploidy_abs,
+      ploidy_metric,
+      G0,
+      well_idx,
+      hours,
+      R1_fit = fit_value,
+      dR1_dt = fit_deriv
+    )
+
+  inner_join(
+    n_fit,
+    r1_fit,
+    by = c("cellLine", "line_id", "ploidy_abs", "ploidy_metric", "G0", "well_idx", "hours")
+  ) %>%
+    filter(is.finite(N_fit), is.finite(R1_fit), N_fit >= min_n) %>%
+    mutate(
+      uptake_per_cell = dR1_dt / pmax(N_fit, min_n),
+      growth_per_cell = dN_dt / pmax(N_fit, min_n),
+      ploidy_label = factor(as.character(ploidy_abs), levels = sort(unique(as.character(ploidy_abs))))
+    )
+}
+
+rate_df <- build_rate_relationships(fit_df, min_n = 1)
+
+cumtrapz_vec <- function(x, y) {
+  n <- length(x)
+  out <- rep(0, n)
+  if (n < 2L) {
+    return(out)
+  }
+  for (i in 2:n) {
+    dx <- x[i] - x[i - 1L]
+    out[i] <- out[i - 1L] + dx * (y[i] + y[i - 1L]) / 2
+  }
+  out
+}
+
+rate_df <- rate_df %>%
+  mutate(
+    log_R1 = log10(pmax(R1_fit, 1e-6)),
+    log_N = log10(pmax(N_fit, 1)),
+    log_G0 = log10(pmax(G0, 1e-4)),
+    gluc_drawdown = pmax(G0 - R1_fit, 0),
+    frac_gluc_remaining = if_else(G0 > 0, pmin(pmax(R1_fit / G0, 0), 5), NA_real_),
+    well_factor = factor(well_idx)
+  ) %>%
+  group_by(cellLine, ploidy_abs, G0, well_idx) %>%
+  arrange(hours, .by_group = TRUE) %>%
+  mutate(
+    lag_log_R1 = lag(log_R1),
+    lag_log_N = lag(log_N),
+    lag_uptake_per_cell = lag(uptake_per_cell),
+    lag_growth_per_cell = lag(growth_per_cell),
+    cum_R1_auc = cumtrapz_vec(hours, R1_fit),
+    cum_drawdown_auc = cumtrapz_vec(hours, gluc_drawdown),
+    cum_N_auc = cumtrapz_vec(hours, N_fit)
+  ) %>%
+  ungroup()
+
+```
+
+```{r fit-qc}
+fit_qc %>%
+  filter(!fit_ok) %>%
+  arrange(cellLine, variable, ploidy_abs, G0)
+```
+
+```{r residual-model-screen}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0L) y else x
+}
+
+lag1_resid_cor <- function(df, resid_col = "resid") {
+  vals <- df[[resid_col]]
+  if (length(vals) < 3L || sd(vals, na.rm = TRUE) == 0 || any(!is.finite(vals))) {
+    return(NA_real_)
+  }
+  stats::cor(vals[-length(vals)], vals[-1L])
+}
+
+rate_model_formulas <- function() {
+  list(
+    baseline = y ~ s(log_R1, k = 6),
+    plus_logN = y ~ s(log_R1, k = 6) + s(log_N, k = 6),
+    plus_time = y ~ s(log_R1, k = 6) + s(hours, k = 6),
+    plus_logN_time = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(hours, k = 6),
+    plus_logN_time_well = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(hours, k = 6) + s(well_factor, bs = "re"),
+    plus_logG0 = y ~ s(log_R1, k = 6) + s(log_G0, k = 6),
+    plus_drawdown = y ~ s(log_R1, k = 6) + s(gluc_drawdown, k = 6),
+    plus_lag_state = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(lag_log_R1, k = 6) + s(lag_log_N, k = 6),
+    plus_integrated_state = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(cum_drawdown_auc, k = 6) + s(cum_N_auc, k = 6),
+    plus_mech_history = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(lag_log_R1, k = 6) + s(cum_drawdown_auc, k = 6)
+  )
+}
+
+fit_rate_model <- function(df, response, model_name) {
+  dat <- df %>%
+    ungroup() %>%
+    transmute(
+      y = .data[[response]],
+      log_R1,
+      log_N,
+      hours,
+      log_G0,
+      gluc_drawdown,
+      lag_log_R1,
+      lag_log_N,
+      cum_drawdown_auc,
+      cum_N_auc,
+      well_factor,
+      well_idx,
+      cellLine,
+      ploidy_abs
+    ) %>%
+    filter(
+      is.finite(y),
+      is.finite(log_R1),
+      is.finite(log_N),
+      is.finite(hours),
+      is.finite(log_G0),
+      is.finite(gluc_drawdown),
+      is.finite(lag_log_R1),
+      is.finite(lag_log_N),
+      is.finite(cum_drawdown_auc),
+      is.finite(cum_N_auc)
+    )
+
+  fit <- mgcv::gam(rate_model_formulas()[[model_name]], data = dat, method = "REML")
+  resid <- residuals(fit, type = "response")
+  pred <- fitted(fit)
+
+  acf_by_well <- dat %>%
+    mutate(resid = resid) %>%
+    group_by(well_idx) %>%
+    summarise(acf1 = lag1_resid_cor(pick(everything()), "resid"), .groups = "drop")
+
+  list(
+    fit = fit,
+    augmented = dat %>%
+      mutate(
+        pred = pred,
+        resid = resid,
+        response = response,
+        model_name = model_name
+      ),
+    metrics = tibble(
+      model_name = model_name,
+      rmse = sqrt(mean((dat$y - pred)^2)),
+      mae = mean(abs(dat$y - pred)),
+      dev_expl = summary(fit)$dev.expl %||% NA_real_,
+      r_sq = summary(fit)$r.sq %||% NA_real_,
+      aic = AIC(fit),
+      median_abs_acf1 = median(abs(acf_by_well$acf1), na.rm = TRUE),
+      mean_abs_acf1 = mean(abs(acf_by_well$acf1), na.rm = TRUE),
+      n = nrow(dat),
+      n_wells = n_distinct(dat$well_idx)
+    )
+  )
+}
+
+candidate_models <- names(rate_model_formulas())
+group_keys <- rate_df %>%
+  distinct(cellLine, ploidy_abs) %>%
+  arrange(cellLine, ploidy_abs)
+
+model_fit_tbl <- bind_rows(lapply(seq_len(nrow(group_keys)), function(i) {
+  cell_line <- group_keys$cellLine[[i]]
+  ploidy_value <- group_keys$ploidy_abs[[i]]
+  df_group <- rate_df %>%
+    filter(cellLine == cell_line, ploidy_abs == ploidy_value)
+
+  bind_rows(lapply(c("uptake_per_cell", "growth_per_cell"), function(response_name) {
+    bind_rows(lapply(candidate_models, function(model_name) {
+      fit_obj <- fit_rate_model(df_group, response_name, model_name)
+      tibble(
+        cellLine = cell_line,
+        ploidy_abs = ploidy_value,
+        response = response_name,
+        fit_obj = list(fit_obj$fit),
+        augmented = list(fit_obj$augmented)
+      ) %>%
+        bind_cols(fit_obj$metrics)
+    }))
+  }))
+}))
+
+model_screen_summary <- model_fit_tbl %>%
+  group_by(response, model_name) %>%
+  summarise(
+    n_groups = n(),
+    median_rmse = median(rmse, na.rm = TRUE),
+    median_mae = median(mae, na.rm = TRUE),
+    median_dev_expl = median(dev_expl, na.rm = TRUE),
+    median_r_sq = median(r_sq, na.rm = TRUE),
+    median_abs_acf1 = median(median_abs_acf1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(response, median_rmse)
+
+baseline_vs_candidates <- model_fit_tbl %>%
+  select(cellLine, ploidy_abs, response, model_name, rmse, dev_expl, median_abs_acf1) %>%
+  pivot_wider(
+    names_from = model_name,
+    values_from = c(rmse, dev_expl, median_abs_acf1),
+    values_fn = dplyr::first
+  )
+
+model_improvement_summary <- baseline_vs_candidates %>%
+  transmute(
+    cellLine,
+    ploidy_abs,
+    response,
+    rmse_reduction_logN_time = 1 - rmse_plus_logN_time / rmse_baseline,
+    rmse_reduction_logN_time_well = 1 - rmse_plus_logN_time_well / rmse_baseline,
+    dev_gain_logN_time = dev_expl_plus_logN_time - dev_expl_baseline,
+    dev_gain_logN_time_well = dev_expl_plus_logN_time_well - dev_expl_baseline,
+    acf_reduction_logN_time = median_abs_acf1_baseline - median_abs_acf1_plus_logN_time,
+    acf_reduction_logN_time_well = median_abs_acf1_baseline - median_abs_acf1_plus_logN_time_well
+  )
+
+model_best_per_group <- model_fit_tbl %>%
+  group_by(cellLine, ploidy_abs, response) %>%
+  arrange(rmse, desc(dev_expl), median_abs_acf1) %>%
+  slice(1L) %>%
+  ungroup()
+
+model_screen_summary
+```
+
+## Plotting Helpers
+
+```{r plotting-helpers}
+format_g0_label <- function(x) {
+  factor(
+    paste0("G[0]=", x),
+    levels = paste0("G[0]=", sort(unique(x)))
+  )
+}
+
+plot_one_line_variable <- function(line_name, variable_name) {
+  sub_obs <- obs_df %>%
+    filter(cellLine == line_name, variable == variable_name) %>%
+    mutate(G0_label = format_g0_label(G0))
+
+  sub_fit <- fit_df %>%
+    filter(cellLine == line_name, variable == variable_name) %>%
+    mutate(G0_label = format_g0_label(G0))
+
+  title_str <- if (identical(as.character(variable_name), "N")) {
+    "N (total cells)"
+  } else {
+    "R1 (estimated glucose)"
+  }
+
+  ggplot() +
+    geom_point(
+      data = sub_obs,
+      aes(x = hours, y = value, group = well_idx),
+      color = "black",
+      alpha = 0.45,
+      size = 1.1
+    ) +
+    geom_line(
+      data = sub_fit,
+      aes(x = hours, y = fit_value, group = well_idx),
+      color = "#1b9e77",
+      linewidth = 1.0
+    ) +
+    facet_grid(rows = vars(G0_label), cols = vars(ploidy_abs), scales = "free_y", labeller = label_parsed) +
+    scale_y_continuous(labels = label_number(big.mark = ",")) +
+    labs(
+      title = paste(line_name, "|", title_str),
+      x = "Time (hours)",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text = element_text(face = "bold"),
+      panel.border = element_rect(color = "grey80", fill = NA),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+plot_one_line_ploidy_overlay <- function(line_name, variable_name) {
+  sub_fit <- fit_df %>%
+    filter(cellLine == line_name, variable == variable_name) %>%
+    mutate(
+      G0_label = format_g0_label(G0),
+      ploidy_label = factor(as.character(ploidy_abs), levels = sort(unique(as.character(ploidy_abs))))
+    )
+
+  title_str <- if (identical(as.character(variable_name), "N")) {
+    "N (total cells)"
+  } else {
+    "R1 (estimated glucose)"
+  }
+
+  ggplot(
+    sub_fit,
+    aes(x = hours, y = fit_value, color = ploidy_label, group = interaction(ploidy_label, well_idx))
+  ) +
+    geom_line(linewidth = 0.95, alpha = 0.9) +
+    facet_wrap(vars(G0_label), scales = "free_y", labeller = label_parsed) +
+    scale_color_manual(
+      values = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a"),
+      name = "Ploidy"
+    ) +
+    scale_y_continuous(labels = label_number(big.mark = ",")) +
+    labs(
+      title = paste(line_name, "|", title_str, "| spline-only ploidy overlay"),
+      x = "Time (hours)",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text = element_text(face = "bold"),
+      panel.border = element_rect(color = "grey80", fill = NA),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+```
+
+## Example Cell Lines
+
+Below I show all cell lines detected in `stan_ready_data`. The black points are observed summaries per well-time; the green curves are well-level positive splines grouped by `well_idx`.
+
+```{r line-plots, fig.width=14, fig.height=8}
+line_plots <- map(
+  line_levels,
+  function(line_name) {
+    left <- plot_one_line_variable(line_name, "N")
+    right <- plot_one_line_variable(line_name, "R1")
+    left + right
+  }
+)
+
+walk(line_plots, print)
+```
+
+## Spline-Only Ploidy Overlays
+
+These plots remove the observed data and instead overlay the fitted low- and high-ploidy well trajectories within each cell line. Duplicate wells remain separate trajectories because the line grouping uses `well_idx`.
+
+```{r ploidy-overlay-plots, fig.width=14, fig.height=8}
+overlay_plots <- map(
+  line_levels,
+  function(line_name) {
+    left <- plot_one_line_ploidy_overlay(line_name, "N")
+    right <- plot_one_line_ploidy_overlay(line_name, "R1")
+    left + right
+  }
+)
+
+walk(overlay_plots, print)
+```
+
+## Rate Relationships From The Fitted Splines
+
+These plots use the existing well-level spline fits to evaluate derivatives on a shared time grid for `N` and `R1`, remove any well that has a censored glucose observation anywhere, then scatter all resulting pointwise pairs on a log glucose axis.
+
+1. `1/N * dR1/dt` as a function of `R1`,
+2. `1/N * dN/dt` as a function of `R1`.
+
+```{r rate-relationship-plots, fig.width=14, fig.height=8}
+plot_rate_relationship <- function(line_name, response = c("uptake_per_cell", "growth_per_cell")) {
+  response <- match.arg(response)
+
+  sub_df <- rate_df %>%
+    filter(cellLine == line_name) %>%
+    mutate(
+      ploidy_panel = factor(as.character(ploidy_abs), levels = sort(unique(as.character(ploidy_abs)))),
+      y_value = .data[[response]]
+    )
+
+  title_str <- if (identical(response, "uptake_per_cell")) {
+    "1/N * dR1/dt vs R1"
+  } else {
+    "1/N * dN/dt vs R1"
+  }
+
+  y_lab <- if (identical(response, "uptake_per_cell")) {
+    "1/N * dR1/dt"
+  } else {
+    "1/N * dN/dt"
+  }
+
+  ggplot(
+    sub_df,
+    aes(
+      x = R1_fit,
+      y = y_value,
+      color = ploidy_label
+    )
+  ) +
+    geom_point(size = 1.7) +
+    facet_wrap(vars(ploidy_panel), scales = "fixed") +
+    scale_color_manual(
+      values = c("#1b9e77", "#d95f02", "#7570b3", "#e7298a"),
+      name = "Ploidy"
+    ) +
+    scale_x_log10() +
+    labs(
+      title = paste(line_name, "|", title_str),
+      subtitle = "Points: all uncensored spline-evaluation pairs.",
+      x = "R1 (estimated glucose)",
+      y = y_lab
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text = element_text(face = "bold"),
+      panel.border = element_rect(color = "grey80", fill = NA),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+rate_plots <- map(line_levels, function(line_name) {
+  plot_rate_relationship(line_name, "uptake_per_cell") +
+    plot_rate_relationship(line_name, "growth_per_cell")
+})
+
+walk(rate_plots, print)
+```
+
+## Residual-Structure Discovery
+
+To test whether the `R1`-only relationships are missing additional structure, I screened a small family of GAMs on the uncensored spline-evaluation points within each `cellLine x ploidy` group.
+
+This screen should not be read as a direct criticism of the main `gpath` workflow. The active `gpath` models already contain latent resource / waste style state variables, and those are exactly the sort of slow hidden states that could plausibly account for the residual time/history structure detected here. The purpose of this section is narrower: to ask whether a naive reduced view, `rate ~ R1`, is adequate on its own, and if not, what kinds of additional state summaries seem to matter empirically.
+
+The candidate models were:
+
+1. `baseline`: smooth of `log10(R1)` only,
+2. `plus_logN`: add `log10(N)` as a density / confluence proxy,
+3. `plus_time`: add time,
+4. `plus_logN_time`: add both density and time,
+5. `plus_logN_time_well`: add density, time, and a well random effect,
+6. `plus_logG0`: add initial glucose,
+7. `plus_drawdown`: add glucose drawdown `G0 - R1`,
+8. `plus_lag_state`: add lagged `R1` and lagged `N`,
+9. `plus_integrated_state`: add cumulative glucose drawdown and cumulative `N`,
+10. `plus_mech_history`: combine current `R1`, current `N`, lagged `R1`, and cumulative drawdown.
+
+The working interpretation is:
+
+1. `logN` tests density-dependent or confluence-like latent structure,
+2. `time` tests adaptation / history / slowly evolving state,
+3. lagged / integrated terms test whether the time signal can be replaced by mechanistic state history,
+4. `well` tests persistent well-specific intrinsic or extrinsic states.
+
+In that sense, the useful comparison is:
+
+1. if `R1`-only fails badly, that supports the need for hidden state in some form,
+2. if lagged or integrated summaries replace time, that points toward a concrete mechanistic surrogate for the hidden state,
+3. if time still wins, the hidden state is likely more complex than the simple proxies screened here,
+4. and if well effects are still large, there is persistent heterogeneity that a pooled low-dimensional rate curve is not capturing.
+
+```{r model-screen-summary}
+model_screen_summary
+```
+
+```{r model-screen-improvements}
+model_improvement_summary %>%
+  group_by(response) %>%
+  summarise(
+    median_rmse_reduction_logN_time = median(rmse_reduction_logN_time, na.rm = TRUE),
+    median_rmse_reduction_logN_time_well = median(rmse_reduction_logN_time_well, na.rm = TRUE),
+    median_dev_gain_logN_time = median(dev_gain_logN_time, na.rm = TRUE),
+    median_dev_gain_logN_time_well = median(dev_gain_logN_time_well, na.rm = TRUE),
+    median_acf_reduction_logN_time = median(acf_reduction_logN_time, na.rm = TRUE),
+    median_acf_reduction_logN_time_well = median(acf_reduction_logN_time_well, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r time-vs-history-summary}
+model_screen_summary %>%
+  filter(model_name %in% c(
+    "baseline",
+    "plus_time",
+    "plus_logN_time",
+    "plus_lag_state",
+    "plus_integrated_state",
+    "plus_mech_history",
+    "plus_logN_time_well"
+  )) %>%
+  arrange(response, median_rmse)
+```
+
+```{r model-screen-plot, fig.width=12, fig.height=6}
+plot_metric_by_model <- function(metric_col, y_lab, response_name) {
+  model_fit_tbl %>%
+    filter(response == response_name) %>%
+    ggplot(aes(x = reorder(model_name, .data[[metric_col]], FUN = median), y = .data[[metric_col]])) +
+    geom_boxplot(outlier.alpha = 0.25, fill = "#b8d8c8", color = "#2f4f4f") +
+    coord_flip() +
+    theme_minimal(base_size = 11) +
+    labs(
+      title = paste(response_name, "|", y_lab),
+      x = NULL,
+      y = y_lab
+    )
+}
+
+(
+  plot_metric_by_model("rmse", "RMSE", "uptake_per_cell") +
+    plot_metric_by_model("rmse", "RMSE", "growth_per_cell")
+) /
+(
+  plot_metric_by_model("median_abs_acf1", "Median |lag-1 residual cor|", "uptake_per_cell") +
+    plot_metric_by_model("median_abs_acf1", "Median |lag-1 residual cor|", "growth_per_cell")
+)
+```
+
+```{r best-model-counts}
+model_best_per_group %>%
+  count(response, model_name, sort = TRUE)
+```
+
+```{r exemplar-residual-selection}
+exemplar_groups <- baseline_vs_candidates %>%
+  mutate(
+    rmse_reduction_logN_time = 1 - rmse_plus_logN_time / rmse_baseline
+  ) %>%
+  group_by(response) %>%
+  arrange(desc(rmse_reduction_logN_time), cellLine, ploidy_abs) %>%
+  slice(1L) %>%
+  ungroup()
+
+exemplar_groups
+```
+
+```{r exemplar-residual-plots, fig.width=14, fig.height=9}
+extract_augmented_model_data <- function(cell_line, ploidy_value, response_name, model_name) {
+  df_group <- rate_df %>%
+    filter(cellLine == cell_line, ploidy_abs == ploidy_value)
+
+  fit_rate_model(df_group, response_name, model_name)$augmented %>%
+    mutate(
+      model_name = factor(model_name, levels = c("baseline", "plus_logN_time", "plus_logN_time_well")),
+      well_factor = factor(well_idx)
+    )
+}
+
+plot_exemplar_residuals <- function(response_name) {
+  hit <- exemplar_groups %>% filter(response == response_name)
+  cell_line <- hit$cellLine[[1]]
+  ploidy_value <- hit$ploidy_abs[[1]]
+
+  aug_df <- compact(list(
+    extract_augmented_model_data(cell_line, ploidy_value, response_name, "baseline"),
+    extract_augmented_model_data(cell_line, ploidy_value, response_name, "plus_logN_time"),
+    extract_augmented_model_data(cell_line, ploidy_value, response_name, "plus_logN_time_well")
+  )) %>%
+    bind_rows()
+
+  title_stub <- paste(cell_line, "| ploidy =", ploidy_value, "|", response_name)
+
+  p_hours <- ggplot(aug_df, aes(x = hours, y = resid, color = well_factor)) +
+    geom_point(size = 1.2) +
+    facet_wrap(vars(model_name), scales = "free_y") +
+    theme_minimal(base_size = 11) +
+    labs(title = paste(title_stub, "| residual vs time"), x = "Time (hours)", y = "Residual", color = "Well")
+
+  p_logn <- ggplot(aug_df, aes(x = log_N, y = resid, color = well_factor)) +
+    geom_point(size = 1.2) +
+    facet_wrap(vars(model_name), scales = "free_y") +
+    theme_minimal(base_size = 11) +
+    labs(title = paste(title_stub, "| residual vs log10(N)"), x = "log10(N)", y = "Residual", color = "Well")
+
+  p_hours / p_logn
+}
+
+plot_exemplar_residuals("uptake_per_cell")
+plot_exemplar_residuals("growth_per_cell")
+```
+
+## Panel-Level Diagnostics
+
+This is a quick summary of well-level fit sizes and whether the spline could be fit.
+
+```{r panel-diagnostics}
+fit_qc %>%
+  left_join(line_counts, by = c("cellLine", "variable")) %>%
+  arrange(cellLine, variable, ploidy_abs, G0, well_idx)
+```
+
+```{r raw-count-point-diagnostics}
+count_point_counts %>%
+  arrange(cellLine, ploidy_abs, G0, well_idx, hours)
+```
+
+```{r rate-diagnostics}
+rate_df %>%
+  group_by(cellLine, ploidy_abs) %>%
+  summarise(
+    n_rate_points = n(),
+    n_wells = n_distinct(well_idx),
+    min_hours = min(hours),
+    max_hours = max(hours),
+    min_R1 = min(R1_fit),
+    max_R1 = max(R1_fit),
+    .groups = "drop"
+  ) %>%
+  arrange(cellLine, ploidy_abs)
+```
+
+## Current Read
+
+The rate-relationship plots suggest that both uptake and growth often do have a meaningful dependence on glucose, but the residual screen indicates that `R1` alone is usually not the full state description.
+
+Framed against the main modeling path, I do not read this as evidence that `gpath` is misguided. I read it as evidence that hidden state is justified. The latent resource / waste states already present in `gpath` are plausible carriers of the slow structure that appears here as time dependence. So the main conclusion is not "the data want time as a covariate"; it is "the data want more state than current glucose alone."
+
+What worked:
+
+1. adding `log10(N)` and time to the baseline `f(log10(R1))` model produced a large median improvement across groups,
+2. for `growth_per_cell`, the `logN + time` model already cuts median RMSE sharply and strongly reduces residual autocorrelation,
+3. adding a well random effect improves fit further, especially for uptake, which points to persistent well-level latent structure beyond `R1`, density, and time.
+
+What partly worked:
+
+1. glucose drawdown occasionally won for uptake in a few groups, so history of depletion seems relevant in some contexts,
+2. lagged and integrated history terms improved on the baseline and often approached the plain time model, but in my screen they did not consistently replace `time`,
+3. initial glucose alone helped less than current glucose plus density/time, so `G0` is not the dominant missing state once the trajectory is conditioned on current `R1`.
+
+What did not work well:
+
+1. `R1` alone leaves large residual autocorrelation and structured dependence on time / density,
+2. time-only or density-only models help, but they are consistently weaker than using both together,
+3. the lag / cumulative proxies I tried do not fully absorb the time effect, so they are not yet a sufficient mechanistic replacement for the hidden state,
+4. the well random effect improves in-sample tightness but does not by itself identify whether the persistent latent state is intrinsic biology, local microenvironment, or some experimental artifact.
+
+My current interpretation is that the tightest next model class should include:
+
+1. a glucose-response term,
+2. a density / confluence term,
+3. a slow history or adaptation term, possibly better approximated by a richer mechanistic history variable than the simple lag/integral proxies screened here,
+4. and probably a persistent well-level latent effect if the aim is descriptive fit rather than transfer.
+
+Relative to the main workflow, that means:
+
+1. the notebook supports the use of hidden-state models such as `gpath`,
+2. the residual diagnostics can be used as a model-criticism layer to see where the existing latent-state parameterization is sufficient versus where it may be too rigid,
+3. and the alternative latent-state screen here is best viewed as a complementary reduced-model probe, not as a replacement for the mechanistic path.

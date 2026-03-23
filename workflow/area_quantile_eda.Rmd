@@ -70,6 +70,12 @@ safe_median <- function(x) {
   median(x)
 }
 
+safe_quantile <- function(x, prob = 0.9) {
+  x <- x[is.finite(x)]
+  if (!length(x)) return(NA_real_)
+  as.numeric(stats::quantile(x, probs = prob, names = FALSE, type = 8))
+}
+
 safe_trapz <- function(x, y) {
   ok <- is.finite(x) & is.finite(y)
   x <- x[ok]
@@ -291,6 +297,38 @@ paired_ploidy <- condition_counts %>%
     .groups = "drop"
   )
 
+phase_obs <- count_obs %>%
+  group_by(well_idx, rep_id, cellLine, ploidy_metric, ploidy_label, G0, G0_label) %>%
+  group_modify(function(df, keys) {
+    live_fit <- smooth_derivative(df$hours, df$live_cells)
+    death_fit <- smooth_derivative(df$hours, df$dead_cells)
+    total_ref <- df %>%
+      select(hours, total_cells) %>%
+      distinct()
+
+    full_join(
+      live_fit %>% rename(live_cells_smooth = value_smooth, live_deriv = deriv),
+      death_fit %>% rename(dead_cells_smooth = value_smooth, death_deriv = deriv),
+      by = "hours"
+    ) %>%
+      left_join(total_ref, by = "hours") %>%
+      transmute(
+        hours = hours,
+        live_cells_smooth = live_cells_smooth,
+        dead_cells_smooth = dead_cells_smooth,
+        live_rate_per_cell = pmax(live_deriv, 0) / pmax(total_cells, 1e-8),
+        death_rate_per_cell = pmax(death_deriv, 0) / pmax(total_cells, 1e-8)
+      )
+  }) %>%
+  ungroup()
+
+well_phase_ref <- phase_obs %>%
+  group_by(well_idx, rep_id, cellLine, ploidy_metric, ploidy_label, G0, G0_label) %>%
+  summarise(
+    peak_live_rate_per_cell = safe_quantile(live_rate_per_cell[live_rate_per_cell > 0], prob = 0.75),
+    .groups = "drop"
+  )
+
 rate_obs <- count_obs %>%
   group_by(well_idx, rep_id, cellLine, ploidy_metric, ploidy_label, G0, G0_label) %>%
   group_modify(function(df, keys) {
@@ -354,7 +392,7 @@ glucose_last <- glucose_obs %>%
     .groups = "drop"
   )
 
-replicate_cost_df <- count_obs %>%
+replicate_cost_base <- count_obs %>%
   left_join(glucose_last, by = "well_idx") %>%
   filter(is.finite(t_last_glucose), hours <= t_last_glucose) %>%
   group_by(well_idx, rep_id, cellLine, ploidy_metric, ploidy_abs, ploidy_label, G0, G0_label, glucose_consumed) %>%
@@ -365,11 +403,143 @@ replicate_cost_df <- count_obs %>%
     AUC_live = safe_trapz(hours, live_cells),
     area_24h = safe_median(q50[hours >= 20 & hours <= 28]),
     .groups = "drop"
+  )
+
+glucose_init_check <- glucose_last %>%
+  left_join(well_meta, by = "well_idx")
+
+rate_summary <- rate_obs %>%
+  group_by(cellLine, ploidy_label, G0, G0_label, hours) %>%
+  summarise(
+    death_rate_per_cell = median(death_rate_per_cell, na.rm = TRUE),
+    area_rate = median(area_rate, na.rm = TRUE),
+    .groups = "drop"
   ) %>%
-  filter(is.finite(glucose_consumed), is.finite(dB), is.finite(AUC_live), is.finite(area_24h)) %>%
+  pivot_longer(
+    cols = c(death_rate_per_cell, area_rate),
+    names_to = "signal",
+    values_to = "value"
+  ) %>%
   mutate(
-    vol_flat = area_24h,
-    vol_sphere = area_24h^1.5
+    signal = recode(
+      signal,
+      death_rate_per_cell = "1/N dD/dt",
+      area_rate = "dA/dt"
+    )
+  )
+
+cellline_ploidy_capacity <- count_obs %>%
+  group_by(cellLine, ploidy_metric, ploidy_label) %>%
+  summarise(max_total_cells = max(total_cells, na.rm = TRUE), .groups = "drop")
+
+volume_proxy_rows <- count_obs %>%
+  left_join(
+    phase_obs %>%
+      select(well_idx, rep_id, hours, live_rate_per_cell, death_rate_per_cell),
+    by = c("well_idx", "rep_id", "hours")
+  ) %>%
+  left_join(
+    well_phase_ref %>%
+      select(well_idx, rep_id, peak_live_rate_per_cell),
+    by = c("well_idx", "rep_id")
+  ) %>%
+  left_join(
+    cellline_ploidy_capacity,
+    by = c("cellLine", "ploidy_metric", "ploidy_label")
+  ) %>%
+  mutate(
+    crowding_frac = total_cells / pmax(max_total_cells, 1e-8),
+    core_area = sqrt(pmax(q25, 1e-8) * pmax(q50, 1e-8)),
+    likely_attached = hours >= 16,
+    growth_phase = live_rate_per_cell > 0.25 * pmax(peak_live_rate_per_cell, 1e-8),
+    no_death_phase = death_rate_per_cell <= pmax(0.002, 0.2 * pmax(peak_live_rate_per_cell, 1e-8)),
+    usable_for_volume = is.finite(core_area) &
+      n_area_alive >= 30 &
+      likely_attached &
+      crowding_frac <= 0.7 &
+      growth_phase &
+      no_death_phase
+  )
+
+crowding_slopes <- volume_proxy_rows %>%
+  filter(usable_for_volume, is.finite(crowding_frac)) %>%
+  group_by(cellLine) %>%
+  group_modify(function(df, keys) {
+    if (nrow(df) < 4L || dplyr::n_distinct(df$crowding_frac) < 2L) {
+      return(tibble(beta_crowding = 0, n_fit = nrow(df)))
+    }
+
+    fit <- try(stats::lm(log(core_area) ~ crowding_frac, data = df), silent = TRUE)
+    if (inherits(fit, "try-error")) {
+      tibble(beta_crowding = 0, n_fit = nrow(df))
+    } else {
+      tibble(
+        beta_crowding = unname(stats::coef(fit)[["crowding_frac"]] %||% 0),
+        n_fit = nrow(df)
+      )
+    }
+  }) %>%
+  ungroup()
+
+volume_proxy_rows <- volume_proxy_rows %>%
+  left_join(
+    crowding_slopes,
+    by = "cellLine"
+  ) %>%
+  mutate(
+    beta_crowding = if_else(is.finite(beta_crowding), beta_crowding, 0),
+    log_area_adj = if_else(
+      usable_for_volume,
+      log(core_area) - beta_crowding * (crowding_frac - 0.2),
+      NA_real_
+    ),
+    adj_area_ref = exp(log_area_adj)
+  )
+
+well_volume_proxy <- volume_proxy_rows %>%
+  group_by(well_idx, rep_id, cellLine, ploidy_metric, ploidy_abs, ploidy_label, G0, G0_label) %>%
+  summarise(
+    n_time = sum(is.finite(adj_area_ref)),
+    crowding_span = max(crowding_frac, na.rm = TRUE) - min(crowding_frac, na.rm = TRUE),
+    n_usable = sum(usable_for_volume, na.rm = TRUE),
+    attached_area_hat = safe_quantile(adj_area_ref[usable_for_volume], prob = 0.9),
+    latent_volume_index = attached_area_hat^1.5,
+    naive_q50_24h = safe_median(q50[hours >= 20 & hours <= 28]),
+    naive_volume_24h = naive_q50_24h^1.5,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    latent_vs_naive_ratio = latent_volume_index / naive_volume_24h
+  )
+
+condition_volume_proxy <- well_volume_proxy %>%
+  group_by(cellLine, ploidy_metric, ploidy_abs, ploidy_label, G0, G0_label) %>%
+  summarise(
+    latent_volume_index = median(latent_volume_index, na.rm = TRUE),
+    attached_area_hat = median(attached_area_hat, na.rm = TRUE),
+    naive_volume_24h = median(naive_volume_24h, na.rm = TRUE),
+    latent_vs_naive_ratio = median(latent_vs_naive_ratio, na.rm = TRUE),
+    n_reps = sum(is.finite(attached_area_hat)),
+    median_usable_timepoints = median(n_usable, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+replicate_cost_df <- replicate_cost_base %>%
+  left_join(
+    well_volume_proxy %>%
+      select(well_idx, rep_id, attached_area_hat, latent_volume_index, naive_volume_24h, n_usable),
+    by = c("well_idx", "rep_id")
+  ) %>%
+  filter(
+    is.finite(glucose_consumed),
+    is.finite(dB),
+    is.finite(AUC_live),
+    is.finite(attached_area_hat),
+    is.finite(latent_volume_index)
+  ) %>%
+  mutate(
+    vol_flat = attached_area_hat,
+    vol_sphere = latent_volume_index
   )
 
 cost_fits <- replicate_cost_df %>%
@@ -390,7 +560,9 @@ cost_fits <- replicate_cost_df %>%
     replicate_cost_df %>%
       group_by(cellLine, ploidy_metric, ploidy_abs, ploidy_label) %>%
       summarise(
+        attached_area_hat = median(attached_area_hat, na.rm = TRUE),
         area_24h = median(area_24h, na.rm = TRUE),
+        n_usable = median(n_usable, na.rm = TRUE),
         vol_flat = median(vol_flat, na.rm = TRUE),
         vol_sphere = median(vol_sphere, na.rm = TRUE),
         .groups = "drop"
@@ -420,33 +592,6 @@ cost_fit_diagnostics <- replicate_cost_df %>%
     glucose_pred = a * dB + m * AUC_live,
     resid = glucose_consumed - glucose_pred
   )
-
-glucose_init_check <- glucose_last %>%
-  left_join(well_meta, by = "well_idx")
-
-rate_summary <- rate_obs %>%
-  group_by(cellLine, ploidy_label, G0, G0_label, hours) %>%
-  summarise(
-    death_rate_per_cell = median(death_rate_per_cell, na.rm = TRUE),
-    area_rate = median(area_rate, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  pivot_longer(
-    cols = c(death_rate_per_cell, area_rate),
-    names_to = "signal",
-    values_to = "value"
-  ) %>%
-  mutate(
-    signal = recode(
-      signal,
-      death_rate_per_cell = "1/N dD/dt",
-      area_rate = "dA/dt"
-    )
-  )
-
-cellline_ploidy_capacity <- count_obs %>%
-  group_by(cellLine, ploidy_metric, ploidy_label) %>%
-  summarise(max_total_cells = max(total_cells, na.rm = TRUE), .groups = "drop")
 
 count_glucose_aligned <- count_obs %>%
   group_by(well_idx, rep_id) %>%
@@ -609,11 +754,19 @@ plot_traj_q50 <- ggplot(
   aes(hours, q50, color = ploidy_label, group = interaction(ploidy_metric, G0))
 ) +
   geom_line(linewidth = 0.7) +
+  geom_hline(
+    data = condition_volume_proxy,
+    aes(yintercept = attached_area_hat, color = ploidy_label),
+    linetype = 2,
+    linewidth = 0.7,
+    alpha = 0.8
+  ) +
   facet_grid(G0_label ~ cellLine, scales = "free_y") +
   scale_color_manual(values = c("baseline" = "#0072B2", "elevated" = "#D55E00")) +
   theme_bw() +
   labs(
     title = "Median Alive-Cell Area Trajectories",
+    subtitle = "Dashed lines show the latent attached-area estimate used to derive the volume proxy",
     x = "Hours",
     y = "Alive-cell area q50",
     color = "Ploidy"
@@ -653,6 +806,83 @@ knitr::kable(head(size_summary_tbl, 18), digits = 2)
 ```
 
 The count and area trajectories already suggest that morphology is not just a proxy for cell number. In several conditions, `q50` and `tail_ratio` keep moving after the main expansion phase has slowed, which supports looking at morphology as a state variable rather than just a confluence readout.
+
+## Latent Volume Proxy
+
+If the goal is a single number for cell "volume", the measured 2D area cannot be used literally. A spread, well-attached cell can have a large projected area without having much more biomass than a rounder cell, and crowding pushes projected area downward even when biomass has not shrunk proportionally.
+
+The compromise here is to estimate a **typical attached pre-confluent footprint** and then convert that footprint to a volume-like index:
+
+- use `core_area = sqrt(q25 * q50)` rather than `q99` or even raw `q50`, so the estimate targets the center of the alive-cell distribution and is less sensitive to upper-tail inflation from cycling/mitotic cells,
+- identify candidate footprint rows using phase rather than cumulative death burden: `hours >= 16`, positive live-cell growth, negligible ongoing death accumulation, and `crowding_frac <= 0.7`,
+- estimate a cell-line-level crowding slope from those candidate rows,
+- adjust `log(core_area)` back to a light-crowding reference (`crowding_frac = 0.2`),
+- within each replicate, take the 90th percentile of that adjusted area over those candidate rows as the best available approximation to the fully attached footprint,
+- convert footprint to a volume-like quantity with `latent_volume_index = attached_area_hat^(3/2)`.
+
+This is still an index, not an absolute micron-cubed volume. But it now handles the main confounders in a more phase-aware way: confluence is adjusted explicitly, attachment is handled by excluding the earliest post-plating rows, death is handled by filtering on ongoing death rate rather than total dead-cell burden, and cell-cycle inflation is downweighted by using the lower-middle part of the area distribution.
+
+```{r latent-volume-proxy, fig.height=12}
+p_volume_proxy <- ggplot(
+  condition_volume_proxy,
+  aes(x = G0, y = latent_volume_index, color = ploidy_label, group = ploidy_metric)
+) +
+  geom_point(size = 2.4, alpha = 0.9, position = position_dodge(width = 0.3)) +
+  geom_line(alpha = 0.7, position = position_dodge(width = 0.3)) +
+  facet_wrap(~cellLine, scales = "free_y") +
+  scale_color_manual(values = c("baseline" = "#0072B2", "elevated" = "#D55E00")) +
+  theme_bw() +
+  labs(
+    title = "Latent Volume Proxy by Condition",
+    subtitle = "Replicate-median attached, pre-confluent footprint converted as area^(3/2)",
+    x = "Initial glucose (G0)",
+    y = "Latent volume index",
+    color = "Ploidy"
+  )
+
+p_naive_compare <- ggplot(
+  condition_volume_proxy,
+  aes(naive_volume_24h, latent_volume_index, color = ploidy_label)
+) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2, color = "grey40") +
+  geom_point(size = 2.3, alpha = 0.85) +
+  facet_wrap(~cellLine, scales = "free") +
+  scale_color_manual(values = c("baseline" = "#0072B2", "elevated" = "#D55E00")) +
+  theme_bw() +
+  labs(
+    title = "Latent Proxy Versus Naive 24h Volume",
+    subtitle = "Points above the line are cases where detachment/crowding likely depressed the naive area snapshot",
+    x = "Naive 24h volume proxy = q50_24h^(3/2)",
+    y = "Latent volume index",
+    color = "Ploidy"
+  )
+
+p_volume_proxy / p_naive_compare
+```
+
+```{r latent-volume-table}
+latent_volume_tbl <- condition_volume_proxy %>%
+  group_by(cellLine, ploidy_metric, ploidy_abs, ploidy_label) %>%
+  summarise(
+    latent_volume_index = median(latent_volume_index, na.rm = TRUE),
+    attached_area_hat = median(attached_area_hat, na.rm = TRUE),
+    latent_vs_naive_ratio = median(latent_vs_naive_ratio, na.rm = TRUE),
+    median_usable_timepoints = median(median_usable_timepoints, na.rm = TRUE),
+    n_conditions = sum(is.finite(latent_volume_index)),
+    .groups = "drop"
+  ) %>%
+  group_by(cellLine) %>%
+  mutate(
+    baseline_volume = latent_volume_index[which.min(ploidy_metric)],
+    volume_ratio_vs_baseline = latent_volume_index / baseline_volume
+  ) %>%
+  ungroup() %>%
+  arrange(cellLine, ploidy_metric)
+
+knitr::kable(latent_volume_tbl, digits = 3)
+```
+
+The table above is the cleanest answer to the original question. The most defensible single-number estimate in this dataset is not the observed footprint at one arbitrary timepoint, but the crowding-adjusted upper-envelope footprint of the central alive-cell distribution, restricted to rows that look like true growth phase rather than plating artifact or late collapse. I would treat `volume_ratio_vs_baseline` as the most interpretable downstream quantity because it is less sensitive to the arbitrary units of the segmentation area, while `median_usable_timepoints` is the quick reliability check.
 
 ## Ploidy Contrasts Through Time
 
@@ -866,8 +1096,30 @@ with `a >= 0` and `m >= 0`.
 
 Here `glucose consumed` is not the nominal `G0`. It is the estimated glucose at the first glucose measurement minus the estimated glucose at the last glucose measurement for each well.
 
+The size proxy used below is now the same latent footprint estimate introduced above, not the older `24 h` snapshot. So the cost-scaling analysis uses the crowding-adjusted growth-phase area/volume proxy rather than a single raw-timepoint area.
+
 ```{r cost-fit-table}
-knitr::kable(cost_fits, digits = 3)
+cost_fit_tbl <- cost_fits %>%
+  select(
+    cellLine,
+    ploidy_metric,
+    ploidy_abs,
+    ploidy_label,
+    a,
+    m,
+    rmse,
+    n,
+    attached_area_hat,
+    n_usable,
+    area_24h,
+    vol_flat,
+    vol_sphere,
+    ratio_cost,
+    ratio_vol_flat,
+    ratio_vol_sphere
+  )
+
+knitr::kable(cost_fit_tbl, digits = 3)
 ```
 
 The very small `m` estimates and fairly tight `p_build` relationships imply the current accounting fit is behaving almost like a one-parameter biomass-yield model, especially outside `MCF10A`. That is exactly why an implied biomass-trajectory view is worth plotting.
@@ -1060,6 +1312,24 @@ ggplot(efficiency_long, aes(factor(ploidy_metric), value, fill = factor(ploidy_m
     y = "Cost / size"
   )
 ```
+
+## Potential Next Steps
+
+Two next branches look especially well motivated by this notebook.
+
+First, the current latent-volume quantity should be experimentally calibrated rather than left as a purely image-derived index. The most obvious options are:
+
+- acquire matched `z`-stack imaging so projected area can be tied to actual 3D cell volume,
+- collect an orthogonal biomass readout such as total protein per cell across the same low/high-ploidy states,
+- use those measurements to learn a mapping from alive-cell area quantiles to true volume or biomass, rather than relying on `area^(3/2)` as a geometry prior.
+
+Second, if that calibration looks credible, volume could replace ploidy as the global cross-line effect in the ODE pipeline. Concretely, that would mean:
+
+- carrying a per-line or per-state volume estimate into `stan_ready_data` alongside or instead of the current ploidy metric,
+- rewriting the hierarchical global-effect term so the shared shift is parameterized by volume rather than by ploidy label,
+- checking whether volume-based transfer outperforms ploidy-based transfer in the current directional holdout workflows.
+
+That second branch is scientifically attractive because it would test whether the apparent ploidy effect is actually a size/biomass effect in disguise, which is a much stronger and more portable claim.
 
 ## Notes
 

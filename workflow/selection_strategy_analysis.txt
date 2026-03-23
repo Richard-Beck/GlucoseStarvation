@@ -1,5 +1,5 @@
 SELECTION_STRATEGY_ANALYSIS
-generated	2026-03-21 20:34:59.507
+generated	2026-03-23 12:28:49.674521
 config	scripts/selection_strategy_config.R
 output_root	data/selection_strategy/gpath/v1/gstarvation_v1
 n_models	12
@@ -36,3 +36,10 @@ CONSISTENCY_EXTREMES
 107 | signed_consistency=0.667 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.772
 170 | signed_consistency=0.667 | frac_for=0.83 | frac_against=0.17 | mean_log_ratio=0.776
 200 | signed_consistency=0.689 | frac_for=0.84 | frac_against=0.16 | mean_log_ratio=0.794
+
+COMPETITION_VALIDATION
+2R_2P_0W_C1_M0 | high_to_low | transfer | sign_match=1.00 | mae_log_ratio=0.802 | mae_high_fraction=0.177 | validation_score=1.478
+2R_2P_0W_C1_M0 | low_to_high | transfer | sign_match=0.80 | mae_log_ratio=0.295 | mae_high_fraction=0.071 | validation_score=0.664
+2R_2P_1W_C1_M1 | high_to_low | transfer | sign_match=0.80 | mae_log_ratio=0.443 | mae_high_fraction=0.106 | validation_score=0.947
+2R_2P_1W_C1_M1 | low_to_high | transfer | sign_match=0.40 | mae_log_ratio=0.258 | mae_high_fraction=0.062 | validation_score=0.600
+2R_2P_1W_C0_M0 | low_to_high | transfer | sign_match=0.40 | mae_log_ratio=0.363 | mae_high_fraction=0.088 | validation_score=0.764

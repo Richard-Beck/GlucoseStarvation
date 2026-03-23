@@ -709,8 +709,87 @@ compute_empirical_effects <- function(signature_panel) {
   )
 }
 
-evaluate_transfer_predictions <- function(signature_panel) {
+safe_mad <- function(x, center = median(x, na.rm = TRUE), constant = 1.4826) {
+  x <- x[is.finite(x)]
+
+  if (!length(x)) {
+    return(NA_real_)
+  }
+
+  mad_val <- stats::mad(x, center = center, constant = constant, na.rm = TRUE)
+  if (is.finite(mad_val) && mad_val > 0) {
+    return(mad_val)
+  }
+
+  iqr_val <- stats::IQR(x, na.rm = TRUE) / 1.349
+  if (is.finite(iqr_val) && iqr_val > 0) {
+    return(iqr_val)
+  }
+
+  sd_val <- stats::sd(x, na.rm = TRUE)
+  if (is.finite(sd_val) && sd_val > 0) {
+    return(sd_val)
+  }
+
+  1.0
+}
+
+compute_signature_outlier_scores <- function(signature_panel, sign_tol = 1e-8) {
+  effects <- compute_empirical_effects(signature_panel)
+  effect_matrix <- effects$effect_matrix
+
+  if (!nrow(effect_matrix)) {
+    return(list(
+      feature_stats = tibble(),
+      line_scores = tibble()
+    ))
+  }
+
+  feature_tbl <- effect_matrix %>%
+    pivot_longer(cols = -cellLine, names_to = "feature", values_to = "effect_per_ploidy") %>%
+    group_by(feature) %>%
+    summarise(
+      center = median(effect_per_ploidy, na.rm = TRUE),
+      scale = safe_mad(effect_per_ploidy),
+      .groups = "drop"
+    )
+
+  line_scores <- effect_matrix %>%
+    pivot_longer(cols = -cellLine, names_to = "feature", values_to = "effect_per_ploidy") %>%
+    left_join(feature_tbl, by = "feature") %>%
+    mutate(
+      robust_z = if_else(
+        is.finite(effect_per_ploidy) & is.finite(center) & is.finite(scale) & scale > 0,
+        (effect_per_ploidy - center) / scale,
+        NA_real_
+      ),
+      sign_discordant = if_else(
+        is.finite(effect_per_ploidy) & is.finite(center) &
+          abs(effect_per_ploidy) > sign_tol & abs(center) > sign_tol,
+        as.integer(sign(effect_per_ploidy) != sign(center)),
+        NA_integer_
+      )
+    ) %>%
+    group_by(cellLine) %>%
+    summarise(
+      n_features = sum(is.finite(robust_z)),
+      robust_distance_sq = sum(robust_z[is.finite(robust_z)] ^ 2),
+      mean_abs_robust_z = mean(abs(robust_z), na.rm = TRUE),
+      max_abs_robust_z = max(abs(robust_z), na.rm = TRUE),
+      sign_discordance_rate = mean(sign_discordant, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(robust_distance_sq), desc(mean_abs_robust_z), desc(sign_discordance_rate), cellLine)
+
+  list(
+    feature_stats = feature_tbl,
+    line_scores = line_scores
+  )
+}
+
+evaluate_transfer_predictions <- function(signature_panel, excluded_training_lines = NULL) {
   feature_cols <- get_model_free_feature_catalog()$feature
+  excluded_training_lines <- unique(excluded_training_lines[!is.na(excluded_training_lines) & nzchar(excluded_training_lines)])
 
   rows <- list()
   idx <- 1L
@@ -735,7 +814,7 @@ evaluate_transfer_predictions <- function(signature_panel) {
         filter(cellLine == line_name, abs(ploidy_metric - holdout_ploidy) < 1e-12)
 
       train_pairs <- signature_panel %>%
-        filter(cellLine != line_name) %>%
+        filter(cellLine != line_name, !(cellLine %in% excluded_training_lines)) %>%
         group_by(cellLine) %>%
         filter(n() == 2L) %>%
         summarise(
@@ -796,7 +875,12 @@ evaluate_transfer_predictions <- function(signature_panel) {
           abs_err_improvement = abs_err_null - abs_err_transfer,
           scaled_abs_err_improvement = (abs_err_null - abs_err_transfer) / scale_ref,
           sign_match = as.integer(sign(true_effect) == sign(effect_hat)),
-          n_training_lines = sum(is.finite(slope_vals))
+          n_training_lines = sum(is.finite(slope_vals)),
+          excluded_training_lines = if (length(excluded_training_lines)) {
+            paste(sort(excluded_training_lines), collapse = "|")
+          } else {
+            "none"
+          }
         )
         idx <- idx + 1L
       }
@@ -842,5 +926,132 @@ evaluate_transfer_predictions <- function(signature_panel) {
     predictions = predictions,
     feature_summary = feature_summary,
     case_summary = case_summary
+  )
+}
+
+summarize_transfer_performance <- function(predictions) {
+  if (!nrow(predictions)) {
+    return(tibble(
+      n_predictions = integer(),
+      n_cell_lines = integer(),
+      mean_scaled_err_improvement = numeric(),
+      median_scaled_err_improvement = numeric(),
+      transfer_win_rate = numeric(),
+      sign_accuracy = numeric()
+    ))
+  }
+
+  tibble(
+    n_predictions = nrow(predictions),
+    n_cell_lines = dplyr::n_distinct(predictions$cellLine),
+    mean_scaled_err_improvement = mean(predictions$scaled_abs_err_improvement, na.rm = TRUE),
+    median_scaled_err_improvement = median(predictions$scaled_abs_err_improvement, na.rm = TRUE),
+    transfer_win_rate = mean(predictions$abs_err_transfer < predictions$abs_err_null, na.rm = TRUE),
+    sign_accuracy = mean(predictions$sign_match, na.rm = TRUE)
+  )
+}
+
+analyze_model_free_outlier_robustness <- function(signature_panel) {
+  outlier_scores <- compute_signature_outlier_scores(signature_panel)
+  baseline <- evaluate_transfer_predictions(signature_panel)
+  baseline_predictions <- baseline$predictions
+  line_ids <- sort(unique(signature_panel$cellLine))
+
+  baseline_overall <- summarize_transfer_performance(baseline_predictions) %>%
+    mutate(summary_scope = "all_lines")
+
+  exclusion_summary <- bind_rows(lapply(line_ids, function(excluded_line) {
+    excl <- evaluate_transfer_predictions(
+      signature_panel,
+      excluded_training_lines = excluded_line
+    )
+
+    remaining_baseline <- baseline_predictions %>%
+      filter(cellLine != excluded_line)
+    remaining_excl <- excl$predictions %>%
+      filter(cellLine != excluded_line)
+
+    base_sum <- summarize_transfer_performance(remaining_baseline)
+    excl_sum <- summarize_transfer_performance(remaining_excl)
+
+    tibble(
+      excluded_line = excluded_line,
+      n_holdout_lines_evaluated = dplyr::n_distinct(remaining_excl$cellLine),
+      n_predictions_evaluated = nrow(remaining_excl),
+      baseline_mean_scaled_err_improvement = base_sum$mean_scaled_err_improvement,
+      excluded_mean_scaled_err_improvement = excl_sum$mean_scaled_err_improvement,
+      delta_mean_scaled_err_improvement = excl_sum$mean_scaled_err_improvement - base_sum$mean_scaled_err_improvement,
+      baseline_median_scaled_err_improvement = base_sum$median_scaled_err_improvement,
+      excluded_median_scaled_err_improvement = excl_sum$median_scaled_err_improvement,
+      delta_median_scaled_err_improvement = excl_sum$median_scaled_err_improvement - base_sum$median_scaled_err_improvement,
+      baseline_transfer_win_rate = base_sum$transfer_win_rate,
+      excluded_transfer_win_rate = excl_sum$transfer_win_rate,
+      delta_transfer_win_rate = excl_sum$transfer_win_rate - base_sum$transfer_win_rate,
+      baseline_sign_accuracy = base_sum$sign_accuracy,
+      excluded_sign_accuracy = excl_sum$sign_accuracy,
+      delta_sign_accuracy = excl_sum$sign_accuracy - base_sum$sign_accuracy
+    )
+  })) %>%
+    left_join(outlier_scores$line_scores, by = c("excluded_line" = "cellLine")) %>%
+    mutate(
+      robust_distance_rank = min_rank(desc(robust_distance_sq)),
+      influence_rank = min_rank(desc(delta_mean_scaled_err_improvement)),
+      composite_rank = robust_distance_rank + influence_rank
+    ) %>%
+    arrange(desc(delta_mean_scaled_err_improvement), desc(delta_transfer_win_rate), desc(robust_distance_sq), excluded_line)
+
+  feature_exclusion_summary <- bind_rows(lapply(line_ids, function(excluded_line) {
+    excl <- evaluate_transfer_predictions(
+      signature_panel,
+      excluded_training_lines = excluded_line
+    )
+
+    base_feat <- baseline_predictions %>%
+      filter(cellLine != excluded_line) %>%
+      group_by(feature) %>%
+      summarise(
+        baseline_mean_scaled_err_improvement = mean(scaled_abs_err_improvement, na.rm = TRUE),
+        baseline_transfer_win_rate = mean(abs_err_transfer < abs_err_null, na.rm = TRUE),
+        baseline_sign_accuracy = mean(sign_match, na.rm = TRUE),
+        .groups = "drop"
+      )
+
+    excl_feat <- excl$predictions %>%
+      filter(cellLine != excluded_line) %>%
+      group_by(feature) %>%
+      summarise(
+        excluded_mean_scaled_err_improvement = mean(scaled_abs_err_improvement, na.rm = TRUE),
+        excluded_transfer_win_rate = mean(abs_err_transfer < abs_err_null, na.rm = TRUE),
+        excluded_sign_accuracy = mean(sign_match, na.rm = TRUE),
+        .groups = "drop"
+      )
+
+    base_feat %>%
+      inner_join(excl_feat, by = "feature") %>%
+      mutate(
+        excluded_line = excluded_line,
+        delta_mean_scaled_err_improvement = excluded_mean_scaled_err_improvement - baseline_mean_scaled_err_improvement,
+        delta_transfer_win_rate = excluded_transfer_win_rate - baseline_transfer_win_rate,
+        delta_sign_accuracy = excluded_sign_accuracy - baseline_sign_accuracy
+      )
+  })) %>%
+    arrange(desc(delta_mean_scaled_err_improvement), desc(delta_transfer_win_rate), excluded_line, feature)
+
+  recommended_exclusion <- exclusion_summary %>%
+    arrange(composite_rank, influence_rank, robust_distance_rank, excluded_line) %>%
+    slice_head(n = 1) %>%
+    mutate(
+      recommendation_flag = is.finite(delta_mean_scaled_err_improvement) &
+        delta_mean_scaled_err_improvement > 0
+    )
+
+  list(
+    baseline = baseline,
+    baseline_overall = baseline_overall,
+    outlier_scores = outlier_scores$line_scores,
+    outlier_feature_stats = outlier_scores$feature_stats,
+    exclusion_summary = exclusion_summary,
+    feature_exclusion_summary = feature_exclusion_summary,
+    recommended_exclusion = recommended_exclusion
   )
 }

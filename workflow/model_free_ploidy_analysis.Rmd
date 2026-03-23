@@ -23,11 +23,11 @@ This notebook reports a reduced model-free ploidy analysis built from `stan_read
 3. two alive-yield features from `AUC_alive ~ log1p(G0)`,
 4. two glucose-to-total-cell yield features from `peak_total_yield_per_glucose ~ log1p(G0)`.
 
-Upstream scripts, when used, are:
+Upstream scripts, when used on the HPC system, are:
 
 ```bash
-Rscript scripts/extract_model_free_ploidy_features.R
-Rscript scripts/evaluate_model_free_ploidy_transfer.R
+scripts/agentRrunner.sh scripts/extract_model_free_ploidy_features.R
+scripts/agentRrunner.sh scripts/evaluate_model_free_ploidy_transfer.R
 ```
 
 ## Setup
@@ -41,6 +41,7 @@ library(scales)
 library(patchwork)
 library(forcats)
 library(purrr)
+library(ggrepel)
 
 source("R/project_paths.R")
 source("R/gpath_run_utils.R")
@@ -108,10 +109,15 @@ if (!all(feature_panel_required_cols %in% names(feature_panel))) {
 
 signature_panel <- summarize_glucose_signatures(feature_panel)
 signature_effects <- compute_empirical_effects(signature_panel)$paired_effects_long
-transfer <- evaluate_transfer_predictions(signature_panel)
+robustness <- analyze_model_free_outlier_robustness(signature_panel)
+transfer <- robustness$baseline
 transfer_predictions <- transfer$predictions
 transfer_feature_summary <- transfer$feature_summary
 transfer_case_summary <- transfer$case_summary
+outlier_scores <- robustness$outlier_scores
+exclusion_summary <- robustness$exclusion_summary
+feature_exclusion_summary <- robustness$feature_exclusion_summary
+recommended_exclusion <- robustness$recommended_exclusion
 
 exp_fit_qc <- feature_panel %>%
   filter(G0 %in% c(5, 25)) %>%
@@ -162,7 +168,10 @@ write_model_free_agent_text_report <- function(
   signature_effects,
   transfer_feature_summary,
   transfer_case_summary,
-  exp_fit_qc
+  exp_fit_qc,
+  outlier_scores,
+  exclusion_summary,
+  recommended_exclusion
 ) {
   top_transfer <- transfer_feature_summary %>%
     left_join(feature_catalog %>% select(feature, short_label, category), by = "feature") %>%
@@ -176,6 +185,12 @@ write_model_free_agent_text_report <- function(
 
   qc_flags <- exp_fit_qc %>%
     arrange(qc_flag != "ok", median_fit_r2_70)
+
+  outlier_ranked <- outlier_scores %>%
+    arrange(desc(robust_distance_sq), desc(mean_abs_robust_z), desc(sign_discordance_rate))
+
+  exclusion_ranked <- exclusion_summary %>%
+    arrange(desc(delta_mean_scaled_err_improvement), desc(delta_transfer_win_rate), desc(robust_distance_sq))
 
   signature_long <- signature_panel %>%
     select(cellLine, ploidy_metric, all_of(feature_catalog$feature)) %>%
@@ -203,6 +218,15 @@ write_model_free_agent_text_report <- function(
     "",
     "SECTION\tTRANSFER_CASE_SUMMARY",
     capture.output(write.table(as.data.frame(transfer_case_summary %>% arrange(desc(mean_scaled_err_improvement), desc(transfer_win_rate))), sep = "\t", row.names = FALSE, quote = FALSE)),
+    "",
+    "SECTION\tOUTLIER_SCORES",
+    capture.output(write.table(as.data.frame(outlier_ranked), sep = "\t", row.names = FALSE, quote = FALSE)),
+    "",
+    "SECTION\tEXCLUSION_INFLUENCE",
+    capture.output(write.table(as.data.frame(exclusion_ranked), sep = "\t", row.names = FALSE, quote = FALSE)),
+    "",
+    "SECTION\tRECOMMENDED_EXCLUSION",
+    capture.output(write.table(as.data.frame(recommended_exclusion), sep = "\t", row.names = FALSE, quote = FALSE)),
     "",
     "SECTION\tFEATURE_DEFINITIONS",
     capture.output(write.table(as.data.frame(feature_definitions), sep = "\t", row.names = FALSE, quote = FALSE)),
@@ -369,7 +393,7 @@ This report is organized as a results-first summary. Detailed definitions and su
 transfer_feature_ranked
 ```
 
-At the current state of this analysis, only `yield_alive_auc_intercept` shows positive mean transfer gain. The remaining curated features are neutral-to-negative under the current leave-one-line transfer benchmark.
+At the current state of this analysis, only `yield_alive_auc_slope` shows positive mean transfer gain. The remaining curated features are neutral-to-negative under the current leave-one-line transfer benchmark.
 
 ```{r executive-qc}
 exp_fit_qc %>%
@@ -377,6 +401,13 @@ exp_fit_qc %>%
 ```
 
 The high-glucose exponential-growth summary is usable for most groups, but weaker log-linear fits remain for some cell line / ploidy combinations and those should be interpreted more cautiously.
+
+```{r executive-outlier}
+recommended_exclusion %>%
+  select(excluded_line, recommendation_flag, delta_mean_scaled_err_improvement, delta_transfer_win_rate, robust_distance_sq, sign_discordance_rate, composite_rank)
+```
+
+The outlier screen ranks each line by two criteria: whether its ploidy signature is discordant with the cross-line consensus, and whether excluding it improves transfer to the other lines. If `recommendation_flag` is `FALSE`, the top-ranked line is still only a review candidate, not a justified exclusion.
 
 ## Transfer Summary
 
@@ -407,6 +438,61 @@ transfer_feature_ranked
 ```{r transfer-case-summary}
 transfer_case_summary %>%
   arrange(desc(mean_scaled_err_improvement))
+```
+
+## Outlier Robustness
+
+This section distinguishes between a line that is merely hard to predict and a line that appears to distort the shared ploidy effect. `robust_distance_sq` measures how atypical the line's eight-feature ploidy-effect vector is relative to the cross-line median. `delta_mean_scaled_err_improvement` measures how much leave-one-line transfer improves for the remaining holdout lines after excluding that line from the training pool.
+
+```{r outlier-score-table}
+outlier_scores %>%
+  arrange(desc(robust_distance_sq), desc(mean_abs_robust_z), desc(sign_discordance_rate))
+```
+
+```{r outlier-score-plot, fig.height=4.5, fig.width=7}
+outlier_scores %>%
+  ggplot(aes(mean_abs_robust_z, robust_distance_sq, label = cellLine, color = sign_discordance_rate)) +
+  geom_point(size = 3) +
+  ggrepel::geom_text_repel(show.legend = FALSE) +
+  scale_color_viridis_c(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Line-Level Discordance Of The Ploidy Signature",
+    x = "mean absolute robust z-score",
+    y = "robust squared distance",
+    color = "sign\ndiscordance"
+  ) +
+  theme_bw()
+```
+
+```{r exclusion-summary-table}
+exclusion_summary %>%
+  select(excluded_line, delta_mean_scaled_err_improvement, delta_transfer_win_rate, delta_sign_accuracy, robust_distance_sq, mean_abs_robust_z, sign_discordance_rate, composite_rank)
+```
+
+Positive deltas indicate that the remaining lines become easier to transfer after exclusion. Negative deltas indicate that the line may be unusual, but it is not the main source of non-generalizable shared signal.
+
+```{r exclusion-summary-plot, fig.height=4.5, fig.width=7}
+exclusion_summary %>%
+  ggplot(aes(robust_distance_sq, delta_mean_scaled_err_improvement, label = excluded_line, color = delta_transfer_win_rate)) +
+  geom_hline(yintercept = 0, linetype = "22", color = "grey40") +
+  geom_point(size = 3) +
+  ggrepel::geom_text_repel(show.legend = FALSE) +
+  scale_color_gradient2(low = "#b2182b", mid = "white", high = "#2166ac") +
+  labs(
+    title = "Candidate-Line Influence On Remaining-Line Transfer",
+    x = "robust squared distance",
+    y = "change in mean scaled transfer improvement after exclusion",
+    color = "delta win\nrate"
+  ) +
+  theme_bw()
+```
+
+```{r exclusion-feature-top}
+feature_exclusion_summary %>%
+  left_join(feature_catalog %>% select(feature, short_label), by = "feature") %>%
+  select(excluded_line, short_label, delta_mean_scaled_err_improvement, delta_transfer_win_rate, delta_sign_accuracy) %>%
+  arrange(desc(delta_mean_scaled_err_improvement), desc(delta_transfer_win_rate), excluded_line) %>%
+  slice_head(n = 16)
 ```
 
 ## Effect Overview
@@ -602,6 +688,9 @@ write_model_free_agent_text_report(
   signature_effects = signature_effects,
   transfer_feature_summary = transfer_feature_summary,
   transfer_case_summary = transfer_case_summary,
-  exp_fit_qc = exp_fit_qc
+  exp_fit_qc = exp_fit_qc,
+  outlier_scores = outlier_scores,
+  exclusion_summary = exclusion_summary,
+  recommended_exclusion = recommended_exclusion
 )
 ```

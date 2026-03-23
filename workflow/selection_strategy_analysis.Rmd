@@ -7,6 +7,7 @@ params:
   config_path: "scripts/selection_strategy_config.R"
   output_root: !r file.path("data", "selection_strategy", "gpath", "v1", "gstarvation_v1")
   include_detailed: false
+  competition_path: "data/counts/competition/SUM-159-fuse.Rds"
 ---
 
 ```{r setup, include=FALSE}
@@ -75,6 +76,252 @@ final_summary <- final_summary %>%
   )
 
 agent_text_path <- file.path("workflow", "selection_strategy_analysis.txt")
+competition_line_id <- 5L
+competition_frame_hours <- 8
+
+competition_available <- file.exists(params$competition_path)
+
+context_key <- function(df) {
+  ifelse(
+    df$fit_context == "global",
+    paste(df$model_id, df$fit_context, sep = "||"),
+    paste(df$model_id, df$fit_context, df$direction, df$fit_type, sep = "||")
+  )
+}
+
+load_competition_fit_context <- function(row, config) {
+  if (identical(row$fit_context[[1]], "global")) {
+    load_best_global_fit(config = config, model_id = row$model_id[[1]])
+  } else {
+    load_best_transfer_fit_context(
+      config = config,
+      model_id = row$model_id[[1]],
+      line_id = row$line_id[[1]],
+      direction = row$direction[[1]],
+      fit_type = row$fit_type[[1]]
+    )
+  }
+}
+
+simulate_competition_validation_context <- function(task_row, config, stan_data, init_df, total_hours, time_step_hours = 1) {
+  task_row <- as.data.frame(task_row, stringsAsFactors = FALSE)
+  fit_obj <- load_competition_fit_context(task_row, config)
+  line_pair <- get_line_ploidy_pair(stan_data, line_id = task_row$line_id[[1]])
+
+  comp <- reconstruct_mixture_components(
+    draw_vec = fit_obj$draw_vec,
+    model_id = task_row$model_id[[1]],
+    line_id = task_row$line_id[[1]],
+    low_ploidy = line_pair$low,
+    high_ploidy = line_pair$high,
+    ploidy_effect_mask = fit_obj$ploidy_effect_mask
+  )
+
+  pieces <- vector("list", nrow(init_df))
+  for (i in seq_len(nrow(init_df))) {
+    init_row <- init_df[i, , drop = FALSE]
+    state0 <- make_initial_mix_state(
+      parms_mix = comp$parms_mix,
+      g0 = init_row$glucose[[1]],
+      seed_total_n = init_row$total_live_start[[1]],
+      initial_high_fraction = init_row$high_fraction_start[[1]]
+    )
+
+    sim <- simulate_mixture_segment(
+      parms_mix = comp$parms_mix,
+      state0 = state0,
+      hours = total_hours,
+      time_step_hours = time_step_hours,
+      detailed = TRUE
+    )
+
+    sim$glucose <- init_row$glucose[[1]]
+    sim$time_hours <- sim$time
+    sim$model_id <- task_row$model_id[[1]]
+    sim$line_id <- task_row$line_id[[1]]
+    sim$fit_context <- task_row$fit_context[[1]]
+    sim$direction <- task_row$direction[[1]]
+    sim$fit_type <- task_row$fit_type[[1]]
+    pieces[[i]] <- sim
+  }
+
+  bind_rows(pieces)
+}
+
+competition_raw <- NULL
+competition_df <- data.frame()
+competition_mean_df <- data.frame()
+competition_init_df <- data.frame()
+competition_validation_summary <- data.frame()
+competition_overlay_df <- data.frame()
+competition_best_contexts <- data.frame()
+
+if (competition_available) {
+  competition_raw <- readRDS(params$competition_path) %>%
+    mutate(
+      frame = as.integer(frame),
+      time_hours = as.integer(frame) * competition_frame_hours,
+      label = as.character(label),
+      rep = as.character(rep),
+      condition = as.character(condition),
+      glucose = as.numeric(glucose),
+      ncells = as.numeric(ncells)
+    )
+
+  competition_live <- competition_raw %>%
+    filter(label %in% c("2N", "4N")) %>%
+    select(time_hours, frame, rep, condition, glucose, label, ncells) %>%
+    pivot_wider(names_from = label, values_from = ncells, values_fill = 0) %>%
+    rename(N_low = `2N`, N_high = `4N`) %>%
+    mutate(
+      total_live = N_low + N_high,
+      high_fraction = if_else(total_live > 0, N_high / total_live, NA_real_),
+      log_ratio = log((N_high + 1e-8) / (N_low + 1e-8))
+    )
+
+  competition_dead <- competition_raw %>%
+    filter(label == "dead") %>%
+    transmute(time_hours, frame, rep, condition, glucose, n_dead = ncells)
+
+  competition_df <- competition_live %>%
+    left_join(competition_dead, by = c("time_hours", "frame", "rep", "condition", "glucose")) %>%
+    mutate(
+      n_dead = coalesce(n_dead, 0),
+      total_cells = total_live + n_dead,
+      dead_fraction = if_else(total_cells > 0, n_dead / total_cells, NA_real_)
+    )
+
+  competition_mean_df <- competition_df %>%
+    group_by(glucose, time_hours) %>%
+    summarise(
+      N_low = mean(N_low, na.rm = TRUE),
+      N_high = mean(N_high, na.rm = TRUE),
+      total_live = mean(total_live, na.rm = TRUE),
+      high_fraction = mean(high_fraction, na.rm = TRUE),
+      log_ratio = mean(log_ratio, na.rm = TRUE),
+      dead_fraction = mean(dead_fraction, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  competition_init_df <- competition_df %>%
+    filter(time_hours == min(time_hours, na.rm = TRUE)) %>%
+    group_by(glucose) %>%
+    summarise(
+      high_fraction_start = mean(high_fraction, na.rm = TRUE),
+      total_live_start = mean(total_live, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(glucose)
+
+  competition_total_hours <- max(competition_df$time_hours, na.rm = TRUE)
+  competition_times <- sort(unique(competition_df$time_hours))
+
+  validation_tasks <- final_summary %>%
+    filter(
+      line_id == competition_line_id,
+      day2_action == "carry",
+      day4_action == "carry",
+      g0_day0 %in% competition_init_df$glucose
+    ) %>%
+    distinct(model_id, line_id, fit_context, direction, fit_type, context_label)
+
+  validation_task_rows <- split(validation_tasks, seq_len(nrow(validation_tasks)))
+  validation_sims <- lapply(validation_task_rows, function(task_df) {
+    simulate_competition_validation_context(
+      task_row = task_df,
+      config = cfg,
+      stan_data = stan_data,
+      init_df = competition_init_df,
+      total_hours = competition_total_hours,
+      time_step_hours = 1
+    )
+  })
+
+  validation_sim_df <- bind_rows(validation_sims) %>%
+    mutate(
+      context_label = if_else(fit_context == "global", "global", paste(direction, fit_type, sep = " | ")),
+      high_fraction = if_else(total_live > 0, N_high / total_live, NA_real_),
+      log_ratio = log((N_high + 1e-8) / (N_low + 1e-8))
+    ) %>%
+    filter(time_hours %in% competition_times)
+
+  validation_compare_df <- validation_sim_df %>%
+    left_join(
+      competition_mean_df %>%
+        rename(
+          obs_total_live = total_live,
+          obs_high_fraction = high_fraction,
+          obs_log_ratio = log_ratio,
+          obs_dead_fraction = dead_fraction
+        ),
+      by = c("glucose", "time_hours")
+    ) %>%
+    mutate(
+      abs_err_log_ratio = abs(log_ratio - obs_log_ratio),
+      abs_err_high_fraction = abs(high_fraction - obs_high_fraction),
+      abs_err_log_total_live = abs(log1p(total_live) - log1p(obs_total_live))
+    )
+
+  validation_endpoints <- validation_compare_df %>%
+    group_by(model_id, context_label, fit_context, direction, fit_type, glucose) %>%
+    summarise(
+      sim_start_log_ratio = log_ratio[which.min(time_hours)],
+      sim_end_log_ratio = log_ratio[which.max(time_hours)],
+      obs_start_log_ratio = obs_log_ratio[which.min(time_hours)],
+      obs_end_log_ratio = obs_log_ratio[which.max(time_hours)],
+      sim_end_high_fraction = high_fraction[which.max(time_hours)],
+      obs_end_high_fraction = obs_high_fraction[which.max(time_hours)],
+      .groups = "drop"
+    ) %>%
+    mutate(
+      sim_delta_log_ratio = sim_end_log_ratio - sim_start_log_ratio,
+      obs_delta_log_ratio = obs_end_log_ratio - obs_start_log_ratio,
+      end_sign_match = sign(sim_delta_log_ratio) == sign(obs_delta_log_ratio)
+    )
+
+  competition_validation_summary <- validation_compare_df %>%
+    group_by(model_id, context_label, fit_context, direction, fit_type) %>%
+    summarise(
+      mae_log_ratio = mean(abs_err_log_ratio, na.rm = TRUE),
+      mae_high_fraction = mean(abs_err_high_fraction, na.rm = TRUE),
+      mae_log_total_live = mean(abs_err_log_total_live, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(
+      validation_endpoints %>%
+        group_by(model_id, context_label, fit_context, direction, fit_type) %>%
+        summarise(
+          glucose_sign_match = mean(end_sign_match, na.rm = TRUE),
+          mean_abs_end_log_ratio_error = mean(abs(sim_end_log_ratio - obs_end_log_ratio), na.rm = TRUE),
+          mean_abs_end_high_fraction_error = mean(abs(sim_end_high_fraction - obs_end_high_fraction), na.rm = TRUE),
+          .groups = "drop"
+        ),
+      by = c("model_id", "context_label", "fit_context", "direction", "fit_type")
+    ) %>%
+    mutate(
+      validation_score = mae_log_ratio + mae_high_fraction + 0.5 * mae_log_total_live,
+      context_family = factor(
+        context_label,
+        levels = c("global", "high_to_low | transfer", "low_to_high | transfer")
+      )
+    ) %>%
+    arrange(desc(glucose_sign_match), validation_score, mae_log_ratio)
+
+  competition_best_contexts <- competition_validation_summary %>%
+    group_by(context_label) %>%
+    slice_min(order_by = validation_score, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    mutate(validation_label = paste(model_id, context_label, sep = " | "))
+
+  competition_overlay_df <- validation_sim_df %>%
+    semi_join(
+      competition_best_contexts %>% select(model_id, context_label, fit_context, direction, fit_type),
+      by = c("model_id", "context_label", "fit_context", "direction", "fit_type")
+    ) %>%
+    mutate(
+      validation_label = paste(model_id, context_label, sep = " | ")
+    )
+}
 ```
 
 ## Objects
@@ -377,6 +624,237 @@ ggplot(for_plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+## Empirical Competition Check: SUM-159
+
+This section compares the mixed-culture simulation branch against the empirical SUM-159 co-culture experiment in `data/counts/competition/SUM-159-fuse.Rds`.
+
+The alignment used here is:
+
+- SUM-159 corresponds to `line_id = 5`
+- `2N` is mapped to `N_low`
+- `4N` is mapped to `N_high`
+- each frame is treated as an `8 h` interval
+- the experiment is treated as a no-refresh mixed-culture trajectory over `112 h`
+- simulations are initialized from the empirical frame-0 live total and high-ploidy fraction at each glucose, then evolved using the existing fitted contexts
+
+So this is not a new fitting procedure. It is a validation rerun that uses the already-fitted mixed-culture dynamics to generate detailed trajectories on the empirical time grid.
+
+```{r competition-availability, results='asis'}
+if (!competition_available) {
+  cat("Competition dataset not found at `", params$competition_path, "`. Skipping empirical validation section.\n", sep = "")
+}
+```
+
+```{r competition-initial-state, eval=competition_available}
+competition_init_fmt <- competition_init_df %>%
+  mutate(
+    high_fraction_start = percent(high_fraction_start, accuracy = 0.1),
+    total_live_start = round(total_live_start, 1)
+  )
+
+knitr::kable(competition_init_fmt)
+```
+
+```{r competition-validation-summary, eval=competition_available}
+competition_validation_fmt <- competition_validation_summary %>%
+  select(
+    model_id, context_label, glucose_sign_match, mae_log_ratio,
+    mae_high_fraction, mae_log_total_live, validation_score
+  ) %>%
+  mutate(
+    glucose_sign_match = percent(glucose_sign_match, accuracy = 1),
+    mae_high_fraction = percent(mae_high_fraction, accuracy = 0.1)
+  )
+
+knitr::kable(competition_validation_fmt, digits = 3)
+```
+
+`glucose_sign_match` is the fraction of empirical glucose levels for which the simulation gets the sign of the start-to-end log-ratio shift correct. That is the most basic directional check. The error columns then ask how close the simulated trajectories stay to the empirical mean trajectories over time.
+
+```{r competition-validation-heatmap, fig.height=7, eval=competition_available}
+heat_df <- competition_validation_summary %>%
+  mutate(
+    context_label = factor(
+      context_label,
+      levels = c("global", "high_to_low | transfer", "low_to_high | transfer")
+    ),
+    model_id = factor(model_id, levels = unique(model_id))
+  )
+
+ggplot(heat_df, aes(model_id, context_label, fill = glucose_sign_match)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", validation_score)), size = 3) +
+  scale_fill_gradient(
+    low = "#f7fbff",
+    high = "#08519c",
+    limits = c(0, 1),
+    labels = percent_format(accuracy = 1),
+    name = "glucose\nsign match"
+  ) +
+  labs(
+    title = "SUM-159 Competition Validation Across Existing Fitted Contexts",
+    subtitle = "Tile color shows directional agreement; overlaid text shows composite validation score (lower is better)",
+    x = "model",
+    y = "fit context"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r competition-log-ratio-overlay, fig.height=12, eval=competition_available}
+overlay_empirical <- competition_df %>%
+  mutate(validation_label = "empirical")
+
+overlay_plot_df <- bind_rows(
+  competition_overlay_df %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label,
+      source = "simulation",
+      high_fraction,
+      log_ratio,
+      total_live
+    ),
+  competition_df %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep,
+      validation_label = "empirical",
+      source = "empirical_replicate",
+      high_fraction,
+      log_ratio,
+      total_live
+    ),
+  competition_mean_df %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label = "empirical",
+      source = "empirical_mean",
+      high_fraction,
+      log_ratio,
+      total_live
+    )
+)
+
+ggplot() +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, log_ratio, group = interaction(glucose, rep)),
+    color = "grey75",
+    linewidth = 0.5,
+    alpha = 0.6
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, log_ratio),
+    color = "black",
+    linewidth = 1
+  ) +
+  geom_point(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, log_ratio),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, log_ratio, color = validation_label),
+    linewidth = 1
+  ) +
+  geom_hline(yintercept = 0, color = "grey55", linewidth = 0.4) +
+  facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
+  labs(
+    title = "Observed vs Simulated Competition Log-Ratio Trajectories",
+    subtitle = "Black = empirical mean, grey = empirical replicates, color = best fitted context within each fit family",
+    x = "days",
+    y = "log(N_high / N_low)",
+    color = "best context"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+```{r competition-high-fraction-overlay, fig.height=12, eval=competition_available}
+ggplot() +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, high_fraction, group = interaction(glucose, rep)),
+    color = "grey75",
+    linewidth = 0.5,
+    alpha = 0.6
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, high_fraction),
+    color = "black",
+    linewidth = 1
+  ) +
+  geom_point(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, high_fraction),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, high_fraction, color = validation_label),
+    linewidth = 1
+  ) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  facet_grid(factor(glucose) ~ validation_label) +
+  labs(
+    title = "Observed vs Simulated High-Ploidy Fraction",
+    subtitle = "Same comparison as above, on the directly interpretable composition scale",
+    x = "days",
+    y = "high-ploidy fraction among live cells",
+    color = "best context"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+```{r competition-total-live-overlay, fig.height=12, eval=competition_available}
+ggplot() +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, total_live, group = interaction(glucose, rep)),
+    color = "grey75",
+    linewidth = 0.5,
+    alpha = 0.6
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, total_live),
+    color = "black",
+    linewidth = 1
+  ) +
+  geom_point(
+    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, total_live),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, total_live, color = validation_label),
+    linewidth = 1
+  ) +
+  facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
+  labs(
+    title = "Observed vs Simulated Total Live Burden",
+    subtitle = "Simulations are initialized at the empirical frame-0 live total for each glucose",
+    x = "days",
+    y = "total live cells",
+    color = "best context"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+This validation should be read as a credibility check on the mixed-culture branch, not as a replacement objective for the strategy ranking. If a context gets the sign of competitive shift wrong across glucose, the corresponding strategy recommendations should be treated cautiously for SUM-159 even if the simulated ranking itself looks internally stable.
+
 ## Optional Detailed Follow-Up
 
 This section reruns a very small number of representative top strategies in detailed mode. It is secondary to the heatmaps above.
@@ -471,6 +949,19 @@ consistency_extremes <- strategy_sign_summary %>%
 
 against_best <- against_strategy_summary %>% slice_head(n = 1)
 for_best <- for_strategy_summary %>% slice_head(n = 1)
+competition_text <- character(0)
+
+if (competition_available && nrow(competition_validation_summary)) {
+  competition_text <- competition_validation_summary %>%
+    slice_head(n = 5) %>%
+    transmute(
+      line = sprintf(
+        "%s | %s | sign_match=%.2f | mae_log_ratio=%.3f | mae_high_fraction=%.3f | validation_score=%.3f",
+        model_id, context_label, glucose_sign_match, mae_log_ratio, mae_high_fraction, validation_score
+      )
+    ) %>%
+    pull(line)
+}
 
 verdict_lines <- c(
   sprintf(
@@ -515,7 +1006,10 @@ summary_lines <- c(
   for_text,
   "",
   "CONSISTENCY_EXTREMES",
-  consistency_extremes
+  consistency_extremes,
+  "",
+  "COMPETITION_VALIDATION",
+  competition_text
 )
 
 writeLines(summary_lines, agent_text_path)

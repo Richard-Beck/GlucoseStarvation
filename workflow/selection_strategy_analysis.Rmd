@@ -8,6 +8,10 @@ params:
   output_root: !r file.path("data", "selection_strategy", "gpath", "v1", "gstarvation_v1")
   include_detailed: false
   competition_path: "data/counts/competition/SUM-159-fuse.Rds"
+  competition_fit_dataset_label: "gstarvation_v1_single_line"
+  competition_fit_stan_data_path: "data/inputs/stan/gstarvation_v1_single_line/line_05/stan_ready_data.Rds"
+  competition_fit_run_label: "line05_multistart"
+  competition_export_root: !r file.path("data", "selection_strategy", "gpath", "v1", "gstarvation_v1_single_line_competition_validation")
 ---
 
 ```{r setup, include=FALSE}
@@ -79,15 +83,21 @@ agent_text_path <- file.path("workflow", "selection_strategy_analysis.txt")
 competition_line_id <- 5L
 competition_frame_hours <- 8
 
-competition_available <- file.exists(params$competition_path)
+competition_eval <- evaluate_single_line_competition_validation(
+  config = cfg,
+  competition_path = params$competition_path,
+  fit_dataset_label = params$competition_fit_dataset_label,
+  fit_stan_data_path = params$competition_fit_stan_data_path,
+  run_label = params$competition_fit_run_label,
+  competition_frame_hours = competition_frame_hours,
+  time_step_hours = 1,
+  export_root = params$competition_export_root
+)
 
-context_key <- function(df) {
-  ifelse(
-    df$fit_context == "global",
-    paste(df$model_id, df$fit_context, sep = "||"),
-    paste(df$model_id, df$fit_context, df$direction, df$fit_type, sep = "||")
-  )
-}
+competition_available <- isTRUE(competition_eval$competition_available)
+competition_df <- competition_eval$competition_df
+competition_mean_df <- competition_eval$competition_mean_df
+competition_init_df <- competition_eval$competition_init_df
 
 load_competition_fit_context <- function(row, config) {
   if (identical(row$fit_context[[1]], "global")) {
@@ -148,73 +158,17 @@ simulate_competition_validation_context <- function(task_row, config, stan_data,
   bind_rows(pieces)
 }
 
-competition_raw <- NULL
-competition_df <- data.frame()
-competition_mean_df <- data.frame()
-competition_init_df <- data.frame()
 competition_validation_summary <- data.frame()
 competition_overlay_df <- data.frame()
 competition_best_contexts <- data.frame()
+competition_global_summary <- data.frame()
+competition_global_overlay_df <- data.frame()
+competition_transfer_summary <- data.frame()
+competition_transfer_overlay_df <- data.frame()
 
 if (competition_available) {
-  competition_raw <- readRDS(params$competition_path) %>%
-    mutate(
-      frame = as.integer(frame),
-      time_hours = as.integer(frame) * competition_frame_hours,
-      label = as.character(label),
-      rep = as.character(rep),
-      condition = as.character(condition),
-      glucose = as.numeric(glucose),
-      ncells = as.numeric(ncells)
-    )
-
-  competition_live <- competition_raw %>%
-    filter(label %in% c("2N", "4N")) %>%
-    select(time_hours, frame, rep, condition, glucose, label, ncells) %>%
-    pivot_wider(names_from = label, values_from = ncells, values_fill = 0) %>%
-    rename(N_low = `2N`, N_high = `4N`) %>%
-    mutate(
-      total_live = N_low + N_high,
-      high_fraction = if_else(total_live > 0, N_high / total_live, NA_real_),
-      log_ratio = log((N_high + 1e-8) / (N_low + 1e-8))
-    )
-
-  competition_dead <- competition_raw %>%
-    filter(label == "dead") %>%
-    transmute(time_hours, frame, rep, condition, glucose, n_dead = ncells)
-
-  competition_df <- competition_live %>%
-    left_join(competition_dead, by = c("time_hours", "frame", "rep", "condition", "glucose")) %>%
-    mutate(
-      n_dead = coalesce(n_dead, 0),
-      total_cells = total_live + n_dead,
-      dead_fraction = if_else(total_cells > 0, n_dead / total_cells, NA_real_)
-    )
-
-  competition_mean_df <- competition_df %>%
-    group_by(glucose, time_hours) %>%
-    summarise(
-      N_low = mean(N_low, na.rm = TRUE),
-      N_high = mean(N_high, na.rm = TRUE),
-      total_live = mean(total_live, na.rm = TRUE),
-      high_fraction = mean(high_fraction, na.rm = TRUE),
-      log_ratio = mean(log_ratio, na.rm = TRUE),
-      dead_fraction = mean(dead_fraction, na.rm = TRUE),
-      .groups = "drop"
-    )
-
-  competition_init_df <- competition_df %>%
-    filter(time_hours == min(time_hours, na.rm = TRUE)) %>%
-    group_by(glucose) %>%
-    summarise(
-      high_fraction_start = mean(high_fraction, na.rm = TRUE),
-      total_live_start = mean(total_live, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    arrange(glucose)
-
-  competition_total_hours <- max(competition_df$time_hours, na.rm = TRUE)
-  competition_times <- sort(unique(competition_df$time_hours))
+  competition_total_hours <- competition_eval$competition_total_hours
+  competition_times <- competition_eval$competition_times
 
   validation_tasks <- final_summary %>%
     filter(
@@ -321,7 +275,35 @@ if (competition_available) {
     mutate(
       validation_label = paste(model_id, context_label, sep = " | ")
     )
+
+  competition_global_summary <- competition_validation_summary %>%
+    filter(fit_context == "global") %>%
+    arrange(desc(glucose_sign_match), validation_score, mae_log_ratio)
+
+  competition_global_overlay_df <- validation_sim_df %>%
+    semi_join(
+      competition_global_summary %>%
+        select(model_id, context_label, fit_context, direction, fit_type),
+      by = c("model_id", "context_label", "fit_context", "direction", "fit_type")
+    ) %>%
+    mutate(validation_label = model_id)
+
+  competition_transfer_summary <- competition_validation_summary %>%
+    filter(fit_context == "transfer") %>%
+    arrange(direction, desc(glucose_sign_match), validation_score, mae_log_ratio)
+
+  competition_transfer_overlay_df <- validation_sim_df %>%
+    semi_join(
+      competition_transfer_summary %>%
+        select(model_id, context_label, fit_context, direction, fit_type),
+      by = c("model_id", "context_label", "fit_context", "direction", "fit_type")
+    ) %>%
+    mutate(validation_label = paste(model_id, direction, sep = " | "))
 }
+
+singleline_competition_validation_summary <- competition_eval$summary_df
+singleline_competition_overlay_df <- competition_eval$overlay_df
+singleline_competition_overlay_models <- competition_eval$overlay_models
 ```
 
 ## Objects
@@ -336,308 +318,274 @@ On disk these live under:
 - `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/final_summary.Rds`
 - `data/selection_strategy/gpath/v1/<dataset>/<model>/<context>/line_##/detail.Rds`
 
-## Global Strategy Ordering
+## Strategy Questions
 
-This view ignores model identity and asks a simpler question: across all simulated contexts, how consistently does each strategy push selection in one direction?
+The strategy-ranking summaries below are split by question rather than pooled across all fit contexts. `global` and `transfer` answer different questions and are now reported separately.
 
-For each strategy:
+```{r strategy-question-prep}
+build_strategy_question <- function(df, glucose_values, top_n = 8L, extreme_n = 25L) {
+  sign_summary <- df %>%
+    group_by(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4) %>%
+    summarise(
+      n_contexts = n(),
+      frac_for = mean(log_ratio_final > 0, na.rm = TRUE),
+      frac_against = mean(log_ratio_final < 0, na.rm = TRUE),
+      signed_consistency = frac_for - frac_against,
+      abs_consistency = pmax(frac_for, frac_against),
+      mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(signed_consistency, desc(abs_consistency), mean_log_ratio)
 
-- `frac_for` = fraction of contexts with `log_ratio_final > 0`
-- `frac_against` = fraction of contexts with `log_ratio_final < 0`
-- `signed_consistency = frac_for - frac_against`
+  extreme_codes <- unique(c(head(sign_summary$strategy_code, extreme_n), tail(sign_summary$strategy_code, extreme_n)))
 
-So:
+  effect_heatmap <- df %>%
+    filter(strategy_code %in% extreme_codes) %>%
+    group_by(strategy_code) %>%
+    summarise(
+      q10 = quantile(log_ratio_final, probs = 0.10, na.rm = TRUE, names = FALSE),
+      median = median(log_ratio_final, na.rm = TRUE),
+      q90 = quantile(log_ratio_final, probs = 0.90, na.rm = TRUE, names = FALSE),
+      .groups = "drop"
+    ) %>%
+    tidyr::pivot_longer(cols = c(q10, median, q90), names_to = "summary_stat", values_to = "value") %>%
+    mutate(
+      strategy_code = factor(strategy_code, levels = extreme_codes),
+      summary_stat = factor(summary_stat, levels = c("q10", "median", "q90"))
+    )
 
-- values near `+1` mean the strategy almost always selects for high ploidy
-- values near `-1` mean the strategy almost always selects against high ploidy
-- values near `0` mean the strategy has no clear directional tendency
-
-```{r strategy-ordering-prep}
-strategy_sign_summary <- final_summary %>%
-  group_by(strategy_code, g0_day0, day2_action, g0_day2, day4_action, g0_day4) %>%
-  summarise(
-    n_contexts = n(),
-    frac_for = mean(log_ratio_final > 0, na.rm = TRUE),
-    frac_against = mean(log_ratio_final < 0, na.rm = TRUE),
-    frac_neutral = mean(log_ratio_final == 0, na.rm = TRUE),
-    signed_consistency = frac_for - frac_against,
-    abs_consistency = pmax(frac_for, frac_against),
-    mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
-    .groups = "drop"
+  design_heatmap <- bind_rows(
+    sign_summary %>% transmute(strategy_code, stage = "day0", value = g0_day0, action_label = "seed"),
+    sign_summary %>% transmute(strategy_code, stage = "day2", value = g0_day2, action_label = if_else(day2_action == "carry", "carry", "refresh")),
+    sign_summary %>% transmute(strategy_code, stage = "day4", value = g0_day4, action_label = if_else(day4_action == "carry", "carry", "refresh"))
   ) %>%
-  arrange(signed_consistency, desc(abs_consistency), mean_log_ratio)
+    mutate(
+      glucose_label = if_else(action_label == "carry", "carry", as.character(value)),
+      stage = factor(stage, levels = c("day0", "day2", "day4")),
+      glucose_label = factor(glucose_label, levels = c("carry", as.character(sort(glucose_values)))),
+      strategy_code = factor(strategy_code, levels = extreme_codes)
+    ) %>%
+    filter(as.character(strategy_code) %in% extreme_codes)
 
-strategy_levels <- strategy_sign_summary$strategy_code
+  summarize_rank <- function(descending = FALSE, favorable_sign = c("negative", "positive")) {
+    favorable_sign <- match.arg(favorable_sign)
+    ranked <- df %>%
+      group_by(model_id, line_id, cell_line, context_label) %>%
+      mutate(rank_value = if (descending) min_rank(desc(log_ratio_final)) else min_rank(log_ratio_final)) %>%
+      ungroup()
 
-strategy_score_plot_df <- strategy_sign_summary %>%
-  mutate(strategy_code = factor(strategy_code, levels = strategy_levels))
+    summary_df <- ranked %>%
+      group_by(strategy_code) %>%
+      summarise(
+        mean_rank = mean(rank_value, na.rm = TRUE),
+        top5_fraction = mean(rank_value <= 5, na.rm = TRUE),
+        favorable_fraction = if (favorable_sign == "negative") {
+          mean(log_ratio_final < 0, na.rm = TRUE)
+        } else {
+          mean(log_ratio_final > 0, na.rm = TRUE)
+        },
+        mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      arrange(mean_rank, desc(top5_fraction), if (descending) desc(mean_log_ratio) else mean_log_ratio)
 
-strategy_extreme_codes <- c(
-  head(strategy_sign_summary$strategy_code, 25),
-  tail(strategy_sign_summary$strategy_code, 25)
-)
-strategy_extreme_codes <- unique(strategy_extreme_codes)
+    top_codes <- summary_df %>% slice_head(n = top_n) %>% pull(strategy_code)
+    plot_df <- ranked %>%
+      filter(strategy_code %in% top_codes) %>%
+      mutate(strategy_code = factor(strategy_code, levels = rev(top_codes)))
 
-strategy_heatmap_summary <- strategy_sign_summary %>%
-  filter(strategy_code %in% strategy_extreme_codes) %>%
-  mutate(strategy_code = factor(strategy_code, levels = strategy_extreme_codes))
+    list(
+      summary = summary_df,
+      plot_df = plot_df,
+      limit = max(1, max(abs(plot_df$log_ratio_final), na.rm = TRUE))
+    )
+  }
 
-strategy_effect_heatmap <- final_summary %>%
-  filter(strategy_code %in% strategy_extreme_codes) %>%
-  group_by(strategy_code) %>%
-  summarise(
-    q10 = quantile(log_ratio_final, probs = 0.10, na.rm = TRUE, names = FALSE),
-    median = median(log_ratio_final, na.rm = TRUE),
-    q90 = quantile(log_ratio_final, probs = 0.90, na.rm = TRUE, names = FALSE),
-    .groups = "drop"
-  ) %>%
-  tidyr::pivot_longer(cols = c(q10, median, q90), names_to = "summary_stat", values_to = "value") %>%
-  mutate(
-    strategy_code = factor(strategy_code, levels = strategy_extreme_codes),
-    summary_stat = factor(summary_stat, levels = c("q10", "median", "q90"))
+  list(
+    sign_summary = sign_summary,
+    effect_heatmap = effect_heatmap,
+    design_heatmap = design_heatmap,
+    effect_limit = max(1, max(abs(effect_heatmap$value), na.rm = TRUE)),
+    against = summarize_rank(descending = FALSE, favorable_sign = "negative"),
+    for_high = summarize_rank(descending = TRUE, favorable_sign = "positive")
   )
-
-effect_limit <- max(abs(strategy_effect_heatmap$value), na.rm = TRUE)
-if (!is.finite(effect_limit) || effect_limit <= 0) {
-  effect_limit <- 1
 }
 
-strategy_design_long <- bind_rows(
-  strategy_sign_summary %>%
-    transmute(strategy_code, stage = "day0", value = g0_day0, action_label = "seed"),
-  strategy_sign_summary %>%
-    transmute(strategy_code, stage = "day2", value = g0_day2, action_label = if_else(day2_action == "carry", "carry", "refresh")),
-  strategy_sign_summary %>%
-    transmute(strategy_code, stage = "day4", value = g0_day4, action_label = if_else(day4_action == "carry", "carry", "refresh"))
-) %>%
-  mutate(
-    glucose_label = if_else(action_label == "carry", "carry", as.character(value)),
-    stage = factor(stage, levels = c("day0", "day2", "day4")),
-    glucose_label = factor(glucose_label, levels = c("carry", as.character(sort(glucose_values))))
-  )
+global_strategy <- build_strategy_question(final_summary %>% filter(fit_context == "global"), glucose_values)
+transfer_strategy <- build_strategy_question(final_summary %>% filter(fit_context == "transfer"), glucose_values)
 
-strategy_design_heatmap <- strategy_design_long %>%
-  filter(strategy_code %in% strategy_extreme_codes) %>%
-  mutate(strategy_code = factor(strategy_code, levels = strategy_extreme_codes))
+strategy_metric_glossary <- data.frame(
+  column = c("mean_rank", "top5_fraction", "favorable_fraction", "mean_log_ratio"),
+  definition = c(
+    "Within the question-specific subset, rank all strategies separately inside each model x line x context block; then average that rank for the strategy across those blocks.",
+    "Within the same question-specific subset, fraction of model x line x context blocks where the strategy ranked in the top 5 by the relevant ordering.",
+    "Within the same question-specific subset, fraction of rows where the strategy had the desired sign: log_ratio_final < 0 for against-high, log_ratio_final > 0 for for-high.",
+    "Arithmetic mean of log_ratio_final across all rows in the question-specific subset for that strategy."
+  ),
+  stringsAsFactors = FALSE
+)
 ```
 
-```{r strategy-consistency-line, fig.height=5}
-ggplot(strategy_sign_summary, aes(seq_along(signed_consistency), signed_consistency)) +
+## Question 1: Which strategies look most robust within the global fits?
+
+This section uses `fit_context == "global"` only.
+
+```{r strategy-global-consistency-line, fig.height=5}
+ggplot(global_strategy$sign_summary, aes(seq_along(signed_consistency), signed_consistency)) +
   geom_hline(yintercept = 0, color = "grey50", linewidth = 0.4) +
   geom_line(linewidth = 0.8, color = "black") +
-  labs(
-    title = "Per-Strategy Directional Consistency",
-    subtitle = "Ordered from consistently against high ploidy to consistently for high ploidy",
-    x = "strategies ordered by signed consistency",
-    y = "signed consistency = frac_for - frac_against"
-  ) +
+  labs(title = "Global Directional Consistency", x = "strategies ordered by signed consistency", y = "frac_for - frac_against") +
   theme_minimal(base_size = 11)
 ```
 
-```{r strategy-ordering-heatmap, fig.height=16}
-p_score_heat <- ggplot(strategy_heatmap_summary, aes(x = 1, y = strategy_code, fill = signed_consistency)) +
+```{r strategy-global-ordering-heatmap, fig.height=16}
+global_sign_plot <- global_strategy$sign_summary %>%
+  filter(strategy_code %in% levels(global_strategy$effect_heatmap$strategy_code)) %>%
+  mutate(strategy_code = factor(strategy_code, levels = levels(global_strategy$effect_heatmap$strategy_code)))
+
+global_score_heat <- ggplot(global_sign_plot, aes(x = 1, y = strategy_code, fill = signed_consistency)) +
   geom_tile(color = "white") +
-  scale_fill_gradient2(
-    low = "#2166ac",
-    mid = "white",
-    high = "#b2182b",
-    midpoint = 0,
-    limits = c(-1, 1),
-    name = "signed\nconsistency"
-  ) +
-  labs(
-    title = "Most Consistent Strategies",
-    subtitle = "Bottom 25 and top 25 strategies by signed consistency",
-    x = NULL,
-    y = "strategy code"
-  ) +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-1, 1), name = "signed consistency") +
+  labs(title = "Global: Consistency", x = NULL, y = "strategy code") +
   theme_minimal(base_size = 11) +
-  theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank()
-  )
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")
 
-p_effect <- ggplot(strategy_effect_heatmap, aes(summary_stat, strategy_code, fill = value)) +
+global_effect <- ggplot(global_strategy$effect_heatmap, aes(summary_stat, strategy_code, fill = value)) +
   geom_tile(color = "white") +
-  scale_fill_gradient2(
-    low = "#2166ac",
-    mid = "white",
-    high = "#b2182b",
-    midpoint = 0,
-    limits = c(-effect_limit, effect_limit),
-    name = "log ratio"
-  ) +
-  labs(
-    title = "Outcome Summary",
-    subtitle = "q10, median, q90 across all contexts",
-    x = NULL,
-    y = NULL
-  ) +
-  theme_minimal(base_size = 11)
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-global_strategy$effect_limit, global_strategy$effect_limit), name = "log ratio") +
+  labs(title = "Global: Outcome Summary", x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
 
-p_design <- ggplot(strategy_design_heatmap, aes(stage, strategy_code, fill = glucose_label)) +
+global_design <- ggplot(global_strategy$design_heatmap, aes(stage, strategy_code, fill = glucose_label)) +
   geom_tile(color = "white") +
-  scale_fill_manual(
-    values = c(
-      "carry" = "#bdbdbd",
-      "0" = "#f7fbff",
-      "0.1" = "#deebf7",
-      "0.25" = "#c6dbef",
-      "0.5" = "#9ecae1",
-      "1" = "#6baed6",
-      "5" = "#3182bd",
-      "25" = "#08519c"
-    ),
-    drop = FALSE,
-    name = "glucose"
-  ) +
-  labs(
-    title = "Strategy Design",
-    subtitle = "Day-0 seed, then day-2/day-4 action",
-    x = NULL,
-    y = NULL
-  ) +
-  theme_minimal(base_size = 11)
+  scale_fill_manual(values = c("carry" = "#bdbdbd", "0" = "#f7fbff", "0.1" = "#deebf7", "0.25" = "#c6dbef", "0.5" = "#9ecae1", "1" = "#6baed6", "5" = "#3182bd", "25" = "#08519c"), drop = FALSE, name = "strategy legend") +
+  labs(title = "Global: Design", x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
 
-p_score_heat + p_effect + p_design + patchwork::plot_layout(widths = c(0.45, 0.8, 1))
+global_score_heat + global_effect + global_design + patchwork::plot_layout(widths = c(0.45, 0.8, 1), guides = "collect") & theme(legend.position = "bottom")
 ```
 
-## Main Result: Robust Strategies That Select Against High Ploidy
+Within each `model x fit-context x line` context, rank strategies by `log_ratio_final` from most negative to most positive. Then identify the strategies with the best mean within-context rank across the global subset.
 
-Within each `model x fit-context x line` context, rank strategies by `log_ratio_final` from most negative to most positive. Then identify the strategies with the best mean within-context rank across the entire result set.
-
-```{r against-prep}
-against_ranked <- final_summary %>%
-  group_by(model_id, line_id, cell_line, context_label) %>%
-  mutate(against_rank = min_rank(log_ratio_final)) %>%
-  ungroup()
-
-against_strategy_summary <- against_ranked %>%
-  group_by(strategy_code) %>%
-  summarise(
-    mean_rank = mean(against_rank, na.rm = TRUE),
-    top5_fraction = mean(against_rank <= 5, na.rm = TRUE),
-    favorable_fraction = mean(log_ratio_final < 0, na.rm = TRUE),
-    mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(mean_rank, desc(top5_fraction), mean_log_ratio)
-
-against_top_codes <- against_strategy_summary %>%
-  slice_head(n = 8) %>%
-  pull(strategy_code)
-
-against_plot_df <- against_ranked %>%
-  filter(strategy_code %in% against_top_codes) %>%
-  mutate(strategy_code = factor(strategy_code, levels = rev(against_top_codes)))
-
-against_limit <- max(abs(against_plot_df$log_ratio_final), na.rm = TRUE)
-if (!is.finite(against_limit) || against_limit <= 0) {
-  against_limit <- 1
-}
+```{r strategy-metric-glossary}
+knitr::kable(strategy_metric_glossary)
 ```
 
-```{r against-summary}
-print(against_strategy_summary %>% slice_head(n = 8), n = 8)
+```{r against-global-summary}
+print(global_strategy$against$summary %>% slice_head(n = 8), n = 8)
 ```
 
-```{r against-heatmap, fig.height=14}
-ggplot(against_plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
+```{r against-global-heatmap, fig.height=12}
+ggplot(global_strategy$against$plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
   geom_tile(color = "white") +
   facet_grid(cell_line ~ context_label) +
-  scale_fill_gradient2(
-    low = "#2166ac",
-    mid = "white",
-    high = "#b2182b",
-    midpoint = 0,
-    limits = c(-against_limit, against_limit),
-    name = "Day-6 log(N_high / N_low)"
-  ) +
-  labs(
-    title = "Robust Strategies For Selecting Against High Ploidy",
-    subtitle = "Same strategy set shown across all models, cell lines, and fit contexts",
-    x = "model",
-    y = "strategy code"
-  ) +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-global_strategy$against$limit, global_strategy$against$limit), name = "day-6 log ratio") +
+  labs(title = "Global: Against High Ploidy", x = "model", y = "strategy code") +
   theme_minimal(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-## Main Result: Robust Strategies That Select For High Ploidy
-
-Repeat the same ranking logic, but now rank strategies from most positive to most negative `log_ratio_final`.
-
-```{r for-prep}
-for_ranked <- final_summary %>%
-  group_by(model_id, line_id, cell_line, context_label) %>%
-  mutate(for_rank = min_rank(desc(log_ratio_final))) %>%
-  ungroup()
-
-for_strategy_summary <- for_ranked %>%
-  group_by(strategy_code) %>%
-  summarise(
-    mean_rank = mean(for_rank, na.rm = TRUE),
-    top5_fraction = mean(for_rank <= 5, na.rm = TRUE),
-    favorable_fraction = mean(log_ratio_final > 0, na.rm = TRUE),
-    mean_log_ratio = mean(log_ratio_final, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(mean_rank, desc(top5_fraction), desc(mean_log_ratio))
-
-for_top_codes <- for_strategy_summary %>%
-  slice_head(n = 8) %>%
-  pull(strategy_code)
-
-for_plot_df <- for_ranked %>%
-  filter(strategy_code %in% for_top_codes) %>%
-  mutate(strategy_code = factor(strategy_code, levels = rev(for_top_codes)))
-
-for_limit <- max(abs(for_plot_df$log_ratio_final), na.rm = TRUE)
-if (!is.finite(for_limit) || for_limit <= 0) {
-  for_limit <- 1
-}
+```{r for-global-summary}
+print(global_strategy$for_high$summary %>% slice_head(n = 8), n = 8)
 ```
 
-```{r for-summary}
-print(for_strategy_summary %>% slice_head(n = 8), n = 8)
-```
-
-```{r for-heatmap, fig.height=14}
-ggplot(for_plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
+```{r for-global-heatmap, fig.height=12}
+ggplot(global_strategy$for_high$plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
   geom_tile(color = "white") +
   facet_grid(cell_line ~ context_label) +
-  scale_fill_gradient2(
-    low = "#2166ac",
-    mid = "white",
-    high = "#b2182b",
-    midpoint = 0,
-    limits = c(-for_limit, for_limit),
-    name = "Day-6 log(N_high / N_low)"
-  ) +
-  labs(
-    title = "Robust Strategies For Selecting For High Ploidy",
-    subtitle = "Same strategy set shown across all models, cell lines, and fit contexts",
-    x = "model",
-    y = "strategy code"
-  ) +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-global_strategy$for_high$limit, global_strategy$for_high$limit), name = "day-6 log ratio") +
+  labs(title = "Global: For High Ploidy", x = "model", y = "strategy code") +
   theme_minimal(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
 ```
 
-## Empirical Competition Check: SUM-159
+## Question 2: Which strategies look most robust within the transfer fits?
 
-This section compares the mixed-culture simulation branch against the empirical SUM-159 co-culture experiment in `data/counts/competition/SUM-159-fuse.Rds`.
+This section uses `fit_context == "transfer"` only.
 
-The alignment used here is:
+```{r strategy-transfer-consistency-line, fig.height=5}
+ggplot(transfer_strategy$sign_summary, aes(seq_along(signed_consistency), signed_consistency)) +
+  geom_hline(yintercept = 0, color = "grey50", linewidth = 0.4) +
+  geom_line(linewidth = 0.8, color = "black") +
+  labs(title = "Transfer Directional Consistency", x = "strategies ordered by signed consistency", y = "frac_for - frac_against") +
+  theme_minimal(base_size = 11)
+```
+
+```{r strategy-transfer-ordering-heatmap, fig.height=16}
+transfer_sign_plot <- transfer_strategy$sign_summary %>%
+  filter(strategy_code %in% levels(transfer_strategy$effect_heatmap$strategy_code)) %>%
+  mutate(strategy_code = factor(strategy_code, levels = levels(transfer_strategy$effect_heatmap$strategy_code)))
+
+transfer_score_heat <- ggplot(transfer_sign_plot, aes(x = 1, y = strategy_code, fill = signed_consistency)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-1, 1), name = "signed consistency") +
+  labs(title = "Transfer: Consistency", x = NULL, y = "strategy code") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom")
+
+transfer_effect <- ggplot(transfer_strategy$effect_heatmap, aes(summary_stat, strategy_code, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-transfer_strategy$effect_limit, transfer_strategy$effect_limit), name = "log ratio") +
+  labs(title = "Transfer: Outcome Summary", x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+
+transfer_design <- ggplot(transfer_strategy$design_heatmap, aes(stage, strategy_code, fill = glucose_label)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("carry" = "#bdbdbd", "0" = "#f7fbff", "0.1" = "#deebf7", "0.25" = "#c6dbef", "0.5" = "#9ecae1", "1" = "#6baed6", "5" = "#3182bd", "25" = "#08519c"), drop = FALSE, name = "strategy legend") +
+  labs(title = "Transfer: Design", x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+
+transfer_score_heat + transfer_effect + transfer_design + patchwork::plot_layout(widths = c(0.45, 0.8, 1), guides = "collect") & theme(legend.position = "bottom")
+```
+
+Within each `model x fit-context x line` context, rank strategies by `log_ratio_final` from most negative to most positive. Then identify the strategies with the best mean within-context rank across the transfer subset.
+
+```{r against-transfer-summary}
+print(transfer_strategy$against$summary %>% slice_head(n = 8), n = 8)
+```
+
+```{r against-transfer-heatmap, fig.height=12}
+ggplot(transfer_strategy$against$plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
+  geom_tile(color = "white") +
+  facet_grid(cell_line ~ context_label) +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-transfer_strategy$against$limit, transfer_strategy$against$limit), name = "day-6 log ratio") +
+  labs(title = "Transfer: Against High Ploidy", x = "model", y = "strategy code") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+```{r for-transfer-summary}
+print(transfer_strategy$for_high$summary %>% slice_head(n = 8), n = 8)
+```
+
+```{r for-transfer-heatmap, fig.height=12}
+ggplot(transfer_strategy$for_high$plot_df, aes(model_id, strategy_code, fill = log_ratio_final)) +
+  geom_tile(color = "white") +
+  facet_grid(cell_line ~ context_label) +
+  scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b", midpoint = 0, limits = c(-transfer_strategy$for_high$limit, transfer_strategy$for_high$limit), name = "day-6 log ratio") +
+  labs(title = "Transfer: For High Ploidy", x = "model", y = "strategy code") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## Empirical Competition Check: Existing Fitted Contexts
+
+This section compares the mixed-culture simulation branch against the empirical SUM-159 co-culture experiment in `data/counts/competition/SUM-159-fuse.Rds`, but now splits the interpretation into two separate questions.
+
+The shared alignment used throughout is:
 
 - SUM-159 corresponds to `line_id = 5`
 - `2N` is mapped to `N_low`
 - `4N` is mapped to `N_high`
 - each frame is treated as an `8 h` interval
 - the experiment is treated as a no-refresh mixed-culture trajectory over `112 h`
-- simulations are initialized from the empirical frame-0 live total and high-ploidy fraction at each glucose, then evolved using the existing fitted contexts
+- simulations are initialized from the empirical frame-0 live total and high-ploidy fraction at each glucose
 
-So this is not a new fitting procedure. It is a validation rerun that uses the already-fitted mixed-culture dynamics to generate detailed trajectories on the empirical time grid.
+So this is not a new fitting procedure. It is a validation rerun that uses already-fitted mixed-culture dynamics to generate detailed trajectories on the empirical time grid.
 
 ```{r competition-availability, results='asis'}
 if (!competition_available) {
@@ -655,8 +603,12 @@ competition_init_fmt <- competition_init_df %>%
 knitr::kable(competition_init_fmt)
 ```
 
-```{r competition-validation-summary, eval=competition_available}
-competition_validation_fmt <- competition_validation_summary %>%
+### Question 1: If line 5 was included in the hierarchical fit, how well does the model explain the competition assay?
+
+This is the `global` question. It is an in-panel explanatory check: line 5 contributed to the hierarchical fit, so success here means the fitted model family can reconcile the monoculture data and the independent competition data for SUM-159.
+
+```{r competition-global-summary, eval=competition_available}
+competition_global_fmt <- competition_global_summary %>%
   select(
     model_id, context_label, glucose_sign_match, mae_log_ratio,
     mae_high_fraction, mae_log_total_live, validation_score
@@ -666,22 +618,16 @@ competition_validation_fmt <- competition_validation_summary %>%
     mae_high_fraction = percent(mae_high_fraction, accuracy = 0.1)
   )
 
-knitr::kable(competition_validation_fmt, digits = 3)
+knitr::kable(competition_global_fmt, digits = 3)
 ```
 
 `glucose_sign_match` is the fraction of empirical glucose levels for which the simulation gets the sign of the start-to-end log-ratio shift correct. That is the most basic directional check. The error columns then ask how close the simulated trajectories stay to the empirical mean trajectories over time.
 
-```{r competition-validation-heatmap, fig.height=7, eval=competition_available}
-heat_df <- competition_validation_summary %>%
-  mutate(
-    context_label = factor(
-      context_label,
-      levels = c("global", "high_to_low | transfer", "low_to_high | transfer")
-    ),
-    model_id = factor(model_id, levels = unique(model_id))
-  )
+```{r competition-global-heatmap, fig.height=7, eval=competition_available}
+global_heat_df <- competition_global_summary %>%
+  mutate(model_id = factor(model_id, levels = rev(model_id)))
 
-ggplot(heat_df, aes(model_id, context_label, fill = glucose_sign_match)) +
+ggplot(global_heat_df, aes(x = 1, y = model_id, fill = glucose_sign_match)) +
   geom_tile(color = "white") +
   geom_text(aes(label = sprintf("%.2f", validation_score)), size = 3) +
   scale_fill_gradient(
@@ -692,168 +638,440 @@ ggplot(heat_df, aes(model_id, context_label, fill = glucose_sign_match)) +
     name = "glucose\nsign match"
   ) +
   labs(
-    title = "SUM-159 Competition Validation Across Existing Fitted Contexts",
-    subtitle = "Tile color shows directional agreement; overlaid text shows composite validation score (lower is better)",
-    x = "model",
-    y = "fit context"
+    title = "SUM-159 Competition Validation: Global Contexts",
+    subtitle = "Line 5 was included in the hierarchical fit; text shows composite validation score (lower is better)",
+    x = NULL,
+    y = "model"
   ) +
   theme_minimal(base_size = 11) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
 ```
 
-```{r competition-log-ratio-overlay, fig.height=12, eval=competition_available}
-overlay_empirical <- competition_df %>%
-  mutate(validation_label = "empirical")
+```{r competition-global-log-ratio-overlay, fig.width=16, fig.height=10, eval=competition_available}
+global_empirical_reps <- tidyr::crossing(
+  validation_label = sort(unique(competition_global_overlay_df$validation_label)),
+  competition_df %>%
+    transmute(glucose, time_hours, rep, log_ratio, total_live)
+)
 
-overlay_plot_df <- bind_rows(
-  competition_overlay_df %>%
+global_empirical_mean <- tidyr::crossing(
+  validation_label = sort(unique(competition_global_overlay_df$validation_label)),
+  competition_mean_df %>%
+    transmute(glucose, time_hours, rep = NA_character_, log_ratio, total_live)
+)
+
+global_overlay_plot_df <- bind_rows(
+  competition_global_overlay_df %>%
     transmute(
       glucose,
       time_hours,
       rep = NA_character_,
       validation_label,
       source = "simulation",
-      high_fraction,
       log_ratio,
       total_live
     ),
-  competition_df %>%
+  global_empirical_reps %>%
     transmute(
       glucose,
       time_hours,
       rep,
-      validation_label = "empirical",
+      validation_label,
       source = "empirical_replicate",
-      high_fraction,
       log_ratio,
       total_live
     ),
-  competition_mean_df %>%
+  global_empirical_mean %>%
     transmute(
       glucose,
       time_hours,
       rep = NA_character_,
-      validation_label = "empirical",
+      validation_label,
       source = "empirical_mean",
-      high_fraction,
       log_ratio,
       total_live
     )
 )
 
 ggplot() +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
-    aes(time_hours / 24, log_ratio, group = interaction(glucose, rep)),
+  geom_point(
+    data = global_overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, log_ratio),
     color = "grey75",
-    linewidth = 0.5,
+    size = 0.9,
     alpha = 0.6
   ) +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
-    aes(time_hours / 24, log_ratio),
-    color = "black",
-    linewidth = 1
-  ) +
   geom_point(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    data = global_overlay_plot_df %>% filter(source == "empirical_mean"),
     aes(time_hours / 24, log_ratio),
     color = "black",
     size = 1.4
   ) +
   geom_line(
-    data = overlay_plot_df %>% filter(source == "simulation"),
-    aes(time_hours / 24, log_ratio, color = validation_label),
-    linewidth = 1
+    data = global_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, log_ratio, group = validation_label),
+    color = "#2166ac",
+    linewidth = 0.9
   ) +
   geom_hline(yintercept = 0, color = "grey55", linewidth = 0.4) +
   facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
   labs(
-    title = "Observed vs Simulated Competition Log-Ratio Trajectories",
-    subtitle = "Black = empirical mean, grey = empirical replicates, color = best fitted context within each fit family",
+    title = "Global Fits: Competition Log-Ratio",
     x = "days",
-    y = "log(N_high / N_low)",
-    color = "best context"
+    y = "log(N_high / N_low)"
   ) +
   theme_minimal(base_size = 11)
 ```
 
-```{r competition-high-fraction-overlay, fig.height=12, eval=competition_available}
+```{r competition-global-total-live-overlay, fig.width=16, fig.height=10, eval=competition_available}
 ggplot() +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
-    aes(time_hours / 24, high_fraction, group = interaction(glucose, rep)),
-    color = "grey75",
-    linewidth = 0.5,
-    alpha = 0.6
-  ) +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
-    aes(time_hours / 24, high_fraction),
-    color = "black",
-    linewidth = 1
-  ) +
   geom_point(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
-    aes(time_hours / 24, high_fraction),
-    color = "black",
-    size = 1.4
-  ) +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "simulation"),
-    aes(time_hours / 24, high_fraction, color = validation_label),
-    linewidth = 1
-  ) +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
-  facet_grid(factor(glucose) ~ validation_label) +
-  labs(
-    title = "Observed vs Simulated High-Ploidy Fraction",
-    subtitle = "Same comparison as above, on the directly interpretable composition scale",
-    x = "days",
-    y = "high-ploidy fraction among live cells",
-    color = "best context"
-  ) +
-  theme_minimal(base_size = 11)
-```
-
-```{r competition-total-live-overlay, fig.height=12, eval=competition_available}
-ggplot() +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_replicate"),
-    aes(time_hours / 24, total_live, group = interaction(glucose, rep)),
-    color = "grey75",
-    linewidth = 0.5,
-    alpha = 0.6
-  ) +
-  geom_line(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    data = global_overlay_plot_df %>% filter(source == "empirical_replicate"),
     aes(time_hours / 24, total_live),
-    color = "black",
-    linewidth = 1
+    color = "grey75",
+    size = 0.9,
+    alpha = 0.6
   ) +
   geom_point(
-    data = overlay_plot_df %>% filter(source == "empirical_mean"),
+    data = global_overlay_plot_df %>% filter(source == "empirical_mean"),
     aes(time_hours / 24, total_live),
     color = "black",
     size = 1.4
   ) +
   geom_line(
-    data = overlay_plot_df %>% filter(source == "simulation"),
-    aes(time_hours / 24, total_live, color = validation_label),
-    linewidth = 1
+    data = global_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, total_live, group = validation_label),
+    color = "#2166ac",
+    linewidth = 0.9
   ) +
   facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
   labs(
-    title = "Observed vs Simulated Total Live Burden",
-    subtitle = "Simulations are initialized at the empirical frame-0 live total for each glucose",
+    title = "Global Fits: Competition Total Live Burden",
     x = "days",
-    y = "total live cells",
-    color = "best context"
+    y = "total live cells"
   ) +
   theme_minimal(base_size = 11)
 ```
 
-This validation should be read as a credibility check on the mixed-culture branch, not as a replacement objective for the strategy ranking. If a context gets the sign of competitive shift wrong across glucose, the corresponding strategy recommendations should be treated cautiously for SUM-159 even if the simulated ranking itself looks internally stable.
+### Question 2: If the relevant ploidy state for line 5 was held out, how much competition-prediction ability remains?
+
+This is the transfer question. Here the model is still hierarchical and still trained on the wider panel, but the relevant line-5 ploidy state is withheld via the directional transfer setup. So this is closer to a held-out-state generalization check than to the in-panel global check above.
+
+```{r competition-transfer-summary, eval=competition_available}
+competition_transfer_fmt <- competition_transfer_summary %>%
+  select(
+    model_id, direction, context_label, glucose_sign_match, mae_log_ratio,
+    mae_high_fraction, mae_log_total_live, validation_score
+  ) %>%
+  mutate(
+    glucose_sign_match = percent(glucose_sign_match, accuracy = 1),
+    mae_high_fraction = percent(mae_high_fraction, accuracy = 0.1)
+  )
+
+knitr::kable(competition_transfer_fmt, digits = 3)
+```
+
+```{r competition-transfer-heatmap, fig.height=8, eval=competition_available}
+transfer_heat_df <- competition_transfer_summary %>%
+  mutate(
+    direction = factor(direction, levels = c("high_to_low", "low_to_high")),
+    model_id = factor(model_id, levels = unique(model_id))
+  )
+
+ggplot(transfer_heat_df, aes(model_id, direction, fill = glucose_sign_match)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", validation_score)), size = 3) +
+  scale_fill_gradient(
+    low = "#f7fbff",
+    high = "#08519c",
+    limits = c(0, 1),
+    labels = percent_format(accuracy = 1),
+    name = "glucose\nsign match"
+  ) +
+  labs(
+    title = "SUM-159 Competition Validation: Transfer Contexts",
+    subtitle = "Directional holdout check; text shows composite validation score (lower is better)",
+    x = "model",
+    y = "transfer direction"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r competition-transfer-log-ratio-overlay, fig.width=16, fig.height=12, eval=competition_available}
+transfer_empirical_reps <- tidyr::crossing(
+  validation_label = sort(unique(competition_transfer_overlay_df$validation_label)),
+  competition_df %>%
+    transmute(glucose, time_hours, rep, log_ratio, total_live)
+)
+
+transfer_empirical_mean <- tidyr::crossing(
+  validation_label = sort(unique(competition_transfer_overlay_df$validation_label)),
+  competition_mean_df %>%
+    transmute(glucose, time_hours, rep = NA_character_, log_ratio, total_live)
+)
+
+transfer_overlay_plot_df <- bind_rows(
+  competition_transfer_overlay_df %>%
+    transmute(
+      model_id,
+      direction,
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label,
+      source = "simulation",
+      log_ratio,
+      total_live
+    ),
+  transfer_empirical_reps %>%
+    transmute(
+      model_id = sub(" \\| .*", "", validation_label),
+      direction = NA_character_,
+      glucose,
+      time_hours,
+      rep,
+      validation_label,
+      source = "empirical_replicate",
+      log_ratio,
+      total_live
+    ),
+  transfer_empirical_mean %>%
+    transmute(
+      model_id = sub(" \\| .*", "", validation_label),
+      direction = NA_character_,
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label,
+      source = "empirical_mean",
+      log_ratio,
+      total_live
+    )
+)
+
+ggplot() +
+  geom_point(
+    data = transfer_overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, log_ratio),
+    color = "grey75",
+    size = 0.9,
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = transfer_overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, log_ratio),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = transfer_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, log_ratio, color = direction, group = interaction(model_id, direction)),
+    linewidth = 0.9
+  ) +
+  geom_hline(yintercept = 0, color = "grey55", linewidth = 0.4) +
+  facet_grid(factor(glucose) ~ model_id, scales = "free_y") +
+  scale_color_manual(values = c("high_to_low" = "#2166ac", "low_to_high" = "#b2182b"), name = "transfer direction") +
+  labs(
+    title = "Transfer Fits: Competition Log-Ratio",
+    x = "days",
+    y = "log(N_high / N_low)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+```{r competition-transfer-total-live-overlay, fig.width=16, fig.height=12, eval=competition_available}
+ggplot() +
+  geom_point(
+    data = transfer_overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, total_live),
+    color = "grey75",
+    size = 0.9,
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = transfer_overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, total_live),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = transfer_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, total_live, color = direction, group = interaction(model_id, direction)),
+    linewidth = 0.9
+  ) +
+  facet_grid(factor(glucose) ~ model_id, scales = "free_y") +
+  scale_color_manual(values = c("high_to_low" = "#2166ac", "low_to_high" = "#b2182b"), name = "transfer direction") +
+  labs(
+    title = "Transfer Fits: Competition Total Live Burden",
+    x = "days",
+    y = "total live cells"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+Taken together, these two subsections separate in-panel explanatory adequacy (`global`) from held-out-state transfer adequacy (`transfer`). Both are useful, but they answer different questions and should not be read as interchangeable evidence.
+
+## Supplementary: Single-Line Fit Competition Check
+
+This supplementary section asks a narrower question: among the models fit only to the `line_id = 5` monoculture wells, which ones best describe the independent SUM-159 competition dataset?
+
+The alignment to the empirical assay is the same as above. The only change is the model source: each model is loaded from the best completed single-line optimization run under `data/runs/gpath/v1/optim/gstarvation_v1_single_line/...`, using the line-5 subset input.
+
+```{r competition-singleline-summary, eval=competition_available}
+singleline_competition_validation_fmt <- singleline_competition_validation_summary %>%
+  select(
+    model_id, glucose_sign_match, mae_log_ratio,
+    mae_high_fraction, mae_log_total_live, mae_dead_fraction, validation_score
+  ) %>%
+  mutate(
+    glucose_sign_match = percent(glucose_sign_match, accuracy = 1),
+    mae_high_fraction = percent(mae_high_fraction, accuracy = 0.1),
+    mae_dead_fraction = percent(mae_dead_fraction, accuracy = 0.1)
+  )
+
+knitr::kable(singleline_competition_validation_fmt, digits = 3)
+```
+
+```{r competition-singleline-heatmap, fig.height=7, eval=competition_available}
+singleline_heat_df <- singleline_competition_validation_summary %>%
+  mutate(model_id = factor(model_id, levels = rev(model_id)))
+
+ggplot(singleline_heat_df, aes(x = 1, y = model_id, fill = glucose_sign_match)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", validation_score)), size = 3) +
+  scale_fill_gradient(
+    low = "#f7fbff",
+    high = "#08519c",
+    limits = c(0, 1),
+    labels = percent_format(accuracy = 1),
+    name = "glucose\nsign match"
+  ) +
+  labs(
+    title = "SUM-159 Competition Validation Across Single-Line Fits",
+    subtitle = "Tile color shows directional agreement; overlaid text shows composite validation score (lower is better)",
+    x = NULL,
+    y = "model"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+```
+
+```{r competition-singleline-log-ratio-overlay, fig.width=16, fig.height=12, eval=competition_available}
+singleline_empirical_reps <- tidyr::crossing(
+  validation_label = sort(unique(singleline_competition_overlay_df$validation_label)),
+  competition_df %>%
+    transmute(glucose, time_hours, rep, log_ratio, total_live)
+)
+
+singleline_empirical_mean <- tidyr::crossing(
+  validation_label = sort(unique(singleline_competition_overlay_df$validation_label)),
+  competition_mean_df %>%
+    transmute(glucose, time_hours, rep = NA_character_, log_ratio, total_live)
+)
+
+singleline_overlay_plot_df <- bind_rows(
+  singleline_competition_overlay_df %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label,
+      source = "simulation",
+      log_ratio,
+      total_live
+    ),
+  singleline_empirical_reps %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep,
+      validation_label,
+      source = "empirical_replicate",
+      log_ratio,
+      total_live
+    ),
+  singleline_empirical_mean %>%
+    transmute(
+      glucose,
+      time_hours,
+      rep = NA_character_,
+      validation_label,
+      source = "empirical_mean",
+      log_ratio,
+      total_live
+    )
+)
+
+ggplot() +
+  geom_point(
+    data = singleline_overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, log_ratio),
+    color = "grey75",
+    size = 0.9,
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = singleline_overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, log_ratio),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = singleline_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, log_ratio, group = validation_label),
+    color = "#2166ac",
+    linewidth = 0.9
+  ) +
+  geom_hline(yintercept = 0, color = "grey55", linewidth = 0.4) +
+  facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
+  labs(
+    title = "Single-Line Fits: Competition Log-Ratio",
+    x = "days",
+    y = "log(N_high / N_low)"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+```{r competition-singleline-total-live-overlay, fig.width=16, fig.height=12, eval=competition_available}
+ggplot() +
+  geom_point(
+    data = singleline_overlay_plot_df %>% filter(source == "empirical_replicate"),
+    aes(time_hours / 24, total_live),
+    color = "grey75",
+    size = 0.9,
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = singleline_overlay_plot_df %>% filter(source == "empirical_mean"),
+    aes(time_hours / 24, total_live),
+    color = "black",
+    size = 1.4
+  ) +
+  geom_line(
+    data = singleline_overlay_plot_df %>% filter(source == "simulation"),
+    aes(time_hours / 24, total_live, group = validation_label),
+    color = "#2166ac",
+    linewidth = 0.9
+  ) +
+  facet_grid(factor(glucose) ~ validation_label, scales = "free_y") +
+  labs(
+    title = "Single-Line Fits: Competition Total Live Burden",
+    x = "days",
+    y = "total live cells"
+  ) +
+  theme_minimal(base_size = 11)
+```
+
+This supplementary validation is intended to answer a narrower model-selection question: whether any model, when fit only to the line-5 monoculture wells, can also explain the independent SUM-159 competition assay.
 
 ## Optional Detailed Follow-Up
 
@@ -862,18 +1080,18 @@ This section reruns a very small number of representative top strategies in deta
 ```{r representative-selection, eval=params$include_detailed}
 rep_model_ids <- cfg$representative_model_ids
 if (is.null(rep_model_ids) || !length(rep_model_ids)) {
-  rep_model_ids <- unique(head(as.character(against_plot_df$model_id), 2L))
+  rep_model_ids <- unique(head(as.character(global_strategy$against$plot_df$model_id), 2L))
 }
 
 rep_rows <- bind_rows(
-  against_plot_df %>%
-    filter(model_id %in% rep_model_ids, strategy_code == against_top_codes[[1]]) %>%
+  global_strategy$against$plot_df %>%
+    filter(model_id %in% rep_model_ids, strategy_code == levels(global_strategy$against$plot_df$strategy_code)[[length(levels(global_strategy$against$plot_df$strategy_code))]]) %>%
     group_by(model_id, cell_line, context_label) %>%
     slice_head(n = 1L) %>%
     ungroup() %>%
     mutate(selection_objective = "against_high"),
-  for_plot_df %>%
-    filter(model_id %in% rep_model_ids, strategy_code == for_top_codes[[1]]) %>%
+  global_strategy$for_high$plot_df %>%
+    filter(model_id %in% rep_model_ids, strategy_code == levels(global_strategy$for_high$plot_df$strategy_code)[[length(levels(global_strategy$for_high$plot_df$strategy_code))]]) %>%
     group_by(model_id, cell_line, context_label) %>%
     slice_head(n = 1L) %>%
     ungroup() %>%
@@ -917,7 +1135,7 @@ if (nrow(detail_df)) {
 ## Agent Summary
 
 ```{r agent-summary, include=FALSE}
-against_text <- against_strategy_summary %>%
+against_text <- global_strategy$against$summary %>%
   slice_head(n = 5) %>%
   transmute(
     line = sprintf(
@@ -927,7 +1145,7 @@ against_text <- against_strategy_summary %>%
   ) %>%
   pull(line)
 
-for_text <- for_strategy_summary %>%
+for_text <- global_strategy$for_high$summary %>%
   slice_head(n = 5) %>%
   transmute(
     line = sprintf(
@@ -937,8 +1155,8 @@ for_text <- for_strategy_summary %>%
   ) %>%
   pull(line)
 
-consistency_extremes <- strategy_sign_summary %>%
-  slice(unique(c(seq_len(min(5, nrow(strategy_sign_summary))), seq.int(max(1, nrow(strategy_sign_summary) - 4), nrow(strategy_sign_summary))))) %>%
+consistency_extremes <- global_strategy$sign_summary %>%
+  slice(unique(c(seq_len(min(5, nrow(global_strategy$sign_summary))), seq.int(max(1, nrow(global_strategy$sign_summary) - 4), nrow(global_strategy$sign_summary))))) %>%
   transmute(
     line = sprintf(
       "%s | signed_consistency=%.3f | frac_for=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
@@ -947,9 +1165,28 @@ consistency_extremes <- strategy_sign_summary %>%
   ) %>%
   pull(line)
 
-against_best <- against_strategy_summary %>% slice_head(n = 1)
-for_best <- for_strategy_summary %>% slice_head(n = 1)
+against_best <- global_strategy$against$summary %>% slice_head(n = 1)
+for_best <- global_strategy$for_high$summary %>% slice_head(n = 1)
+transfer_against_text <- transfer_strategy$against$summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_against=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
+transfer_for_text <- transfer_strategy$for_high$summary %>%
+  slice_head(n = 5) %>%
+  transmute(
+    line = sprintf(
+      "%s | mean_rank=%.2f | top5=%.2f | frac_for=%.2f | mean_log_ratio=%.3f",
+      strategy_code, mean_rank, top5_fraction, favorable_fraction, mean_log_ratio
+    )
+  ) %>%
+  pull(line)
 competition_text <- character(0)
+competition_singleline_text <- character(0)
 
 if (competition_available && nrow(competition_validation_summary)) {
   competition_text <- competition_validation_summary %>%
@@ -958,6 +1195,18 @@ if (competition_available && nrow(competition_validation_summary)) {
       line = sprintf(
         "%s | %s | sign_match=%.2f | mae_log_ratio=%.3f | mae_high_fraction=%.3f | validation_score=%.3f",
         model_id, context_label, glucose_sign_match, mae_log_ratio, mae_high_fraction, validation_score
+      )
+    ) %>%
+    pull(line)
+}
+
+if (competition_available && nrow(singleline_competition_validation_summary)) {
+  competition_singleline_text <- singleline_competition_validation_summary %>%
+    slice_head(n = 5) %>%
+    transmute(
+      line = sprintf(
+        "%s | sign_match=%.2f | mae_log_ratio=%.3f | mae_high_fraction=%.3f | mae_dead_fraction=%.3f | validation_score=%.3f",
+        model_id, glucose_sign_match, mae_log_ratio, mae_high_fraction, mae_dead_fraction, validation_score
       )
     ) %>%
     pull(line)
@@ -980,10 +1229,10 @@ verdict_lines <- c(
   ),
   sprintf(
     "verdict\tRobust selection FOR high ploidy is substantially stronger than robust selection AGAINST high ploidy in this strategy space. Best-for strategies reach frac_for around %.2f-%.2f, whereas best-against strategies only reach frac_against around %.2f-%.2f.",
-    min(head(for_strategy_summary$favorable_fraction, 5)),
-    max(head(for_strategy_summary$favorable_fraction, 5)),
-    min(head(against_strategy_summary$favorable_fraction, 5)),
-    max(head(against_strategy_summary$favorable_fraction, 5))
+    min(head(global_strategy$for_high$summary$favorable_fraction, 5)),
+    max(head(global_strategy$for_high$summary$favorable_fraction, 5)),
+    min(head(global_strategy$against$summary$favorable_fraction, 5)),
+    max(head(global_strategy$against$summary$favorable_fraction, 5))
   )
 )
 
@@ -1005,11 +1254,20 @@ summary_lines <- c(
   "TOP_FOR_HIGH",
   for_text,
   "",
+  "TOP_AGAINST_HIGH_TRANSFER",
+  transfer_against_text,
+  "",
+  "TOP_FOR_HIGH_TRANSFER",
+  transfer_for_text,
+  "",
   "CONSISTENCY_EXTREMES",
   consistency_extremes,
   "",
   "COMPETITION_VALIDATION",
-  competition_text
+  competition_text,
+  "",
+  "COMPETITION_VALIDATION_SINGLE_LINE",
+  competition_singleline_text
 )
 
 writeLines(summary_lines, agent_text_path)

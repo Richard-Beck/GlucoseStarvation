@@ -176,8 +176,9 @@ extract_best_draw_from_optim_outputs <- function(draws_all, lp_all) {
   )
 }
 
-resolve_global_run_dir <- function(config, model_id, run_label = NULL) {
-  model_root <- file.path(config$optim_root, config$dataset_label, model_id)
+resolve_global_run_dir <- function(config, model_id, run_label = NULL, dataset_label = NULL) {
+  dataset_label <- dataset_label %||% config$dataset_label
+  model_root <- file.path(config$optim_root, dataset_label, model_id)
   if (!dir.exists(model_root)) {
     stop(sprintf("Global optimization directory not found for model '%s': %s", model_id, model_root))
   }
@@ -200,8 +201,13 @@ resolve_global_run_dir <- function(config, model_id, run_label = NULL) {
   sort(run_dirs)[[length(run_dirs)]]
 }
 
-load_best_global_fit <- function(config, model_id, run_label = NULL) {
-  run_dir <- resolve_global_run_dir(config, model_id = model_id, run_label = run_label)
+load_best_global_fit <- function(config, model_id, run_label = NULL, dataset_label = NULL) {
+  run_dir <- resolve_global_run_dir(
+    config,
+    model_id = model_id,
+    run_label = run_label,
+    dataset_label = dataset_label
+  )
   draws_all <- readRDS(file.path(run_dir, "optim_draws_all.Rds"))
   lp_all <- readRDS(file.path(run_dir, "optim_lp_all.Rds"))
   best <- extract_best_draw_from_optim_outputs(draws_all = draws_all, lp_all = lp_all)
@@ -213,6 +219,48 @@ load_best_global_fit <- function(config, model_id, run_label = NULL) {
     run_dir = run_dir,
     run_label = basename(run_dir),
     ploidy_effect_mask = NULL
+  )
+}
+
+discover_completed_global_model_ids <- function(config, dataset_label = NULL, run_label = NULL) {
+  dataset_label <- dataset_label %||% config$dataset_label
+  dataset_root <- file.path(config$optim_root, dataset_label)
+  if (!dir.exists(dataset_root)) {
+    return(character(0))
+  }
+
+  model_ids <- list.dirs(dataset_root, recursive = FALSE, full.names = FALSE)
+  model_ids <- model_ids[nzchar(model_ids)]
+  keep <- vapply(model_ids, function(model_id) {
+    ok <- tryCatch({
+      run_dir <- resolve_global_run_dir(
+        config = config,
+        model_id = model_id,
+        run_label = run_label,
+        dataset_label = dataset_label
+      )
+      file.exists(file.path(run_dir, "optim_draws_all.Rds")) &&
+        file.exists(file.path(run_dir, "optim_lp_all.Rds"))
+    }, error = function(e) {
+      FALSE
+    })
+    isTRUE(ok)
+  }, logical(1))
+
+  sort(model_ids[keep])
+}
+
+load_best_single_line_gpath_fit <- function(
+  config,
+  model_id,
+  fit_dataset_label = "gstarvation_v1_single_line",
+  run_label = NULL
+) {
+  load_best_global_fit(
+    config = config,
+    model_id = model_id,
+    run_label = run_label,
+    dataset_label = fit_dataset_label
   )
 }
 
@@ -898,4 +946,381 @@ rerun_selected_strategies_detailed <- function(config, selected_rows, time_step_
 
   config$detailed_time_step_hours <- saved_step
   bind_rows_align(out)
+}
+
+prepare_competition_validation_data <- function(
+  competition_path,
+  frame_hours = 8
+) {
+  if (!file.exists(competition_path)) {
+    return(list(
+      competition_available = FALSE,
+      competition_raw = data.frame(),
+      competition_df = data.frame(),
+      competition_mean_df = data.frame(),
+      competition_init_df = data.frame(),
+      competition_total_hours = NA_real_,
+      competition_times = numeric(0)
+    ))
+  }
+
+  competition_raw <- readRDS(competition_path) %>%
+    dplyr::mutate(
+      frame = as.integer(frame),
+      time_hours = as.integer(frame) * frame_hours,
+      label = as.character(label),
+      rep = as.character(rep),
+      condition = as.character(condition),
+      glucose = as.numeric(glucose),
+      ncells = as.numeric(ncells)
+    )
+
+  competition_live <- competition_raw %>%
+    dplyr::filter(label %in% c("2N", "4N")) %>%
+    dplyr::select(time_hours, frame, rep, condition, glucose, label, ncells) %>%
+    tidyr::pivot_wider(names_from = label, values_from = ncells, values_fill = 0) %>%
+    dplyr::rename(N_low = `2N`, N_high = `4N`) %>%
+    dplyr::mutate(
+      total_live = N_low + N_high,
+      high_fraction = dplyr::if_else(total_live > 0, N_high / total_live, NA_real_),
+      log_ratio = log((N_high + 1e-8) / (N_low + 1e-8))
+    )
+
+  competition_dead <- competition_raw %>%
+    dplyr::filter(label == "dead") %>%
+    dplyr::transmute(time_hours, frame, rep, condition, glucose, n_dead = ncells)
+
+  competition_df <- competition_live %>%
+    dplyr::left_join(competition_dead, by = c("time_hours", "frame", "rep", "condition", "glucose")) %>%
+    dplyr::mutate(
+      n_dead = dplyr::coalesce(n_dead, 0),
+      total_cells = total_live + n_dead,
+      dead_fraction = dplyr::if_else(total_cells > 0, n_dead / total_cells, NA_real_)
+    )
+
+  competition_mean_df <- competition_df %>%
+    dplyr::group_by(glucose, time_hours) %>%
+    dplyr::summarise(
+      N_low = mean(N_low, na.rm = TRUE),
+      N_high = mean(N_high, na.rm = TRUE),
+      total_live = mean(total_live, na.rm = TRUE),
+      high_fraction = mean(high_fraction, na.rm = TRUE),
+      log_ratio = mean(log_ratio, na.rm = TRUE),
+      dead_fraction = mean(dead_fraction, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  competition_init_df <- competition_df %>%
+    dplyr::filter(time_hours == min(time_hours, na.rm = TRUE)) %>%
+    dplyr::group_by(glucose) %>%
+    dplyr::summarise(
+      high_fraction_start = mean(high_fraction, na.rm = TRUE),
+      total_live_start = mean(total_live, na.rm = TRUE),
+      dead_fraction_start = mean(dead_fraction, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(glucose)
+
+  list(
+    competition_available = TRUE,
+    competition_raw = competition_raw,
+    competition_df = competition_df,
+    competition_mean_df = competition_mean_df,
+    competition_init_df = competition_init_df,
+    competition_total_hours = max(competition_df$time_hours, na.rm = TRUE),
+    competition_times = sort(unique(competition_df$time_hours))
+  )
+}
+
+simulate_competition_validation <- function(
+  fit_obj,
+  fit_stan_data,
+  model_id,
+  init_df,
+  total_hours,
+  time_step_hours = 1
+) {
+  line_ids <- sort(unique(as.integer(fit_stan_data$line_id)))
+  if (length(line_ids) != 1L) {
+    stop(sprintf(
+      "Competition validation expects a single-line stan_data object; found %d line_ids",
+      length(line_ids)
+    ))
+  }
+  fit_line_id <- line_ids[[1]]
+  line_pair <- get_line_ploidy_pair(fit_stan_data, line_id = fit_line_id)
+
+  comp <- reconstruct_mixture_components(
+    draw_vec = fit_obj$draw_vec,
+    model_id = model_id,
+    line_id = fit_line_id,
+    low_ploidy = line_pair$low,
+    high_ploidy = line_pair$high,
+    ploidy_effect_mask = fit_obj$ploidy_effect_mask
+  )
+
+  pieces <- vector("list", nrow(init_df))
+  for (i in seq_len(nrow(init_df))) {
+    init_row <- init_df[i, , drop = FALSE]
+    state0 <- make_initial_mix_state(
+      parms_mix = comp$parms_mix,
+      g0 = init_row$glucose[[1]],
+      seed_total_n = init_row$total_live_start[[1]],
+      initial_high_fraction = init_row$high_fraction_start[[1]]
+    )
+
+    sim <- simulate_mixture_segment(
+      parms_mix = comp$parms_mix,
+      state0 = state0,
+      hours = total_hours,
+      time_step_hours = time_step_hours,
+      detailed = TRUE
+    )
+
+    sim$glucose <- init_row$glucose[[1]]
+    sim$time_hours <- sim$time
+    sim$model_id <- model_id
+    sim$fit_context <- "single_line_global"
+    sim$direction <- NA_character_
+    sim$fit_type <- NA_character_
+    sim$run_label <- fit_obj$run_label %||% NA_character_
+    sim$run_dir <- fit_obj$run_dir %||% NA_character_
+    sim$best_lp <- fit_obj$best_lp %||% NA_real_
+    sim$high_fraction <- ifelse(sim$total_live > 0, sim$N_high / sim$total_live, NA_real_)
+    sim$log_ratio <- log((sim$N_high + 1e-8) / (sim$N_low + 1e-8))
+    pieces[[i]] <- sim
+  }
+
+  dplyr::bind_rows(pieces)
+}
+
+score_competition_validation <- function(sim_df, competition_mean_df) {
+  if (!nrow(sim_df) || !nrow(competition_mean_df)) {
+    return(list(
+      compare_df = data.frame(),
+      endpoint_df = data.frame(),
+      summary_df = data.frame()
+    ))
+  }
+
+  compare_df <- sim_df %>%
+    dplyr::left_join(
+      competition_mean_df %>%
+        dplyr::rename(
+          obs_total_live = total_live,
+          obs_high_fraction = high_fraction,
+          obs_log_ratio = log_ratio,
+          obs_dead_fraction = dead_fraction
+        ),
+      by = c("glucose", "time_hours")
+    ) %>%
+    dplyr::mutate(
+      dead_fraction = 0,
+      abs_err_log_ratio = abs(log_ratio - obs_log_ratio),
+      abs_err_high_fraction = abs(high_fraction - obs_high_fraction),
+      abs_err_log_total_live = abs(log1p(total_live) - log1p(obs_total_live)),
+      abs_err_dead_fraction = abs(dead_fraction - obs_dead_fraction)
+    )
+
+  endpoint_df <- compare_df %>%
+    dplyr::group_by(model_id, glucose) %>%
+    dplyr::summarise(
+      sim_start_log_ratio = log_ratio[which.min(time_hours)],
+      sim_end_log_ratio = log_ratio[which.max(time_hours)],
+      obs_start_log_ratio = obs_log_ratio[which.min(time_hours)],
+      obs_end_log_ratio = obs_log_ratio[which.max(time_hours)],
+      sim_end_high_fraction = high_fraction[which.max(time_hours)],
+      obs_end_high_fraction = obs_high_fraction[which.max(time_hours)],
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      sim_delta_log_ratio = sim_end_log_ratio - sim_start_log_ratio,
+      obs_delta_log_ratio = obs_end_log_ratio - obs_start_log_ratio,
+      end_sign_match = sign(sim_delta_log_ratio) == sign(obs_delta_log_ratio)
+    )
+
+  summary_df <- compare_df %>%
+    dplyr::group_by(model_id, fit_context, run_label, run_dir, best_lp) %>%
+    dplyr::summarise(
+      mae_log_ratio = mean(abs_err_log_ratio, na.rm = TRUE),
+      mae_high_fraction = mean(abs_err_high_fraction, na.rm = TRUE),
+      mae_log_total_live = mean(abs_err_log_total_live, na.rm = TRUE),
+      mae_dead_fraction = mean(abs_err_dead_fraction, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::left_join(
+      endpoint_df %>%
+        dplyr::group_by(model_id) %>%
+        dplyr::summarise(
+          glucose_sign_match = mean(end_sign_match, na.rm = TRUE),
+          mean_abs_end_log_ratio_error = mean(abs(sim_end_log_ratio - obs_end_log_ratio), na.rm = TRUE),
+          mean_abs_end_high_fraction_error = mean(abs(sim_end_high_fraction - obs_end_high_fraction), na.rm = TRUE),
+          .groups = "drop"
+        ),
+      by = "model_id"
+    ) %>%
+    dplyr::mutate(
+      context_label = "single-line global",
+      validation_score = mae_log_ratio + mae_high_fraction + 0.5 * mae_log_total_live + 0.5 * mae_dead_fraction
+    ) %>%
+    dplyr::arrange(dplyr::desc(glucose_sign_match), validation_score, mae_log_ratio)
+
+  list(
+    compare_df = compare_df,
+    endpoint_df = endpoint_df,
+    summary_df = summary_df
+  )
+}
+
+select_competition_overlay_models <- function(summary_df, primary_model_id = "1R_1P_0W_C0_M1") {
+  if (!nrow(summary_df)) {
+    return(data.frame())
+  }
+
+  out <- summary_df[0, , drop = FALSE]
+
+  add_row <- function(df, label) {
+    if (!nrow(df)) {
+      return(invisible(NULL))
+    }
+    row <- df[1, , drop = FALSE]
+    if (row$model_id[[1]] %in% out$model_id) {
+      return(invisible(NULL))
+    }
+    row$overlay_role <- label
+    out <<- dplyr::bind_rows(out, row)
+  }
+
+  add_row(summary_df[1, , drop = FALSE], "best")
+  add_row(summary_df[summary_df$model_id == primary_model_id, , drop = FALSE], "primary")
+  add_row(summary_df[nrow(summary_df), , drop = FALSE], "worst")
+
+  out %>%
+    dplyr::mutate(
+      validation_label = ifelse(overlay_role == "primary", paste0(model_id, " (primary)"),
+                         ifelse(overlay_role == "best", paste0(model_id, " (best)"),
+                         ifelse(overlay_role == "worst", paste0(model_id, " (worst)"), model_id)))
+    )
+}
+
+write_competition_validation_outputs <- function(result, export_root) {
+  if (is.null(export_root) || !nzchar(export_root)) {
+    return(invisible(NULL))
+  }
+
+  dir.create(export_root, recursive = TRUE, showWarnings = FALSE)
+  saveRDS(result$summary_df, file.path(export_root, "model_scores.Rds"))
+  saveRDS(result$compare_df, file.path(export_root, "validation_compare.Rds"))
+  saveRDS(result$sim_df, file.path(export_root, "simulated_trajectories.Rds"))
+  saveRDS(result$overlay_df, file.path(export_root, "overlay_trajectories.Rds"))
+  utils::write.csv(result$summary_df, file.path(export_root, "model_scores.csv"), row.names = FALSE)
+  invisible(export_root)
+}
+
+evaluate_single_line_competition_validation <- function(
+  config,
+  competition_path,
+  fit_dataset_label = "gstarvation_v1_single_line",
+  fit_stan_data_path,
+  run_label = NULL,
+  model_ids = NULL,
+  competition_frame_hours = 8,
+  time_step_hours = 1,
+  export_root = NULL,
+  primary_model_id = "1R_1P_0W_C0_M1"
+) {
+  comp_data <- prepare_competition_validation_data(
+    competition_path = competition_path,
+    frame_hours = competition_frame_hours
+  )
+
+  if (!isTRUE(comp_data$competition_available)) {
+    return(c(comp_data, list(
+      fit_stan_data = data.frame(),
+      sim_df = data.frame(),
+      compare_df = data.frame(),
+      endpoint_df = data.frame(),
+      summary_df = data.frame(),
+      overlay_models = data.frame(),
+      overlay_df = data.frame()
+    )))
+  }
+
+  fit_stan_data <- readRDS(resolve_stan_data_path(fit_stan_data_path))
+  model_ids <- model_ids %||% discover_completed_global_model_ids(
+    config = config,
+    dataset_label = fit_dataset_label,
+    run_label = run_label
+  )
+
+  if (!length(model_ids)) {
+    return(c(comp_data, list(
+      fit_stan_data = fit_stan_data,
+      sim_df = data.frame(),
+      compare_df = data.frame(),
+      endpoint_df = data.frame(),
+      summary_df = data.frame(),
+      overlay_models = data.frame(),
+      overlay_df = data.frame()
+    )))
+  }
+
+  sim_list <- lapply(model_ids, function(model_id) {
+    fit_obj <- tryCatch(
+      load_best_single_line_gpath_fit(
+        config = config,
+        model_id = model_id,
+        fit_dataset_label = fit_dataset_label,
+        run_label = run_label
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(fit_obj)) {
+      return(NULL)
+    }
+
+    simulate_competition_validation(
+      fit_obj = fit_obj,
+      fit_stan_data = fit_stan_data,
+      model_id = model_id,
+      init_df = comp_data$competition_init_df,
+      total_hours = comp_data$competition_total_hours,
+      time_step_hours = time_step_hours
+    ) %>%
+      dplyr::filter(time_hours %in% comp_data$competition_times)
+  })
+
+  sim_df <- dplyr::bind_rows(sim_list)
+  scored <- score_competition_validation(sim_df = sim_df, competition_mean_df = comp_data$competition_mean_df)
+  overlay_models <- scored$summary_df %>%
+    dplyr::mutate(
+      overlay_role = dplyr::case_when(
+        model_id == primary_model_id ~ "primary",
+        TRUE ~ NA_character_
+      ),
+      validation_label = model_id
+    )
+
+  overlay_df <- sim_df %>%
+    dplyr::left_join(
+      overlay_models %>% dplyr::select(model_id, overlay_role, validation_label),
+      by = "model_id"
+    )
+
+  out <- c(comp_data, list(
+    fit_stan_data = fit_stan_data,
+    sim_df = sim_df,
+    compare_df = scored$compare_df,
+    endpoint_df = scored$endpoint_df,
+    summary_df = scored$summary_df,
+    overlay_models = overlay_models,
+    overlay_df = overlay_df
+  ))
+
+  write_competition_validation_outputs(
+    result = out,
+    export_root = export_root
+  )
+
+  out
 }

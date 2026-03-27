@@ -332,6 +332,9 @@ rate_model_formulas <- function() {
     plus_logN_time_well = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(hours, k = 6) + s(well_factor, bs = "re"),
     plus_logG0 = y ~ s(log_R1, k = 6) + s(log_G0, k = 6),
     plus_drawdown = y ~ s(log_R1, k = 6) + s(gluc_drawdown, k = 6),
+    plus_cum_drawdown_auc = y ~ s(log_R1, k = 6) + s(cum_drawdown_auc, k = 6),
+    plus_cum_N_auc = y ~ s(log_R1, k = 6) + s(cum_N_auc, k = 6),
+    plus_cum_history_both = y ~ s(log_R1, k = 6) + s(cum_drawdown_auc, k = 6) + s(cum_N_auc, k = 6),
     plus_lag_state = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(lag_log_R1, k = 6) + s(lag_log_N, k = 6),
     plus_integrated_state = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(cum_drawdown_auc, k = 6) + s(cum_N_auc, k = 6),
     plus_mech_history = y ~ s(log_R1, k = 6) + s(log_N, k = 6) + s(lag_log_R1, k = 6) + s(cum_drawdown_auc, k = 6)
@@ -343,6 +346,7 @@ fit_rate_model <- function(df, response, model_name) {
     ungroup() %>%
     transmute(
       y = .data[[response]],
+      G0,
       log_R1,
       log_N,
       hours,
@@ -359,6 +363,7 @@ fit_rate_model <- function(df, response, model_name) {
     ) %>%
     filter(
       is.finite(y),
+      is.finite(G0),
       is.finite(log_R1),
       is.finite(log_N),
       is.finite(hours),
@@ -685,9 +690,12 @@ The candidate models were:
 5. `plus_logN_time_well`: add density, time, and a well random effect,
 6. `plus_logG0`: add initial glucose,
 7. `plus_drawdown`: add glucose drawdown `G0 - R1`,
-8. `plus_lag_state`: add lagged `R1` and lagged `N`,
-9. `plus_integrated_state`: add cumulative glucose drawdown and cumulative `N`,
-10. `plus_mech_history`: combine current `R1`, current `N`, lagged `R1`, and cumulative drawdown.
+8. `plus_cum_drawdown_auc`: add cumulative glucose drawdown only,
+9. `plus_cum_N_auc`: add cumulative `N` only,
+10. `plus_cum_history_both`: add cumulative glucose drawdown and cumulative `N` together,
+11. `plus_lag_state`: add lagged `R1` and lagged `N`,
+12. `plus_integrated_state`: combine current `R1`, current `N`, and both cumulative-history terms,
+13. `plus_mech_history`: combine current `R1`, current `N`, lagged `R1`, and cumulative drawdown.
 
 The working interpretation is:
 
@@ -726,6 +734,9 @@ model_screen_summary %>%
   filter(model_name %in% c(
     "baseline",
     "plus_time",
+    "plus_cum_drawdown_auc",
+    "plus_cum_N_auc",
+    "plus_cum_history_both",
     "plus_logN_time",
     "plus_lag_state",
     "plus_integrated_state",
@@ -765,62 +776,160 @@ model_best_per_group %>%
   count(response, model_name, sort = TRUE)
 ```
 
-```{r exemplar-residual-selection}
-exemplar_groups <- baseline_vs_candidates %>%
-  mutate(
-    rmse_reduction_logN_time = 1 - rmse_plus_logN_time / rmse_baseline
-  ) %>%
-  group_by(response) %>%
-  arrange(desc(rmse_reduction_logN_time), cellLine, ploidy_abs) %>%
-  slice(1L) %>%
-  ungroup()
+```{r rmse-raster-by-condition, fig.width=14, fig.height=10}
+rmse_raster_df <- bind_rows(lapply(seq_len(nrow(group_keys)), function(i) {
+  cell_line <- group_keys$cellLine[[i]]
+  ploidy_value <- group_keys$ploidy_abs[[i]]
+  df_group <- rate_df %>%
+    filter(cellLine == cell_line, ploidy_abs == ploidy_value)
 
-exemplar_groups
+  bind_rows(lapply(c("uptake_per_cell", "growth_per_cell"), function(response_name) {
+    bind_rows(lapply(c("baseline", "plus_integrated_state"), function(model_name) {
+      dat <- df_group %>%
+        ungroup() %>%
+        transmute(
+          y = .data[[response_name]],
+          G0,
+          log_R1,
+          log_N,
+          hours,
+          log_G0,
+          gluc_drawdown,
+          lag_log_R1,
+          lag_log_N,
+          cum_drawdown_auc,
+          cum_N_auc
+        ) %>%
+        filter(
+          is.finite(y),
+          is.finite(G0),
+          is.finite(log_R1),
+          is.finite(log_N),
+          is.finite(hours),
+          is.finite(log_G0),
+          is.finite(gluc_drawdown),
+          is.finite(lag_log_R1),
+          is.finite(lag_log_N),
+          is.finite(cum_drawdown_auc),
+          is.finite(cum_N_auc)
+        )
+
+      fit <- mgcv::gam(rate_model_formulas()[[model_name]], data = dat, method = "REML")
+      pred <- fitted(fit)
+
+      tibble(G0 = dat$G0, resid = dat$y - pred) %>%
+        group_by(G0) %>%
+        summarise(mean_rmse = sqrt(mean(resid^2)), .groups = "drop") %>%
+        mutate(
+          cellLine = cell_line,
+          ploidy_abs = ploidy_value,
+          response = response_name,
+          model_name = model_name,
+          .before = 1
+        )
+    }))
+  }))
+}))
+
+y_levels <- rmse_raster_df %>%
+  distinct(cellLine, ploidy_abs) %>%
+  arrange(cellLine, ploidy_abs) %>%
+  transmute(line_ploidy = paste(cellLine, "|", ploidy_abs)) %>%
+  pull(line_ploidy)
+
+plot_rmse_raster_by_response <- function(response_key, title_stub) {
+  rmse_raster_df %>%
+    filter(response == response_key) %>%
+    mutate(
+      line_ploidy = factor(paste(cellLine, "|", ploidy_abs), levels = y_levels),
+      model_name = factor(model_name, levels = c("baseline", "plus_integrated_state")),
+      G0_factor = factor(G0, levels = sort(unique(G0)))
+    ) %>%
+    ggplot(aes(x = G0_factor, y = line_ploidy, fill = mean_rmse)) +
+    geom_tile(color = "white", linewidth = 0.25) +
+    facet_wrap(vars(model_name), ncol = 2, scales = "free_y") +
+    scale_fill_viridis_c(option = "C", end = 0.95) +
+    labs(
+      title = title_stub,
+      x = "G0",
+      y = "cellLine | ploidy",
+      fill = "Mean RMSE"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid = element_blank(),
+      strip.text = element_text(face = "bold"),
+      axis.text.y = element_text(size = 8),
+      plot.title = element_text(face = "bold")
+    )
+}
+
+plot_rmse_raster_by_response("growth_per_cell", "Condition-level mean RMSE raster | growth_per_cell") /
+  plot_rmse_raster_by_response("uptake_per_cell", "Condition-level mean RMSE raster | uptake_per_cell")
 ```
 
-```{r exemplar-residual-plots, fig.width=14, fig.height=9}
+```{r worst-residual-selection}
+worst_groups <- rmse_raster_df %>%
+  group_by(response, cellLine, ploidy_abs) %>%
+  summarise(mean_rmse_across_G0 = mean(mean_rmse, na.rm = TRUE), .groups = "drop") %>%
+  group_by(response) %>%
+  arrange(desc(mean_rmse_across_G0), cellLine, ploidy_abs, .by_group = TRUE) %>%
+  slice_head(n = 3L) %>%
+  ungroup()
+
+worst_groups
+```
+
+```{r worst-residual-plots, fig.width=14, fig.height=18}
 extract_augmented_model_data <- function(cell_line, ploidy_value, response_name, model_name) {
   df_group <- rate_df %>%
     filter(cellLine == cell_line, ploidy_abs == ploidy_value)
 
   fit_rate_model(df_group, response_name, model_name)$augmented %>%
     mutate(
-      model_name = factor(model_name, levels = c("baseline", "plus_logN_time", "plus_logN_time_well")),
-      well_factor = factor(well_idx)
+      model_name = factor(model_name, levels = c("baseline", "plus_integrated_state"))
     )
 }
 
-plot_exemplar_residuals <- function(response_name) {
-  hit <- exemplar_groups %>% filter(response == response_name)
-  cell_line <- hit$cellLine[[1]]
-  ploidy_value <- hit$ploidy_abs[[1]]
-
+plot_group_residuals <- function(cell_line, ploidy_value, response_name) {
   aug_df <- compact(list(
     extract_augmented_model_data(cell_line, ploidy_value, response_name, "baseline"),
-    extract_augmented_model_data(cell_line, ploidy_value, response_name, "plus_logN_time"),
-    extract_augmented_model_data(cell_line, ploidy_value, response_name, "plus_logN_time_well")
+    extract_augmented_model_data(cell_line, ploidy_value, response_name, "plus_integrated_state")
   )) %>%
-    bind_rows()
+    bind_rows() %>%
+    mutate(G0_factor = factor(G0, levels = sort(unique(G0))))
 
   title_stub <- paste(cell_line, "| ploidy =", ploidy_value, "|", response_name)
 
-  p_hours <- ggplot(aug_df, aes(x = hours, y = resid, color = well_factor)) +
+  p_hours <- ggplot(aug_df, aes(x = hours, y = resid, color = G0_factor)) +
     geom_point(size = 1.2) +
-    facet_wrap(vars(model_name), scales = "free_y") +
+    facet_wrap(vars(model_name), scales = "fixed") +
+    scale_color_viridis_d(option = "D", end = 0.9) +
     theme_minimal(base_size = 11) +
-    labs(title = paste(title_stub, "| residual vs time"), x = "Time (hours)", y = "Residual", color = "Well")
+    labs(title = paste(title_stub, "| residual vs time"), x = "Time (hours)", y = "Residual", color = "G0")
 
-  p_logn <- ggplot(aug_df, aes(x = log_N, y = resid, color = well_factor)) +
+  p_logn <- ggplot(aug_df, aes(x = log_N, y = resid, color = G0_factor)) +
     geom_point(size = 1.2) +
-    facet_wrap(vars(model_name), scales = "free_y") +
+    facet_wrap(vars(model_name), scales = "fixed") +
+    scale_color_viridis_d(option = "D", end = 0.9) +
     theme_minimal(base_size = 11) +
-    labs(title = paste(title_stub, "| residual vs log10(N)"), x = "log10(N)", y = "Residual", color = "Well")
+    labs(title = paste(title_stub, "| residual vs log10(N)"), x = "log10(N)", y = "Residual", color = "G0")
 
   p_hours / p_logn
 }
 
-plot_exemplar_residuals("uptake_per_cell")
-plot_exemplar_residuals("growth_per_cell")
+for (response_name in c("growth_per_cell", "uptake_per_cell")) {
+  response_hits <- worst_groups %>%
+    filter(response == response_name)
+
+  for (i in seq_len(nrow(response_hits))) {
+    print(plot_group_residuals(
+      cell_line = response_hits$cellLine[[i]],
+      ploidy_value = response_hits$ploidy_abs[[i]],
+      response_name = response_name
+    ))
+  }
+}
 ```
 
 ## Panel-Level Diagnostics

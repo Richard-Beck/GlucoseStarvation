@@ -29,8 +29,10 @@ echo "=========================================================="
 # Activate your dedicated Conda environment.
 # This is the only environment setup needed for Python.
 # Replace the path below with the correct path to YOUR conda installation.
+set +u
 source /app/eb/software/Anaconda3/2024.02-1/etc/profile.d/conda.sh
 conda activate cpose
+set -u
 
 # --- Run the Python script ---
 echo "Python environment activated. Running the script..."

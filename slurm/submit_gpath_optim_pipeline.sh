@@ -25,76 +25,59 @@ echo "PWD: $(pwd)"
 echo "Submitting optimisation batch from ${SPEC_PATH}"
 echo "Batch metadata directory: ${RUN_DIR}"
 
-Rscript - "$SPEC_COPY" "$BATCH_LABEL" <<'EOF' | while IFS='|' read -r row_index enabled model_name model_version run_id n_starts num_threads stan_data_path dataset_label run_label array_cpus array_mem_gb array_time combine_mem_gb combine_time qos delete_after; do
-args <- commandArgs(trailingOnly = TRUE)
-spec_path <- args[1]
-batch_label <- args[2]
-
-spec <- read.delim(
-  spec_path,
-  sep = "\t",
-  header = TRUE,
-  stringsAsFactors = FALSE,
-  check.names = FALSE,
-  quote = ""
-)
-
-required_cols <- c(
-  "enabled", "model_name", "model_version", "run_id", "n_starts", "num_threads",
-  "stan_data_path", "dataset_label", "run_label", "array_cpus", "array_mem_gb",
-  "array_time", "combine_mem_gb", "combine_time", "qos", "delete_after"
-)
-
-missing_cols <- setdiff(required_cols, names(spec))
-if (length(missing_cols)) {
-  stop(sprintf("Spec file is missing required columns: %s", paste(missing_cols, collapse = ", ")))
+trim() {
+  local x="$1"
+  x="${x#"${x%%[![:space:]]*}"}"
+  x="${x%"${x##*[![:space:]]}"}"
+  printf '%s' "$x"
 }
 
-nz_or <- function(x, default) {
-  x <- trimws(as.character(x))
-  ifelse(is.na(x) | x == "", default, x)
+nz_or() {
+  local value
+  value=$(trim "${1-}")
+  local default="$2"
+  if [[ -z "$value" ]]; then
+    printf '%s' "$default"
+  else
+    printf '%s' "$value"
+  fi
 }
 
-for (i in seq_len(nrow(spec))) {
-  row <- spec[i, , drop = FALSE]
+header_expected=$'enabled\tmodel_name\tmodel_version\trun_id\tn_starts\tnum_threads\tstan_data_path\tdataset_label\trun_label\tarray_cpus\tarray_mem_gb\tarray_time\tcombine_mem_gb\tcombine_time\tqos\tdelete_after'
+header_actual=$(head -n 1 "$SPEC_COPY")
+if [[ "$header_actual" != "$header_expected" ]]; then
+  echo "Spec file header does not match expected columns." >&2
+  echo "Expected: $header_expected" >&2
+  echo "Actual:   $header_actual" >&2
+  exit 1
+fi
 
-  enabled <- nz_or(row$enabled, "1")
-  run_id <- nz_or(row$run_id, "")
-  if (enabled == "0" || run_id == "") {
-    next
-  }
+row_index=0
+tail -n +2 "$SPEC_COPY" | while IFS=$'\t' read -r enabled model_name model_version run_id n_starts num_threads stan_data_path dataset_label run_label array_cpus array_mem_gb array_time combine_mem_gb combine_time qos delete_after; do
+  row_index=$((row_index + 1))
 
-  vals <- c(
-    i,
-    enabled,
-    nz_or(row$model_name, "gpath"),
-    nz_or(row$model_version, "v1"),
-    run_id,
-    nz_or(row$n_starts, "250"),
-    nz_or(row$num_threads, "8"),
-    nz_or(row$stan_data_path, "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds"),
-    nz_or(row$dataset_label, "gstarvation_v1"),
-    nz_or(row$run_label, batch_label),
-    nz_or(row$array_cpus, nz_or(row$num_threads, "8")),
-    nz_or(row$array_mem_gb, "8"),
-    nz_or(row$array_time, "00:15:00"),
-    nz_or(row$combine_mem_gb, "4"),
-    nz_or(row$combine_time, "00:15:00"),
-    nz_or(row$qos, "normal"),
-    nz_or(row$delete_after, "1")
-  )
+  enabled=$(nz_or "$enabled" "1")
+  run_id=$(nz_or "$run_id" "")
+  if [[ "$enabled" == "0" || -z "$run_id" ]]; then
+    continue
+  fi
 
-  cat(paste(vals, collapse = "|"), "\n", sep = "")
-}
-EOF
-  output_dir=$(
-    MODEL_NAME="$model_name" \
-    MODEL_VERSION="$model_version" \
-    DATASET_LABEL="$dataset_label" \
-    RUN_ID="$run_id" \
-    RUN_LABEL="$run_label" \
-    Rscript -e 'source("R/project_paths.R"); cat(get_run_output_dir(model_name = Sys.getenv("MODEL_NAME"), model_version = Sys.getenv("MODEL_VERSION"), pipeline_name = "optim", dataset_label = Sys.getenv("DATASET_LABEL"), run_id = Sys.getenv("RUN_ID"), run_label = Sys.getenv("RUN_LABEL")))' \
-  )
+  model_name=$(nz_or "$model_name" "gpath")
+  model_version=$(nz_or "$model_version" "v1")
+  n_starts=$(nz_or "$n_starts" "250")
+  num_threads=$(nz_or "$num_threads" "8")
+  stan_data_path=$(nz_or "$stan_data_path" "data/inputs/stan/gstarvation_v1/stan_ready_data.Rds")
+  dataset_label=$(nz_or "$dataset_label" "gstarvation_v1")
+  run_label=$(nz_or "$run_label" "$BATCH_LABEL")
+  array_cpus=$(nz_or "$array_cpus" "$num_threads")
+  array_mem_gb=$(nz_or "$array_mem_gb" "8")
+  array_time=$(nz_or "$array_time" "00:15:00")
+  combine_mem_gb=$(nz_or "$combine_mem_gb" "4")
+  combine_time=$(nz_or "$combine_time" "00:15:00")
+  qos=$(nz_or "$qos" "normal")
+  delete_after=$(nz_or "$delete_after" "1")
+
+  output_dir="data/runs/${model_name}/${model_version}/optim/${dataset_label}/${run_id}/${run_label}"
 
   mkdir -p "$output_dir"
 

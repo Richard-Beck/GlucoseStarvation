@@ -22,7 +22,9 @@
      data/counts/uncorrected.Rds at R/prepare_data.R:134, merges glucose calibration/data CSVs, aligns alive-cell size
      quantiles from data/counts/batch_results_TEMP_MEASURE_SIZE.csv to the count-observation rows, constructs the
      stan_data list at R/prepare_data.R:426, and saves both data/stan_ready_data.Rds and
-     data/stan_ready_data_with_area.Rds.
+     data/stan_ready_data_with_area.Rds. Fitted glucose initial conditions are keyed at the
+     line x experiment(batch) x G0 level via `g1_id`; fitted cell-count initial conditions remain keyed at
+     line x ploidy_metric via `group_id`.
   4. Model configuration, compilation, optimization, sampling
      The active model family is gpath and has now been versioned outside ecology. The current code version is
      models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. Core helpers are parse_run_id(),
@@ -32,6 +34,9 @@
      pipelines/gpath/optim/combine.R. It loads stan_ready_data via R/gpath_run_utils.R, compiles the versioned Stan
      file, runs per-start optimisation, and writes outputs plus a run_manifest.json under
      data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/.
+     Directional transfer/null fits can now reuse that same optimiser by first materializing derived Stan-data inputs
+     with scripts/make_gpath_optim_dataset_manifest.R, then expanding those datasets across run IDs with
+     scripts/make_gpath_optim_spec_from_datasets.R before submitting the usual optimisation batch.
      The canonical assessment set of `gpath` model IDs now lives at models/gpath/v1/assessment_run_ids.txt; the
      spec generator scripts/make_gpath_optim_spec.R can read that file directly when constructing batch rerun specs.
 
@@ -99,11 +104,13 @@
      For the branch-local latent-state fallback, latent_state_hpc_branch/code/plot_best_fit_all_wells.R loads the
      best portable family fit and exports all-well observed-vs-fitted overlays for live counts and glucose
      luminescence under latent_state_hpc_branch/figures/.
-     Transfer-CV plotting now lives in R/transfer_cv_plot_utils.R and scripts/plot_gpath_transfer_cv.R, which load the
-     best optimization start per null/transfer/oracle condition, simulate the held-out line, and overlay fits with
-     color by fit type and linetype by transfer direction. Batch export of annotated transfer overlays now lives in
-     scripts/export_gpath_transfer_overlays.R, which writes per-model/per-line PNGs plus a manifest under
-     data/gpath_transfer_cv_overlays/. A targeted masked-screen overlay exporter now also lives in
+     Transfer-CV plotting now splits into transfer-specific prep in R/transfer_cv_plot_utils.R and generic plot
+     assembly in R/plot_utils.R. The transfer helpers load the best optimization start per null/transfer/oracle
+     condition, simulate the held-out line, standardize plot-ready `sim_df` / `obs_df` tables with optional
+     `group_1` / `group_2` columns, and hand those to scripts/plot_gpath_transfer_cv.R or
+     scripts/export_gpath_transfer_overlays.R for rendering/export. Batch export of annotated transfer overlays writes
+     per-model/per-line PNGs plus a manifest under data/gpath_transfer_cv_overlays/. A targeted masked-screen overlay
+     exporter now also lives in
      scripts/export_single_param_hit_overlays.R, which writes selected per-mask/per-model/per-line overlays plus a
      manifest under data/gpath_transfer_cv_single_param/hit_overlays/.
 

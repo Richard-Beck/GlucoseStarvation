@@ -500,7 +500,8 @@ stan_data <- list(
   calib_sigma_fixed = sigma_fix
 )
 
-key <- interaction(stan_data$line_id, stan_data$G0_per_well, drop=TRUE)
+# Share fitted initial glucose at the line x experiment(batch) x G0 level.
+key <- interaction(stan_data$line_id, stan_data$exp_id, stan_data$G0_per_well, drop=TRUE)
 stan_data$g1_id <- as.integer(key)
 stan_data$N_G1 <- max(stan_data$g1_id)
 stan_data$g1_ref_well <- match(seq_len(stan_data$N_G1), stan_data$g1_id)

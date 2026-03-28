@@ -263,6 +263,162 @@ if (!nrow(ranking_df)) {
 }
 ```
 
+```{r batch1-line05-fit-overlay, fig.width=12, fig.height=6, out.width='100%'}
+batch1_run_dir <- file.path(
+  "data", "runs", "gpath", "v1", "optim",
+  "gstarvation_v1_transfer_line01_low_to_high", "2R_2P_0W_C0_M1", "batch1"
+)
+
+if (!file.exists(file.path(batch1_run_dir, "optim_lp_all.Rds")) ||
+    !file.exists(file.path(batch1_run_dir, "optim_draws_all.Rds"))) {
+  announce_missing("Skipping batch1 line-5 overlay because run outputs are missing at %s", batch1_run_dir)
+} else {
+  source("R/project_paths.R")
+  source(get_model_r_path("gpath", "v1"))
+  source("R/gpath_run_utils.R")
+  source("R/model_analysis_utils.R")
+  source("R/plot_utils.R")
+  source("R/sim_utils.R")
+
+  stan_data_overlay <- add_group_structure(readRDS(project_paths$stan_data))
+  sim_times <- seq(0, max(stan_data_overlay$t_grid), by = 0.5)
+  target_line_id <- 1L
+  line_name_hit <- names(stan_data_overlay$line_map)[as.integer(unname(stan_data_overlay$line_map)) == target_line_id]
+  target_line_name <- if (length(line_name_hit)) line_name_hit[[1]] else sprintf("line %d", target_line_id)
+  draw_vec <- extract_best_draw_vector(batch1_run_dir)
+
+  sim_df <- simulate_line_from_draw(
+    model_id = "2R_2P_0W_C0_M1",
+    model_r_path = get_model_r_path("gpath", "v1"),
+    draw_vec = draw_vec,
+    stan_data = stan_data_overlay,
+    line_id = target_line_id,
+    times = sim_times,
+    line_name = target_line_name,
+    extra_cols = list(group_1 = "batch1")
+  )
+
+  obs_df <- build_obs_df_from_stan_data(
+    stan_data = stan_data_overlay,
+    line_id = target_line_id,
+    line_name = target_line_name
+  )
+
+  plot_fit_overlays(
+    sim_df = sim_df,
+    obs_df = obs_df,
+    color_by = "group_1",
+    color_values = c(batch1 = "#1b9e77"),
+    color_label = "Fit",
+    title = sprintf("%s: batch1 global fit (1R_1P_1W_C0_M1)", target_line_name)
+  )
+}
+```
+
+```{r selected-global-fit-overlay, fig.width=12, fig.height=6, out.width='100%'}
+if (!nrow(ranking_df) || is.na(selected_model_id)) {
+  announce_missing("Skipping selected global-fit overlay because no selected model is available.")
+} else {
+  regenerate_selected_global_fit_overlays <- F
+
+  source("R/project_paths.R")
+  source(get_model_r_path("gpath", "v1"))
+  source("R/gpath_run_utils.R")
+  source("R/model_analysis_utils.R")
+  source("R/plot_utils.R")
+  source("R/sim_utils.R")
+
+  fit_rows <- ranking_df %>%
+    distinct(model_id, .keep_all = TRUE) %>%
+    filter(model_id %in% pareto_front_model_ids) %>%
+    arrange(match(model_id, pareto_front_model_ids))
+
+  if (!nrow(fit_rows)) {
+    announce_missing("Could not resolve any Pareto-front optimisation runs for the current ranking table.")
+  } else {
+    stan_data_overlay <- add_group_structure(readRDS(project_paths$stan_data))
+    sim_times <- seq(0, max(stan_data_overlay$t_grid), by = 0.5)
+    output_dir <- file.path("dev-figs", "model_analysis", "pareto_global_fit_overlays")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+    alias_levels <- fit_rows$alias
+    palette_vals <- setNames(
+      grDevices::hcl.colors(length(alias_levels), palette = "Dark 3"),
+      alias_levels
+    )
+
+    all_line_ids <- sort(unique(as.integer(stan_data_overlay$line_id)))
+
+    overlay_manifest_df <- bind_rows(lapply(all_line_ids, function(target_line_id) {
+      line_name_hit <- names(stan_data_overlay$line_map)[as.integer(unname(stan_data_overlay$line_map)) == target_line_id]
+      target_line_name <- if (length(line_name_hit)) line_name_hit[[1]] else sprintf("line %d", target_line_id)
+      out_path <- file.path(output_dir, sprintf("line_%02d_pareto_overlay.png", target_line_id))
+      existed_before <- file.exists(out_path)
+
+      if (isTRUE(regenerate_selected_global_fit_overlays) || !existed_before) {
+        sim_df <- bind_rows(lapply(seq_len(nrow(fit_rows)), function(i) {
+          run_dir <- fit_rows$run_dir[[i]]
+          model_id_i <- fit_rows$model_id[[i]]
+          draw_vec <- extract_best_draw_vector(run_dir)
+
+          simulate_line_from_draw(
+            model_id = model_id_i,
+            model_r_path = get_model_r_path("gpath", "v1"),
+            draw_vec = draw_vec,
+            stan_data = stan_data_overlay,
+            line_id = target_line_id,
+            times = sim_times,
+            line_name = target_line_name,
+            extra_cols = list(
+              group_1 = fit_rows$alias[[i]],
+              run_label = basename(run_dir)
+            )
+          )
+        }))
+
+        obs_df <- build_obs_df_from_stan_data(
+          stan_data = stan_data_overlay,
+          line_id = target_line_id,
+          line_name = target_line_name
+        )
+
+        plt <- plot_fit_overlays(
+          sim_df = sim_df,
+          obs_df = obs_df,
+          color_by = "group_1",
+          color_values = palette_vals,
+          color_label = "Model",
+          title = target_line_name,
+          print_plot = FALSE
+        )
+
+        ggsave(
+          filename = out_path,
+          plot = plt,
+          width = 12,
+          height = 6,
+          units = "in",
+          dpi = 200
+        )
+
+        status <- if (existed_before) "regenerated" else "generated"
+      } else {
+        status <- "cached"
+      }
+
+      tibble(
+        line_id = target_line_id,
+        line_name = target_line_name,
+        output_path = out_path,
+        status = status
+      )
+    }))
+
+    print(as.data.frame(overlay_manifest_df), row.names = FALSE)
+  }
+}
+```
+
 ```{r pareto-nuts-setup, include=FALSE}
 pareto_nuts_focus_summary_df <- tibble()
 pareto_nuts_focus_draws_df <- tibble()
@@ -1903,17 +2059,28 @@ if (is.na(selected_model_id)) {
   if (!file.exists(best_start_path)) {
     announce_missing("No transfer best-start summary found at %s", best_start_path)
   } else {
-    overlay_data <- generate_transfer_overlay_data(
+    plot_data <- build_transfer_overlay_plot_data(
       model_id = selected_model_id,
       line_id = target_line,
       output_root = "data/gpath_transfer_cv",
       stan_data_path = project_paths$stan_data
     )
 
-    plot_transfer_line_trajectories(
-      transfer_data = overlay_data,
-      line_id = target_line,
-      model_id = selected_model_id
+    plot_fit_overlays(
+      sim_df = plot_data$sim_df,
+      obs_df = plot_data$obs_df,
+      color_by = "group_1",
+      linetype_by = "group_2",
+      color_values = c(null = "#6f6f6f", transfer = "#1b9e77", oracle = "#d95f02"),
+      linetype_values = c(low_to_high = "solid", high_to_low = "22"),
+      color_label = "Fit",
+      linetype_label = "Direction",
+      title = sprintf(
+        "Transfer CV Fits | Model: %s | Cell Line: %s",
+        selected_model_id,
+        plot_data$context$line_name
+      ),
+      subtitle = plot_data$score_text
     )
   }
 }

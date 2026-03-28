@@ -138,7 +138,7 @@ subset_stan_data_to_line <- function(stan_data, target_line_id) {
 
   out <- add_group_structure(out)
 
-  g1_key <- interaction(out$line_id, out$G0_per_well, drop = TRUE)
+  g1_key <- interaction(out$line_id, out$exp_id, out$G0_per_well, drop = TRUE)
   out$g1_id <- as.integer(g1_key)
   out$N_G1 <- max(out$g1_id)
   out$g1_ref_well <- match(seq_len(out$N_G1), out$g1_id)

@@ -81,8 +81,8 @@ for (model_id in model_ids) {
   for (line_id in line_ids) {
     cat(sprintf(">>> Rendering overlay | model=%s | line=%d\n", model_id, line_id))
 
-    overlay_data <- tryCatch(
-      generate_transfer_overlay_data(
+    plot_data <- tryCatch(
+      build_transfer_overlay_plot_data(
         model_id = model_id,
         line_id = line_id,
         output_root = TRANSFER_ROOT,
@@ -94,25 +94,26 @@ for (model_id in model_ids) {
       }
     )
 
-    if (is.null(overlay_data)) {
+    if (is.null(plot_data)) {
       next
     }
 
-    score_text <- tryCatch(
-      format_transfer_overlay_scores(
-        model_id = model_id,
-        line_id = line_id,
-        output_root = TRANSFER_ROOT,
-        model_name = MODEL_NAME
+    plt <- plot_fit_overlays(
+      sim_df = plot_data$sim_df,
+      obs_df = plot_data$obs_df,
+      color_by = "group_1",
+      linetype_by = "group_2",
+      color_values = c(null = "#6f6f6f", transfer = "#1b9e77", oracle = "#d95f02"),
+      linetype_values = c(low_to_high = "solid", high_to_low = "22"),
+      color_label = "Fit",
+      linetype_label = "Direction",
+      title = sprintf(
+        "Transfer CV Fits | Model: %s | Cell Line: %s",
+        model_id,
+        plot_data$context$line_name
       ),
-      error = function(e) NULL
-    )
-
-    plt <- plot_transfer_line_trajectories(
-      transfer_data = overlay_data,
-      line_id = line_id,
-      model_id = model_id,
-      score_text = score_text
+      subtitle = plot_data$score_text,
+      print_plot = FALSE
     )
 
     out_path <- file.path(out_dir_model, sprintf("line_%02d_overlay.png", as.integer(line_id)))

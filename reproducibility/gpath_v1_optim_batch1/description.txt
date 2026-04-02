@@ -1,0 +1,33 @@
+Minimal set
+
+  - One archived batch spec that defines the run matrix and execution settings: slurm/runs/gpath_optim_batch/20260327_172814/
+    spec.tsv. This captures run_id, dataset_label, run_label=batch1, n_starts=500, num_threads=8, and the stan_data_path for each
+    job.
+  - The optimizer entrypoints: pipelines/gpath/optim/run_start.R and pipelines/gpath/optim/combine.R.
+  - The sourced helpers those scripts depend on: R/gpath_run_utils.R, R/project_paths.R, and R/run_manifest_utils.R.
+  - The versioned model definition: models/gpath/v1/model.R and models/gpath/v1/gpath_hier.stan.
+  - The materialized Stan-data inputs actually used by these runs:
+      - Global dataset: data/stan_ready_data.Rds
+      - Derived optimization datasets under data/inputs/stan/gpath_optim_datasets for the 16 dataset labels that currently have
+        batch1 outputs:
+          - gstarvation_v1
+          - gstarvation_v1_transfer_line{01,02,03,04}_{low_to_high,high_to_low}
+          - gstarvation_v1_null_line{01,02,03,04}_{low_to_high,high_to_low}
+  - The runtime wrapper if you want to recreate them the same way on HPC: slurm/submit_gpath_optim_pipeline.sh and slurm/jobs/
+    gpath_optim_array.sh.
+
+  Concrete run space covered
+
+  - 12 model IDs: 1R_1P_0W_C0_M1, 1R_1P_1W_C0_M0, 1R_1P_1W_C0_M1, 2R_1P_0W_C0_M1, 2R_1P_1W_C0_M0, 2R_1P_1W_C0_M1, 2R_2P_0W_C0_M1,
+    2R_2P_0W_C1_M0, 2R_2P_1W_C0_M0, 2R_2P_1W_C0_M1, 2R_2P_1W_C1_M0, 2R_2P_1W_C1_M1.
+  - 17 input datasets total for current outputs: 1 global + 16 derived directional datasets.
+
+  Not needed if you lock the materialized Stan inputs
+
+  - Raw images, count-processing scripts, calibration CSVs, and the upstream R/prepare_data.R chain are not needed to rerun these
+    optimizations once the relevant stan_ready_data.Rds files are frozen.
+
+  Important caveat
+
+  - Exact byte-for-byte recreation is not currently locked down. pipelines/gpath/optim/run_start.R uses init = 2 but does not set or
+    record a Stan seed, so you can recreate the workflow and objective, but not guarantee identical optim_draws_all.Rds.

@@ -1,3 +1,5 @@
+source("R/optim_utils.R")
+
 list_matching_rds <- function(path, pattern) {
   files <- list.files(path, pattern = pattern, full.names = TRUE)
   if (!length(files)) {
@@ -35,40 +37,6 @@ load_optim_outputs <- function(model_id, base_path = "ecology/model_selection/da
   list(
     lp = readRDS(file.path(fit_dir, "optim_lp_all.Rds")),
     draws = readRDS(file.path(fit_dir, "optim_draws_all.Rds"))
-  )
-}
-
-load_optim_outputs_from_dir <- function(path) {
-  list(
-    lp = readRDS(file.path(path, "optim_lp_all.Rds")),
-    draws = readRDS(file.path(path, "optim_draws_all.Rds"))
-  )
-}
-
-summarize_lp_neighborhood <- function(lp, near_cut = 5) {
-  finite_mask <- is.finite(lp)
-  n_total <- length(lp)
-  n_finite <- sum(finite_mask)
-
-  if (!n_finite) {
-    return(list(
-      best_lp = NA_real_,
-      lp_diff = rep(NA_real_, n_total),
-      near_idx = integer(0),
-      finite_mask = finite_mask
-    ))
-  }
-
-  best_lp <- max(lp[finite_mask])
-  lp_diff <- rep(NA_real_, n_total)
-  lp_diff[finite_mask] <- best_lp - lp[finite_mask]
-  near_idx <- which(finite_mask & lp_diff < near_cut)
-
-  list(
-    best_lp = best_lp,
-    lp_diff = lp_diff,
-    near_idx = near_idx,
-    finite_mask = finite_mask
   )
 }
 
@@ -303,4 +271,3 @@ compute_well_subset_elpd <- function(draws, well_idx) {
     ll_draws = ll_draws
   )
 }
-

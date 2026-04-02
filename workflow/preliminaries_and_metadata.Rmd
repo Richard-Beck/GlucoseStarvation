@@ -462,10 +462,11 @@ full_join(old_counts, new_counts, by=c("image_key", "predicted_label_name")) %>%
 ```
 
     
-```{r}
+```{r alive_count_validation}
 library(dplyr)
 library(tidyr)
 library(jsonlite)
+library(ggplot2)
 
 # Load and process manual point labels
 manual_df <- fromJSON("data/eval_old/labelling_output_points/session_point_labels.json") %>%
@@ -509,16 +510,15 @@ df$cellLine <- lut[df$cellLine]
 p_count_validation <- ggplot(df)+
   facet_wrap(~cellLine,scales="free")+
   geom_abline()+
-  geom_point(aes(x=alive_manual,y=alive_pred,color="alive"))+
-  geom_point(aes(x=dead_manual,y=dead_pred,color="dead"))+
-  geom_point(aes(x=total_manual,y=total_pred,color="total"))+
-  scale_x_continuous("manual counts")+
-  scale_y_continuous("predicted counts")
+  geom_point(aes(x=alive_manual,y=alive_pred), color = "#00BFC4")+
+  scale_x_continuous("manual alive counts")+
+  scale_y_continuous("predicted alive counts") +
+  ggtitle("Alive cells: manual vs predicted")
 p_count_validation
 
 cor(df$alive_manual,df$alive_pred)
-cor(df$dead_manual,df$dead_pred)
-cor(df$total_manual,df$total_pred)
+dir.create("figures", showWarnings = FALSE)
+ggsave("figures/alive_count_validation.pdf", p_count_validation, width = 170, height = 110, units = "mm")
 
 
 
@@ -1180,5 +1180,4 @@ for(path2data in ff){
 
 
 ```
-
 

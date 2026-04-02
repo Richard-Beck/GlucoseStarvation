@@ -58,8 +58,13 @@ manifest <- build_run_manifest(
 )
 write_run_manifest(OUTPUT_DIR, manifest)
 
-stan_data <- prepare_gpath_stan_data(
-  stan_data_path = stan_data_path,
+stan_data <- readRDS(stan_data_path)
+stan_data <- add_group_structure(stan_data)
+if (is.null(stan_data$is_train)) {
+  stan_data$is_train <- rep(1L, stan_data$N_wells)
+}
+stan_data <- apply_gpath_run_config(
+  stan_data = stan_data,
   R_val = R_VAL,
   P_val = P_VAL,
   W_val = W_VAL,
@@ -68,7 +73,7 @@ stan_data <- prepare_gpath_stan_data(
   base_priors = base_priors
 )
 
-mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE), force_recompile = TRUE)
+mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
 res <- tryCatch({
   opt <- mod$optimize(

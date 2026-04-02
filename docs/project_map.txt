@@ -25,6 +25,8 @@
      data/stan_ready_data_with_area.Rds. Fitted glucose initial conditions are keyed at the
      line x experiment(batch) x G0 level via `g1_id`; fitted cell-count initial conditions remain keyed at
      line x ploidy_metric via `group_id`.
+     Shared helpers for reading/summarizing optimization outputs now live in R/optim_utils.R, including spec-driven
+     reduction helpers for model-analysis inputs.
   4. Model configuration, compilation, optimization, sampling
      The active model family is gpath and has now been versioned outside ecology. The current code version is
      models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. Core helpers are parse_run_id(),
@@ -39,6 +41,8 @@
      scripts/make_gpath_optim_spec_from_datasets.R before submitting the usual optimisation batch.
      The canonical assessment set of `gpath` model IDs now lives at models/gpath/v1/assessment_run_ids.txt; the
      spec generator scripts/make_gpath_optim_spec.R can read that file directly when constructing batch rerun specs.
+     For locked reruns, we are now also using small reproducibility directories that pair a canonical `paths.txt`
+     file list with saved sha256 hashes via R/validation_utils.R, while git commit IDs continue to identify versioned code.
 
      Older legacy optimisation/NUTS code still exists under ecology/model_selection/models/gpath/, but that is now a
      reference path rather than the intended home for active development.
@@ -86,6 +90,11 @@
      reconstructed common parameters and their raw_theta_ploidy coefficients, reconstructed posterior intervals for
      `ae[1]`, `ah[1]`, `Y_R[1]`, and `m` by line/ploidy, line-faceted instantaneous net-growth curves across the
      observed glucose conditions, and summarized high-minus-low growth surfaces over glucose x resource-2 sweeps.
+     VERY IMPORTANT: Sandy flagged that interpretation should lean harder on differences between cell lines. The
+     `nuts-line-parameter-posteriors-demo` block in workflow/model_analysis.Rmd is therefore an important readout,
+     because it exposes the line-specific posterior parameter structure directly. A plausible next operational step is
+     to ask in holdout tests whether ploidy-effect transfer works better between cell lines whose line-specific
+     parameter posteriors are more similar.
      Those NUTS-side summaries are generated ahead of time by
      scripts/summarize_gpath_nuts_consistency.R using R/nuts_consistency_utils.R plus R/posterior_io_utils.R, so
      workflow/model_analysis.Rmd stays a reporting notebook rather than recomputing expensive posterior summaries during

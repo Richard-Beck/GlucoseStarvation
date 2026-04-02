@@ -2,6 +2,7 @@ source("R/project_paths.R")
 source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
 source("R/elpd_transfer_utils.R")
+source("R/optim_utils.R")
 
 flatten_numeric_object <- function(x, prefix = NULL) {
   out <- numeric()
@@ -10,7 +11,7 @@ flatten_numeric_object <- function(x, prefix = NULL) {
     return(out)
   }
 
-  if (is.numeric(x) && is.null(dim(x))) {
+  if (is.numeric(x) && is.null(dim(x)) && length(x) == 1L) {
     nm <- prefix %||% ""
     out[nm] <- as.numeric(x)
     return(out)
@@ -37,6 +38,54 @@ flatten_numeric_object <- function(x, prefix = NULL) {
     for (nm in names(x)) {
       out <- c(out, flatten_numeric_object(x[[nm]], prefix = nm))
     }
+  }
+
+  out
+}
+
+flatten_gpath_reconstructed_parms <- function(parms) {
+  out <- numeric()
+
+  if (is.null(parms) || !is.list(parms)) {
+    return(out)
+  }
+
+  if (!is.null(parms$R) && length(parms$R) == 1L) out["R"] <- as.numeric(parms$R)
+  if (!is.null(parms$P) && length(parms$P) == 1L) out["P"] <- as.numeric(parms$P)
+  if (!is.null(parms$W) && length(parms$W) == 1L) out["W"] <- as.numeric(parms$W)
+
+  if (!is.null(parms$ae)) {
+    out[sprintf("ae[%d]", seq_along(parms$ae))] <- as.numeric(parms$ae)
+  }
+  if (!is.null(parms$ah)) {
+    out[sprintf("ah[%d]", seq_along(parms$ah))] <- as.numeric(parms$ah)
+  }
+  if (!is.null(parms$Y_R)) {
+    out[sprintf("Y_R[%d]", seq_along(parms$Y_R))] <- as.numeric(parms$Y_R)
+  }
+
+  if (!is.null(parms$A_mat) && is.matrix(parms$A_mat)) {
+    for (i in seq_len(nrow(parms$A_mat))) {
+      for (j in seq_len(ncol(parms$A_mat))) {
+        out[sprintf("A_mat[%d,%d]", i, j)] <- as.numeric(parms$A_mat[i, j])
+      }
+    }
+  }
+
+  if (!is.null(parms$K_mat) && is.matrix(parms$K_mat) && nrow(parms$K_mat) > 0L && ncol(parms$K_mat) > 0L) {
+    for (i in seq_len(nrow(parms$K_mat))) {
+      for (j in seq_len(ncol(parms$K_mat))) {
+        out[sprintf("K_mat[%d,%d]", i, j)] <- as.numeric(parms$K_mat[i, j])
+      }
+    }
+  }
+
+  if (!is.null(parms$m) && length(parms$m) == 1L) {
+    out["m"] <- as.numeric(parms$m)
+  }
+
+  if (!is.null(parms$waste_mech)) {
+    out[sprintf("waste_mech[%d]", seq_along(parms$waste_mech))] <- as.numeric(parms$waste_mech)
   }
 
   out
@@ -92,22 +141,6 @@ load_best_transfer_fit <- function(
   )
 }
 
-extract_draw_vector <- function(draws) {
-  if (is.matrix(draws)) {
-    return(draws[1, , drop = TRUE])
-  }
-
-  if (is.data.frame(draws)) {
-    return(as.matrix(draws)[1, , drop = TRUE])
-  }
-
-  if (is.numeric(draws) && !is.null(names(draws))) {
-    return(draws)
-  }
-
-  stop("Unsupported draws format for parameter extraction")
-}
-
 reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploidy_metric, ploidy_effect_mask = NULL) {
   dims <- parse_run_id(model_id)
   R <- dims$R
@@ -133,7 +166,7 @@ reconstruct_line_state_parameters <- function(draw_vec, model_id, line_id, ploid
     ploidy_effect_mask = ploidy_effect_mask
   )
 
-  flatten_numeric_object(parms)
+  flatten_gpath_reconstructed_parms(parms)
 }
 
 build_parameter_transfer_tables <- function(

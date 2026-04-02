@@ -6,11 +6,11 @@ library(parallel)
 args <- commandArgs(trailingOnly = TRUE)
 
 TRANSFER_NUTS_ROOT <- if (length(args) >= 1) args[1] else file.path("data", "gpath_transfer_cv_nuts", "gpath")
-STAN_DATA_PATH <- if (length(args) >= 2) args[2] else ""
+STAN_DATA_PATH <- if (length(args) >= 2) args[2] else "data/stan_ready_data.Rds"
 OUTPUT_ROOT <- if (length(args) >= 3) args[3] else file.path("data", "gpath_transfer_cv_nuts", "report")
 MAX_PARAM_DRAWS <- if (length(args) >= 4) as.integer(args[4]) else 1000L
 MAX_GROWTH_DRAWS <- if (length(args) >= 5) as.integer(args[5]) else 400L
-N_CORES <- if (length(args) >= 6) as.integer(args[6]) else 1L
+N_CORES <- if (length(args) >= 6) as.integer(args[6]) else 4L
 MAX_SURFACE_DRAWS <- if (length(args) >= 7) as.integer(args[7]) else min(MAX_GROWTH_DRAWS, 100L)
 
 source("R/project_paths.R")

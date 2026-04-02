@@ -11,7 +11,7 @@ ecology/model_selection/data
 .nfs*
 slurm/runs
 slurm/logs
-slurm/logs*
+slurm/log*
 models/gpath/v1/gpath_hier
 *.html
 agent-dev

@@ -66,7 +66,24 @@ model_alias_conventions <- list(
 
 parse_run_id_for_alias <- function(run_id) {
   if (exists("parse_run_id", mode = "function")) {
-    return(parse_run_id(run_id))
+    parsed <- tryCatch(parse_run_id(run_id), error = function(e) NULL)
+    required_fields <- c("R", "P", "W", "C", "M")
+    if (
+      !is.null(parsed) &&
+      is.list(parsed) &&
+      all(required_fields %in% names(parsed))
+    ) {
+      parsed_vals <- lapply(parsed[required_fields], function(x) suppressWarnings(as.integer(x[[1]])))
+      if (all(vapply(parsed_vals, function(x) length(x) == 1L && is.finite(x), logical(1)))) {
+        return(list(
+          R = parsed_vals$R[[1]],
+          P = parsed_vals$P[[1]],
+          W = parsed_vals$W[[1]],
+          C = parsed_vals$C[[1]],
+          M = parsed_vals$M[[1]]
+        ))
+      }
+    }
   }
 
   m <- regexec("^(\\d+)R_(\\d+)P_(\\d+)W_C(\\d+)_M(\\d+)$", run_id)

@@ -1,6 +1,7 @@
 source("R/project_paths.R")
 source(get_model_r_path("gpath", "v1"))
 source("R/gpath_run_utils.R")
+source("R/optim_utils.R")
 source("R/parameter_transfer_utils.R")
 
 `%||%` <- function(x, y) {
@@ -156,24 +157,6 @@ get_group_id_for_state <- function(stan_data, line_id, ploidy_metric, tol = 1e-1
   }
 
   group_ids[[1]]
-}
-
-extract_best_draw_from_optim_outputs <- function(draws_all, lp_all) {
-  lp_vec <- as.numeric(lp_all)
-  valid_idx <- which(is.finite(lp_vec))
-  if (!length(valid_idx)) {
-    stop("No finite optimization scores were found")
-  }
-
-  best_idx <- valid_idx[which.max(lp_vec[valid_idx])]
-  draw_obj <- draws_all[[best_idx]]
-  draw_vec <- extract_draw_vector(draw_obj)
-
-  list(
-    draw_vec = draw_vec,
-    best_idx = best_idx,
-    best_lp = lp_vec[[best_idx]]
-  )
 }
 
 resolve_global_run_dir <- function(config, model_id, run_label = NULL, dataset_label = NULL) {

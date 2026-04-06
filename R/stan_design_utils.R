@@ -103,3 +103,21 @@ apply_design <- function(stan_data, config = list()) {
     ploidy = holdout_cfg$ploidy
   )
 }
+
+get_line_state_table <- function(stan_data, line_ids = NULL, low_label = "low_ploidy", high_label = "high_ploidy", tol = 1e-12) {
+  if (is.null(line_ids)) {
+    line_ids <- sort(unique(as.integer(stan_data$line_id)))
+  }
+  line_ids <- sort(unique(as.integer(line_ids)))
+
+  rows <- lapply(line_ids, function(line_id) {
+    states <- get_line_ploidy_values(stan_data = stan_data, line_id = line_id, tol = tol)
+    tibble::tibble(
+      line_id = as.integer(line_id),
+      ploidy_label = c(low_label, high_label),
+      ploidy_metric = c(states$low, states$high)
+    )
+  })
+
+  dplyr::bind_rows(rows)
+}

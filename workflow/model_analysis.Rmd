@@ -112,6 +112,7 @@ available_model_ids <- model_ids[vapply(
   function(model_id) dir.exists(get_job_output_dir(oracle_job_info$job_cfg, model_id)),
   logical(1)
 )]
+oracle_nuts_model_ids <- available_model_ids
 
 batch_summary_df <- dplyr::bind_rows(lapply(available_model_ids, function(model_id) {
   dir_path <- get_job_output_dir(oracle_job_info$job_cfg, model_id)
@@ -160,12 +161,19 @@ print(as.data.frame(batch_summary_df), row.names = FALSE)
 
 ```{r nuts-instantaneous-growth-export}
 source("R/project_paths.R")
-source(get_model_r_path("gpath", "v1"))
+source("R/posterior_io_utils.R")
+source("R/stan_design_utils.R")
 source("R/gpath_run_utils.R")
-source("R/nuts_consistency_utils.R")
+source(get_model_r_path("gpath", "v1"))
+model_api <- get_nuts_model_api()
+
 regenerate <- TRUE
 stan_data <- readRDS(resolve_stan_data_path())
-line_ids <- sort(unique(as.integer(stan_data$line_id)))
+line_state_tbl <- get_line_state_table(
+  stan_data,
+  low_label = "low_ploidy",
+  high_label = "high_ploidy"
+)
 glucose_grid <- exp(seq(log(0.0001), log(25), length.out = 25L))
 resource2_grid <- exp(seq(log(0.0001), log(1), length.out = 25L))
 state_grid <- expand.grid(
@@ -186,48 +194,40 @@ growth_export_summary_df <- dplyr::bind_rows(lapply(model_ids, function(model_id
     growth_summary_df <- readRDS(growth_summary_path)
   } else {
     draws_matrix <- posterior::as_draws_matrix(bound_obj$draws)
-    draw_idx <- sort(sample.int(nrow(draws_matrix), size = min(20L, nrow(draws_matrix))))
+    draw_idx <- select_draw_indices(
+      n_draws = nrow(draws_matrix),
+      max_draws = 20L,
+      method = "random",
+      seed = 20260406L
+    )
 
-    instantaneous_growth_df <- dplyr::bind_rows(lapply(line_ids, function(line_id) {
-      states <- get_line_ploidy_states(stan_data, line_id = line_id)
-
+    instantaneous_growth_df <- dplyr::bind_rows(lapply(split(line_state_tbl, line_state_tbl$line_id), function(state_df) {
+      line_id <- state_df$line_id[[1]]
       dplyr::bind_rows(lapply(draw_idx, function(i_draw) {
         draw_vec <- draws_matrix[i_draw, , drop = TRUE]
         names(draw_vec) <- colnames(draws_matrix)
 
-        parms_low <- reconstruct_draw_parameters(
-          draw_vec = draw_vec,
-          model_id = model_id,
-          line_id = line_id,
-          ploidy_metric = states$low_value
-        )
-        parms_high <- reconstruct_draw_parameters(
-          draw_vec = draw_vec,
-          model_id = model_id,
-          line_id = line_id,
-          ploidy_metric = states$high_value
-        )
+        growth_cols <- lapply(seq_len(nrow(state_df)), function(i_state) {
+          state_row <- state_df[i_state, , drop = FALSE]
+          parms <- model_api$reconstruct_state_from_draw(
+            draw_vec = draw_vec,
+            model_id = model_id,
+            line_id = line_id,
+            ploidy_metric = state_row$ploidy_metric[[1]]
+          )
+          growth_vals <- model_api$eval_instantaneous_net_growth_grid(
+            parms = parms,
+            env_grid = state_grid,
+            glucose_col = "glucose",
+            resource2_col = "resource2",
+            extra_resource_value = 1.0
+          )
 
-        low_growth <- vapply(
-          seq_len(nrow(state_grid)),
-          function(i) compute_instantaneous_net_growth_with_resource2(
-            parms_low,
-            glucose = state_grid$glucose[[i]],
-            resource2_value = state_grid$resource2[[i]],
-            extra_resource_value = 1.0
-          ),
-          numeric(1)
-        )
-        high_growth <- vapply(
-          seq_len(nrow(state_grid)),
-          function(i) compute_instantaneous_net_growth_with_resource2(
-            parms_high,
-            glucose = state_grid$glucose[[i]],
-            resource2_value = state_grid$resource2[[i]],
-            extra_resource_value = 1.0
-          ),
-          numeric(1)
-        )
+          stats::setNames(list(growth_vals), sprintf("%s_growth", state_row$ploidy_label[[1]]))
+        })
+        growth_cols <- do.call(c, growth_cols)
+        low_growth <- growth_cols$low_ploidy_growth
+        high_growth <- growth_cols$high_ploidy_growth
 
         tibble::tibble(
           model_id = model_id,
@@ -246,6 +246,8 @@ growth_export_summary_df <- dplyr::bind_rows(lapply(model_ids, function(model_id
       dplyr::group_by(.data$model_id, .data$line_id, .data$glucose, .data$resource2) %>%
       dplyr::summarise(
         n_draws = dplyr::n(),
+        median_low_ploidy_growth = stats::median(.data$low_ploidy_growth, na.rm = TRUE),
+        median_high_ploidy_growth = stats::median(.data$high_ploidy_growth, na.rm = TRUE),
         median_delta_growth = stats::median(.data$delta_growth, na.rm = TRUE),
         q025_delta_growth = stats::quantile(.data$delta_growth, probs = 0.025, na.rm = TRUE, names = FALSE),
         q975_delta_growth = stats::quantile(.data$delta_growth, probs = 0.975, na.rm = TRUE, names = FALSE),
@@ -287,9 +289,6 @@ project_paths <- list(
   assessment_run_ids = file.path("models", "gpath", "v1", "assessment_run_ids.txt"),
   optim_root = file.path("data", "runs", "gpath", "v1", "optim"),
   report_dataset_label = "gstarvation_v1",
-  transfer_optim_root = "data/gpath_transfer_cv/gpath",
-  transfer_nuts_root = "data/gpath_transfer_cv_nuts/gpath",
-  transfer_nuts_report_root = file.path("data", "gpath_transfer_cv_nuts", "report"),
   report_export_root = file.path("data", "report_exports", "model_analysis"),
   agent_text_path = file.path("workflow", "model_analysis.txt")
 )
@@ -660,7 +659,7 @@ extract_focus_raw_theta_from_bound <- function(bound_obj, model_id, focus_parame
 }
 
 focus_parameters <- c("ae[1]", "ah[1]", "Y_R[1]", "m")
-raw_theta_focus_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
+raw_theta_focus_df <- dplyr::bind_rows(lapply(oracle_nuts_model_ids, function(model_id) {
   bound_obj <- readRDS(file.path(diagnostic_roots, model_id, oracle_subdir, "bound_nuts_draws.Rds"))
   extract_focus_raw_theta_from_bound(bound_obj, model_id, focus_parameters = focus_parameters)
 }))
@@ -668,7 +667,7 @@ raw_theta_focus_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
 plot_df <- raw_theta_focus_df %>%
   dplyr::mutate(
     alias = vapply(.data$model_id, build_model_alias, character(1), format = "text"),
-    alias = factor(alias, levels = rev(unique_preserve(vapply(model_ids, build_model_alias, character(1), format = "text")))),
+    alias = factor(alias, levels = rev(unique_preserve(vapply(oracle_nuts_model_ids, build_model_alias, character(1), format = "text")))),
     parameter = factor(
       apply_focussed_parameter_alias(.data$parameter),
       levels = apply_focussed_parameter_alias(focus_parameters)
@@ -686,7 +685,11 @@ ggplot(plot_df, aes(x = value, y = alias)) +
 VERY IMPORTANT: Sandy said we should think harder about interpreting results in terms of differences between cell lines. The `nuts-line-parameter-posteriors-demo` block below is important for that, because it exposes the line-specific posterior parameter structure directly rather than only the shared ploidy-effect coefficients. A plausible next step is to operationalize this in holdout tests by asking whether ploidy-effect transfer works better between cell lines with more similar line-specific parameter sets.
 
 ```{r nuts-line-parameter-posteriors-demo, fig.height=24, fig.width=20, out.width='100%'}
+source("R/project_paths.R")
+source("R/posterior_io_utils.R")
 source("R/parameter_transfer_utils.R")
+source(get_model_r_path("gpath", "v1"))
+model_api <- get_nuts_model_api()
 
 order_gpath_parameter_names <- function(parameter_names) {
   family_rank <- dplyr::case_when(
@@ -717,12 +720,17 @@ if (!exists("pareto_front") || !nrow(pareto_front)) {
   line_ids <- sort(unique(as.integer(stan_data$line_id)))
   reconstructed_rows <- list()
   parameter_levels <- character(0)
-  model_ids_demo <- head(pareto_front$model_id, 5L)
+  model_ids_demo <- head(pareto_front$model_id[pareto_front$model_id %in% oracle_nuts_model_ids], 5L)
 
   for (demo_model_id in model_ids_demo) {
     bound_obj <- readRDS(file.path(diagnostic_roots, demo_model_id, oracle_subdir, "bound_nuts_draws.Rds"))
     draws_matrix <- posterior::as_draws_matrix(bound_obj$draws)
-    draws_matrix <- thin_draws_matrix(draws_matrix, max_draws = 300L)
+    keep_draw_idx <- select_draw_indices(
+      n_draws = nrow(draws_matrix),
+      max_draws = 300L,
+      method = "even"
+    )
+    draws_matrix <- draws_matrix[keep_draw_idx, , drop = FALSE]
 
     for (line_id in line_ids) {
       states <- tryCatch(
@@ -744,7 +752,7 @@ if (!exists("pareto_front") || !nrow(pareto_front)) {
         names(draw_vec) <- colnames(draws_matrix)
 
         for (state_i in seq_len(nrow(state_tbl))) {
-          parms <- reconstruct_draw_parameters(
+          parms <- model_api$reconstruct_state_from_draw(
             draw_vec = draw_vec,
             model_id = demo_model_id,
             line_id = line_id,
@@ -870,11 +878,11 @@ if (!dir.exists(file.path(diagnostic_roots, debug_model_id, oracle_subdir))) {
 ```
 
 ```{r nuts-instantaneous-growth-heatmap, fig.height=10, fig.width=16, out.width='100%'}
-growth_surface_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
+growth_surface_df <- dplyr::bind_rows(lapply(oracle_nuts_model_ids, function(model_id) {
   readRDS(file.path(diagnostic_roots, model_id, oracle_subdir, "nuts_instantaneous_growth_summary.Rds"))
 }))
 
-growth_draw_surface_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
+growth_draw_surface_df <- dplyr::bind_rows(lapply(oracle_nuts_model_ids, function(model_id) {
   readRDS(file.path(diagnostic_roots, model_id, oracle_subdir, "nuts_instantaneous_growth_draws.Rds")) %>%
     dplyr::group_by(.data$model_id, .data$line_id, .data$glucose, .data$resource2) %>%
     dplyr::summarise(
@@ -1062,80 +1070,6 @@ if (!nrow(predictive_transfer_df)) {
       y = "Model",
       fill = sprintf("Transfer gain\n(saturated beyond +/- %.0f)", fill_cap)
     )
-}
-```
-
-```{r example-holdout-transfer-plot, fig.width=12, fig.height=6, out.width='100%'}
-source("R/transfer_cv_plot_utils.R")
-
-example_model_id <- if (!is.na(selected_model_id)) {
-  selected_model_id
-} else if (nrow(model_selection_df)) {
-  model_selection_df$model_id[[1]]
-} else {
-  NA_character_
-}
-
-if (is.na(example_model_id)) {
-  announce_missing("Skipping example holdout transfer plot because no selected model is available.")
-} else {
-  example_case_df <- predictive_transfer_df %>%
-    filter(
-      model_id == example_model_id,
-      !is.na(holdout_line),
-      !is.na(holdout_ploidy),
-      is.finite(transfer_gain)
-    ) %>%
-    arrange(desc(transfer_gain), holdout_line, holdout_ploidy)
-
-  if (!nrow(example_case_df)) {
-    announce_missing("Skipping example holdout transfer plot because no finite holdout transfer cases were found for %s.", example_model_id)
-  } else {
-    example_case <- example_case_df[1, , drop = FALSE]
-    example_direction <- if (abs(example_case$holdout_ploidy[[1]]) < 1e-12) {
-      "high_to_low"
-    } else {
-      "low_to_high"
-    }
-
-    example_plot_data <- build_transfer_overlay_plot_data(
-      model_id = example_model_id,
-      line_id = example_case$holdout_line[[1]],
-      directions = example_direction,
-      fit_types = c("null", "transfer", "oracle"),
-      output_root = "data/gpath_transfer_cv",
-      stan_data_path = project_paths$stan_data,
-      include_score_text = FALSE
-    )
-
-    holdout_label <- if (abs(example_case$holdout_ploidy[[1]]) < 1e-12) {
-      "held out low-ploidy wells"
-    } else {
-      "held out high-ploidy wells"
-    }
-
-    metric_line <- sprintf(
-      "%s | transfer gain = %.2f | transfer log-lik = %.2f | null log-lik = %.2f",
-      example_direction,
-      example_case$transfer_gain[[1]],
-      example_case$log_lik_holdout_transfer[[1]],
-      example_case$log_lik_holdout_null[[1]]
-    )
-
-    plot_fit_overlays(
-      sim_df = example_plot_data$sim_df,
-      obs_df = example_plot_data$obs_df,
-      color_by = "group_1",
-      color_values = c(null = "#6f6f6f", transfer = "#1b9e77", oracle = "#d95f02"),
-      color_label = "Fit",
-      title = sprintf(
-        "Example holdout transfer fit | %s | %s",
-        label_line_ids(example_case$holdout_line[[1]], line_label_map, as_factor = FALSE),
-        holdout_label
-      ),
-      subtitle = metric_line
-    )
-  }
 }
 ```
 

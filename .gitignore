@@ -16,3 +16,4 @@ models/gpath/v1/gpath_hier
 *.html
 agent-dev
 dev-figs
+.tmp

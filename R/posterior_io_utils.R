@@ -22,6 +22,36 @@ bind_rds_draws <- function(files, along = "chain") {
   do.call(posterior::bind_draws, c(draws_list, along = along))
 }
 
+select_draw_indices <- function(n_draws, max_draws = NULL, seed = NULL, method = c("even", "random")) {
+  method <- match.arg(method)
+  n_draws <- as.integer(n_draws[[1]])
+
+  if (!is.finite(n_draws) || n_draws < 1L) {
+    stop("n_draws must be a positive integer")
+  }
+
+  if (is.null(max_draws)) {
+    return(seq_len(n_draws))
+  }
+
+  max_draws <- as.integer(max_draws[[1]])
+  if (!is.finite(max_draws) || max_draws < 1L) {
+    stop("max_draws must be a positive integer or NULL")
+  }
+  if (n_draws <= max_draws) {
+    return(seq_len(n_draws))
+  }
+
+  if (method == "even") {
+    return(unique(round(seq(1, n_draws, length.out = max_draws))))
+  }
+
+  if (!is.null(seed)) {
+    set.seed(as.integer(seed[[1]]))
+  }
+  sort(sample.int(n_draws, size = max_draws, replace = FALSE))
+}
+
 load_draws_matrix_from_dir <- function(path, pattern = "^nuts_draws_[0-9]+\\.Rds$") {
   files <- list_matching_rds(path, pattern)
   posterior::as_draws_matrix(bind_rds_draws(files, along = "chain"))

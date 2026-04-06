@@ -1,223 +1,75 @@
 • Project aim
 
   The scientific aim is to determine how ploidy changes cancer cell behavior under glucose limitation, and whether
-  those ploidy-associated changes are generalizable enough across cell lines to support strategies that select for or
-  against high-ploidy states, including in potentially unseen lines. Directional transfer workflows in this repo are
-  used as stress tests of cross-line generalizability toward that aim, not as an end goal on their own.
+  those ploidy-associated changes are robust enough across cell lines to support broader mechanistic interpretation and,
+  only if warranted later, selection-oriented hypotheses. The map below distinguishes the canonical pipeline from a few
+  remaining side paths that are scientifically useful but not part of the default mechanistic path.
 
-• Current end-to-end path
+• Current repo state
 
-  1. Raw images and object-level classification
-     Counts path starts by linking raw images with workflow/preliminaries_and_metadata.Rmd:19 via scripts/mapFolders.R,
-     then parsing filename metadata with get_meta() in scripts/define_plate_maps.R:105. Object classification is
-     produced by process_image_key() / process_well_id() / main() in scripts/image_processing/
-     batch_segment_and_classify.py:62, which depend on build_raw_group_map, make_cpose_input, and make_composite.
-  2. Count aggregation and optional count smoothing
-     workflow/adaptive_cell_count.Rmd:60 aggregates batch object results into data/counts/uncorrected.Rds. It optionally
-     runs optimize_counts() in src/optimize_counts.R:2, which calls preprocess_dt() and calculate_total_cost() in src/
-     count_smoothing.cpp, then writes data/counts/corrected.Rds at workflow/adaptive_cell_count.Rmd:156.
-  3. Stan data construction
-     The actual Stan input is built only by R/prepare_data.R. Key functions are as_corrected_counts() at line 101,
-     build_area_summary_matrix() at line 16, get_grid_idx() at line 313, and costf() at line 384. This script reads
-     data/counts/uncorrected.Rds at R/prepare_data.R:134, merges glucose calibration/data CSVs, aligns alive-cell size
-     quantiles from data/counts/batch_results_TEMP_MEASURE_SIZE.csv to the count-observation rows, constructs the
-     stan_data list at R/prepare_data.R:426, and saves both data/stan_ready_data.Rds and
-     data/stan_ready_data_with_area.Rds. Fitted glucose initial conditions are keyed at the
-     line x experiment(batch) x G0 level via `g1_id`; fitted cell-count initial conditions remain keyed at
-     line x ploidy_metric via `group_id`.
-     Shared helpers for reading/summarizing optimization outputs now live in R/optim_utils.R, including spec-driven
-     reduction helpers for model-analysis inputs.
-  4. Model configuration, compilation, optimization, sampling
-     The active model family is gpath and has now been versioned outside ecology. The current code version is
-     models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. Core helpers are parse_run_id(),
-     get_hierarchical_k(), generate_stan_config(), get_param_names(), and reconstruct_parms().
+  A large legacy cleanup removed the older ecology tree, the transfer-CV workflow family, the old `*_old` image-training/
+  eval branches, and the deprecated single-condition / deprecated-report notebooks. Some helper files and saved Slurm run
+  records still contain transfer-oriented path strings; treat those as dangling historical references unless they are
+  wired back into a maintained workflow.
 
-     The current versioned optimisation pipeline is pipelines/gpath/optim/run_start.R plus
-     pipelines/gpath/optim/combine.R. It loads stan_ready_data via R/gpath_run_utils.R, compiles the versioned Stan
-     file, runs per-start optimisation, and writes outputs plus a run_manifest.json under
-     data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/.
-     Directional transfer/null fits can now reuse that same optimiser by first materializing derived Stan-data inputs
-     with scripts/make_gpath_optim_dataset_manifest.R, then expanding those datasets across run IDs with
-     scripts/make_gpath_optim_spec_from_datasets.R before submitting the usual optimisation batch.
-     The canonical assessment set of `gpath` model IDs now lives at models/gpath/v1/assessment_run_ids.txt; the
-     spec generator scripts/make_gpath_optim_spec.R can read that file directly when constructing batch rerun specs.
-     For locked reruns, we are now also using small reproducibility directories that pair a canonical `paths.txt`
-     file list with saved sha256 hashes via R/validation_utils.R, while git commit IDs continue to identify versioned code.
+• Core / canonical pipeline
 
-     Older legacy optimisation/NUTS code still exists under ecology/model_selection/models/gpath/, but that is now a
-     reference path rather than the intended home for active development.
+  1. Raw images to object-level classifications
+     The counts path starts by linking raw images with workflow/preliminaries_and_metadata.Rmd via scripts/mapFolders.R,
+     then parsing filename metadata with get_meta() in scripts/define_plate_maps.R. Object classification is produced by
+     scripts/image_processing/batch_segment_and_classify.py and its helper functions.
+  2. Count aggregation and optional smoothing
+     workflow/adaptive_cell_count.Rmd aggregates batch object results into data/counts/uncorrected.Rds. It can also run
+     optimize_counts() in src/optimize_counts.R, which calls the C++ smoothing code in src/count_smoothing.cpp and writes
+     data/counts/corrected.Rds.
+  3. Canonical Stan-data build
+     The base Stan input is built by R/prepare_data.R. It reads the count tables, merges glucose calibration/data CSVs,
+     aligns the alive-cell area quantile sidecar from data/counts/batch_results_TEMP_MEASURE_SIZE.csv, and writes
+     data/stan_ready_data.Rds plus data/stan_ready_data_with_area.Rds. Treat this script as the canonical builder for the
+     full-data mechanistic input object; derived/subset Stan-data objects may be created elsewhere for special workflows.
+  4. Versioned gpath optimization
+     The active mechanistic model family is models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. The canonical
+     optimization path is pipelines/gpath/optim/run_start.R plus pipelines/gpath/optim/combine.R, which load stan_ready_data
+     via R/gpath_run_utils.R, run multi-start optimization, and write run directories plus run_manifest.json under
+     data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/. The assessment model set lives at
+     models/gpath/v1/assessment_run_ids.txt. Locked reruns use the reproducibility directories plus sha256 helpers in
+     R/validation_utils.R.
+  5. Canonical full-data NUTS
+     The current full-data sampling path is driven by config/jobs/gpath_full_oracle_assessment.json, scripts/prepare_jobs.R,
+     scripts/run_job.R, R/job_config_utils.R, and R/nuts_utils.R. Submission goes through
+     slurm/submit_gpath_full_oracle_job.sh and slurm/jobs/gpath_full_oracle_array.sh. This is the current maintained NUTS
+     path for oracle/full-data posterior checks.
+  6. Canonical reporting
+     workflow/model_analysis.Rmd is the main reporting notebook for the current mechanistic path. It reads saved optimization
+     summaries, reports model-selection diagnostics, checks the current oracle-NUTS outputs, visualizes reconstructed
+     line/ploidy parameter structure, and summarizes held-out-condition predictive/parameter comparisons from the saved
+     optimization summaries. It is a reporting notebook with some cache regeneration, not a full rebuild of every upstream
+     artifact. Notebook-specific helpers live in R/model_analysis_utils.R.
 
-     Pathfinder is ecology/model_selection/models/gpath/pathfinder.R: same data/config path, compile at line 71, run
-     mod$pathfinder() at line 174, save outputs at lines 194-198.
+• Exploratory / hypothesis-generating branches
 
-     Legacy CV NUTS is ecology/model_selection/models/gpath/nuts_cv.R, which rebuilds is_train by holding out the
-     max-ploidy wells for one cell line, then samples one chain per fold/chain combination.
-
-     The newer directional transfer CV path lives outside ecology: R/gpath_run_utils.R now has
-     get_directional_transfer_split() / apply_directional_transfer_holdout(), scripts/run_gpath_transfer_cv.R runs
-     null/transfer/oracle multi-start optimizations for low->high or high->low line-transfer evaluation using the
-     existing gpath_hier.stan, with selectable init modes (`auto`, `posterior`, `random`) and optional
-     `ploidy_effect_mask` restriction so only selected ploidy coefficients are active, and
-     scripts/summarize_gpath_transfer_cv.R picks the best start per condition before aggregating transfer-gain /
-     transfer-regret summaries. In practice this workflow is being used to ask whether inferred ploidy effects are
-     stable enough across lines to motivate ploidy-selection ideas beyond the observed panel. Note: the current
-     `oracle` branch reruns an all-data fit for each split rather than
-     reusing the main global best fit, so it is a workflow/reference path rather than a distinct objective. Parameter-level transfer analysis now lives in R/parameter_transfer_utils.R and
-     scripts/summarize_gpath_parameter_transfer.R, which reconstruct held-out-line mechanistic parameters for the best
-     transfer and oracle fits and compare the inferred missing-state parameter values and ploidy-induced shifts.
-     Visualization helpers for this parameter-transfer output now live in R/parameter_transfer_plot_utils.R and
-     scripts/plot_gpath_parameter_transfer.R.
-     Single-parameter transfer screening specs can now be generated with scripts/make_gpath_single_param_transfer_spec.R,
-     which writes one masked transfer-screen row per model parameter and directs outputs into separate roots under
-     data/gpath_transfer_cv_single_param/. Aggregated reporting for those masked screens now lives in
-     scripts/report_gpath_single_param_screen.R, which scans the per-mask roots and writes screen-level CSV/PNG
-     summaries under data/gpath_transfer_cv_single_param/report/.
-     There is now a parallel NUTS version of the same workflow: scripts/run_gpath_transfer_nuts.R,
-     scripts/summarize_gpath_transfer_nuts.R, and slurm/submit_gpath_transfer_nuts_pipeline.sh write under
-     data/gpath_transfer_cv_nuts/. The same runner now also supports explicit optimization-based initialization, and a
-     non-redundant full-data wrapper lives at scripts/make_gpath_full_nuts_manifest.R plus
-     slurm/submit_gpath_full_nuts_pipeline.sh / slurm/jobs/gpath_full_nuts_array.sh, which reuse `oracle` mode with a
-     single canonical line/direction per model instead of repeating duplicate all-data fits.
-     Full-data migration scaffolding now instead uses config/templates/nuts.json plus
-     config/jobs/gpath_full_oracle_assessment.json and thin wrappers in R/job_config_utils.R
-     (`prepare_jobs()`, `run_job()`). That path materializes per-task JSON configs from a human-authored job
-     definition into a standalone full-oracle root without carrying transfer-specific naming fields, and can now be
-     submitted directly via slurm/jobs/gpath_full_oracle_array.sh plus slurm/submit_gpath_full_oracle_job.sh using a
-     prepared config_manifest.tsv.
-     Cleanup refactor in progress: R/nuts_utils.R is now the intended generic JSON-configured NUTS runner and standard
-     reader/binder for per-run chain outputs, while model-specific Stan-data preparation / extra-output hooks are being
-     moved into the versioned model files (for the active path, models/gpath/v1/model.R). Train/test split and related
-     run-design mutations are also being separated into R/stan_design_utils.R. The current script entrypoints still
-     need to be migrated onto that API.
-  5. Model comparison, diagnostics, plots/tables
-     The main comparison notebook is workflow/model_analysis.Rmd. It is now intended as a reporting notebook rather than
-     a scratchpad: it documents upstream commands, reads saved outputs from the current `gpath` workflow, reports model
-     ranking / optimisation stability, prints a concrete provenance table for the current selected-model artifacts,
-     defines a small `delta_AIC <= 10` support set, re-ranks that support set by a composite of fit / optimisation
-     stability / directional agreement / predictive transfer / parameter transfer, and uses those summaries as evidence
-     about which model formulations yield the most generalizable ploidy effects for downstream selection hypotheses.
-     It presents directional transfer summaries, and now also reads a precomputed oracle-NUTS posterior-consistency
-     sidecar from data/gpath_transfer_cv_nuts/report/: model-level QC summaries, saved posterior draws for both the
-     reconstructed common parameters and their raw_theta_ploidy coefficients, reconstructed posterior intervals for
-     `ae[1]`, `ah[1]`, `Y_R[1]`, and `m` by line/ploidy, line-faceted instantaneous net-growth curves across the
-     observed glucose conditions, and summarized high-minus-low growth surfaces over glucose x resource-2 sweeps.
-     VERY IMPORTANT: Sandy flagged that interpretation should lean harder on differences between cell lines. The
-     `nuts-line-parameter-posteriors-demo` block in workflow/model_analysis.Rmd is therefore an important readout,
-     because it exposes the line-specific posterior parameter structure directly. A plausible next operational step is
-     to ask in holdout tests whether ploidy-effect transfer works better between cell lines whose line-specific
-     parameter posteriors are more similar.
-     Those NUTS-side summaries are generated ahead of time by
-     scripts/summarize_gpath_nuts_consistency.R using R/nuts_consistency_utils.R plus R/posterior_io_utils.R, so
-     workflow/model_analysis.Rmd stays a reporting notebook rather than recomputing expensive posterior summaries during
-     knit. Notebook-specific helper code now lives in R/model_analysis_utils.R, and the report ranking path is scoped to
-     the main `gstarvation_v1` optimisation dataset rather than the single-line side dataset. Model-id display aliases
-     are now generated by configurable family/waste convention lists in R/model_analysis_utils.R (`build_model_alias`);
-     the same helper now emits both plain text aliases and plotmath aliases so family/waste suffixes can render as
-     subscripts in model-selection plots. It also loads
-     parameter-transfer summaries and plots generated by the newer helper scripts under R/ and scripts/. Setup / audit sections now live in an appendix after the main results. It also writes audit-friendly
-     CSV/Rds exports for its main intermediate tables under data/report_exports/model_analysis/ and a lightweight
-     workflow/model_analysis.txt companion that includes the selected-model scorecard, support set, provenance, and
-     metric glossary for local agent inspection.
-
-     There is also a plotting helper script, ecology/model_selection/models/gpath/plot_fits.R, with
-     generate_line_data(), plot_line_trajectories(), and prep_line_diag_exact() for simulated-vs-observed fit plots.
-     For the branch-local latent-state fallback, latent_state_hpc_branch/code/plot_best_fit_all_wells.R loads the
-     best portable family fit and exports all-well observed-vs-fitted overlays for live counts and glucose
-     luminescence under latent_state_hpc_branch/figures/.
-     Transfer-CV plotting now splits into transfer-specific prep in R/transfer_cv_plot_utils.R and generic plot
-     assembly in R/plot_utils.R. The transfer helpers load the best optimization start per null/transfer/oracle
-     condition, simulate the held-out line, standardize plot-ready `sim_df` / `obs_df` tables with optional
-     `group_1` / `group_2` columns, and hand those to scripts/plot_gpath_transfer_cv.R or
-     scripts/export_gpath_transfer_overlays.R for rendering/export. Batch export of annotated transfer overlays writes
-     per-model/per-line PNGs plus a manifest under data/gpath_transfer_cv_overlays/. A targeted masked-screen overlay
-     exporter now also lives in
-     scripts/export_single_param_hit_overlays.R, which writes selected per-mask/per-model/per-line overlays plus a
-     manifest under data/gpath_transfer_cv_single_param/hit_overlays/.
-
-     Cluster submission is beginning to move outside ecology. slurm/README.md defines the target structure:
-     `slurm/jobs/` for stable job scripts, `slurm/submit_*.sh` for one-shot wrappers, and `slurm/runs/...` for generated
-     manifests/job metadata. The directional transfer workflows currently use this new path via
-     slurm/submit_gpath_transfer_pipeline.sh and slurm/submit_gpath_transfer_nuts_pipeline.sh plus their
-     corresponding `slurm/jobs/gpath_transfer*.sh` job scripts. These submit wrappers now clear `slurm/logs/` before a
-     new batch submission to keep log volume manageable. There is now also a batch screening wrapper for optimization
-     transfer, driven by scripts/make_gpath_transfer_screen_spec.R and
-     slurm/submit_gpath_transfer_screen_pipeline.sh, intended for random-init screening across the canonical assessment
-     model set without any NUTS dependence. A ready-to-use assessment screening spec now lives at
-     data/specs/gpath_transfer_screen_assessment.tsv.
-     The versioned optimisation rerun path is now spec-driven: generate a TSV with
-     scripts/make_gpath_optim_spec.R, submit it with slurm/submit_gpath_optim_pipeline.sh, and the job layer uses
-     slurm/jobs/gpath_optim_{array,combine}.sh. Each run writes under data/runs/... and includes a run_manifest.json;
-     scripts/verify_gpath_run_manifest.R compares that manifest against the current Stan/data/script files. Aborted
-     optimisation batches can be cleaned by batch label with scripts/cleanup_gpath_optim_batch.R. The combine job now
-     uses an `afterany` dependency on the optimisation array so partially successful runs still produce combined outputs.
-     For single-line refits, scripts/make_gpath_line_stan_data.R subsets data/stan_ready_data.Rds to one `line_id`,
-     remaps the well/group/calibration indices via subset_stan_data_to_line() in R/gpath_run_utils.R, and writes a
-     reusable input under data/inputs/stan/gstarvation_v1_single_line/line_##/ without changing the shared optimization
-     pipeline.
-
-  Model-free ploidy-summary branch
-
-  This branch uses the same `stan_ready_data` object but does not fit the ODE. R/model_free_ploidy_utils.R reconstructs
-  count/glucose trajectories per well from `stan_ready_data`, converts glucose luminescence to estimated glucose using
-  the stored calibration parameters, and derives per-condition summary features such as peak live counts, alive/dead
-  AUCs, max(total) yield, growth/death slopes, glucose drawdown, and timing metrics.
-
-  scripts/extract_model_free_ploidy_features.R writes those derived tables under data/model_free_ploidy/ including
-  feature_panel.Rds/CSV plus a second-layer signature_panel.Rds/CSV. That signature layer aggregates across initial
-  glucose with feature-specific rules and is now intentionally reduced to a curated 8-feature panel: low/high-glucose
-  medians for max growth and max death, intercept/slope from alive-AUC vs log1p(G0), and intercept/slope from a crude
-  peak-yield metric defined as max(live+dead) up to the final glucose measurement divided by glucose drawdown.
-  Growth/death maxima are now extracted from gently smoothed well trajectories, while the reporting notebook also shows
-  less-processed trajectory views and raw-versus-smoothed condition summaries so the feature construction is easier to
-  audit. Initial glucose is displayed in the notebook as evenly spaced categorical levels rather than on a pseudo-log
-  continuous axis.
-  Paired ploidy-effect summaries are computed on these aggregated signatures. scripts/evaluate_model_free_ploidy_transfer.R
-  then performs a leave-one-line directional transfer benchmark on the curated signature panel, using the median
-  cross-line ploidy effect per signature as the transferred effect and reporting scaled error summaries so
-  heterogeneous feature magnitudes do not dominate. The same script now also writes a simple outlier-robustness sidecar:
-  robust per-line discordance scores in signature-effect space plus leave-one-training-line influence summaries for the
-  remaining holdout lines, so any proposed line exclusion is auditable rather than ad hoc. Here again, the transfer
-  benchmark is mainly a check on whether the observed ploidy signatures are stable enough across lines to support
-  broader selection-oriented hypotheses.
-  workflow/model_free_ploidy_analysis.Rmd is the reporting notebook for this branch and now presents one section per
-  curated feature with rationale plus the corresponding computation plot, and now includes an explicit outlier-robustness
-  section; it also writes workflow/model_free_ploidy_analysis.txt as an agent-readable results companion.
-  workflow/transfer_spline_first_attempt.Rmd is a separate exploratory notebook that rebuilds observed total-cell and
-  estimated-glucose trajectories from `stan_ready_data`, fits conservative positive smooth splines per
-  cellLine/ploidy/G0 panel, derives empirical rate-vs-glucose relationships after dropping any well with censored
-  glucose, and screens reduced residual models to ask which extra state summaries (density, time, lagged or integrated
-  history, well effects) tighten those relationships. The notebook frames those findings mainly as support for hidden
-  state in general, with the active `gpath` resource/waste states as plausible carriers of the slow structure, rather
-  than as a direct critique of the mechanistic workflow.
-  scripts/explore_transfer_spline_integrated_state.R is a targeted follow-up screen that keeps the same spline-derived
-  uncensored rate table but expands single-covariate residual-structure comparisons (including isolated integrated-history
-  candidates) and writes CSV summaries under data/report_exports/transfer_spline_integrated_state/.
-
-  Selection-strategy simulation branch
-
-  This branch uses fitted `gpath` parameters directly rather than feature engineering. R/selection_strategy_utils.R
-  reconstructs low- and high-ploidy parameter sets for one cell line, combines them into a shared-media mixed-culture
-  ODE via `rhs_mix`, seeds the mixture at 50:50 high:low with total live count reset to the fitted mean of the two
-  state-specific `N0` estimates, and simulates fixed 6-day strategies built from the observed 7 glucose conditions with
-  optional day-2/day-4 media refresh. Refresh resets glucose / auxiliary resources / waste and rescales total live
-  count back to that fitted starting density while preserving the current high-ploidy fraction.
-
-  scripts/run_gpath_selection_strategy_batch.R is the top-level named-argument wrapper for batch simulation across
-  available global and transfer fits; it reads defaults from scripts/selection_strategy_config.R and writes per-task
-  `interval_summary.Rds`, `final_summary.Rds`, optional `detail.Rds`, and `task_meta.Rds` under
-  data/selection_strategy/gpath/v1/<dataset>/... . workflow/selection_strategy_analysis.Rmd is the reporting notebook;
-  it aggregates those outputs, applies basic ranking criteria for selecting for or against high ploidy, and reruns a
-  small number of top strategies in detailed mode for trajectory plots. The notebook now also contains a SUM-159
-  competition-validation section that maps `data/counts/competition/SUM-159-fuse.Rds` onto the mixed-culture state
-  variables and treats each frame as 8 hours. The original existing-fit context comparison remains in place, and there
-  is now a supplementary single-line model-check section that scores the best completed line-5 fit for each model from
-  `data/runs/gpath/v1/optim/gstarvation_v1_single_line/...` against empirical composition/live-burden trajectories,
-  writing sidecars under `data/selection_strategy/gpath/v1/gstarvation_v1_single_line_competition_validation/`.
-  Those helpers live in R/selection_strategy_utils.R as prepare/evaluate/score competition-validation utilities.
-  scripts/render_gpath_selection_strategy_report.R renders that notebook without requiring positional
-  arguments. Cluster execution now follows the standard manifest
-  pattern via scripts/make_gpath_selection_strategy_manifest.R, slurm/jobs/gpath_selection_strategy_array.sh, and
-  slurm/submit_gpath_selection_strategy_pipeline.sh.
+  1. Model-free ploidy summaries
+     This branch uses the same stan_ready_data object but does not fit the ODE. R/model_free_ploidy_utils.R reconstructs
+     count/glucose trajectories per well, derives summary features, and scripts/extract_model_free_ploidy_features.R writes
+     feature and signature panels under data/model_free_ploidy/. scripts/evaluate_model_free_ploidy_transfer.R performs a
+     holdout-line transfer benchmark on those signatures as a robustness check on observed ploidy summaries. The reporting
+     notebook is workflow/model_free_ploidy_analysis.Rmd, which also writes workflow/model_free_ploidy_analysis.txt.
+  2. Spline / hidden-state exploration
+     workflow/transfer_spline_first_attempt.Rmd rebuilds observed trajectories from stan_ready_data, fits smooth empirical
+     rate-vs-glucose relationships, and asks which extra state summaries reduce residual structure. scripts/
+     explore_transfer_spline_integrated_state.R is a follow-up screen that writes CSV summaries under
+     data/report_exports/transfer_spline_integrated_state/. This branch is exploratory support for hidden-state reasoning,
+     not part of the canonical mechanistic workflow.
+  3. Area / morphology side path
+     The area-aware sidecar built in R/prepare_data.R writes data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd
+     is the lightweight reporting notebook for that object. This makes morphology available for exploratory analysis, but it
+     is not yet a first-class downstream fitting branch.
+  4. Selection-strategy simulation
+     This branch uses fitted gpath parameters rather than feature engineering. R/selection_strategy_utils.R builds a
+     mixed-culture simulation ODE, scripts/run_gpath_selection_strategy_batch.R writes batch outputs under
+     data/selection_strategy/gpath/v1/<dataset>/..., and workflow/selection_strategy_analysis.Rmd reports those results.
+     Treat this as a downstream hypothesis-generation branch built on mechanistic fits, not part of the canonical fitting
+     pipeline itself.
 
   Competition-validation side branch
 
@@ -305,16 +157,7 @@
     prepare_data.R:72 reads data/counts/uncorrected.Rds. So count smoothing is currently QC/side-path, not model input.
   - uncorrected_features.Rds is exploratory only. It is created in workflow/preliminaries_and_metadata.Rmd:87 and not
     used in Stan-data construction.
-  - ecology/subset_stan_data.R:2 is only used by legacy per-line scripts ecology/model_selection/optim_model.R and
-    ecology/model_selection/nuts_model.R, not by the current gpath hierarchical workflow.
-  - ecology/model_selection/optim_model_hier.R and ecology/model_selection/nuts_model_hier.R are older generic
-    hierarchical runners; the active code is the models/gpath/*.R set.
-  - workflow/modelling.Rmd:20 is a separate legacy analysis path using data/pathfinder_1cond/ and MCMC/*.stan; it is not
-    wired to the current ecology/model_selection/data/gpath outputs.
-  - ecology/model_selection/models/gpath/pathfinder.R computes init_arg from optimization, but the actual call at line
-    174 uses init = 2; that optimization-derived init path is dead.
   - workflow/model_analysis.Rmd:48 has a broken/stale block: it uses undefined variable f when trying to derive
     cellLine/ploidy from rel_path.
-  - There are obvious stale duplicates: create_image_set_old.py, batch_segment_and_classify_TEMP_MEASURE_SIZE.py,
-    run_batch_TEMP_MEASURE_SIZE.sbatch, submission_scripts/optim_gpath_old, and multiple .nfs* files under ecology/
-    model_selection/models/gpath/.
+  - There are obvious stale duplicates: create_image_set_old.py, batch_segment_and_classify_TEMP_MEASURE_SIZE.py, and
+    run_batch_TEMP_MEASURE_SIZE.sbatch.

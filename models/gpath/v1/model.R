@@ -389,6 +389,80 @@ combine_parms <- function(p1, p2) {
   )
 }
 
+gpath_reconstruct_state_from_draw <- function(
+  draw_vec,
+  model_id,
+  line_id,
+  ploidy_metric,
+  ploidy_effect_mask = NULL
+) {
+  dims <- parse_run_id(model_id)
+  L <- 3L * dims$R + (dims$P - 1L) * dims$R + dims$W * dims$R + 1L
+
+  reconstruct_parms(
+    R = dims$R,
+    P = dims$P,
+    W = dims$W,
+    strict_spec = (dims$C == 1L),
+    M = dims$M,
+    base_priors = base_priors,
+    raw_theta_line = draw_vec[sprintf("raw_theta_line[%d,%d]", seq_len(L), as.integer(line_id))],
+    raw_theta_ploidy = draw_vec[sprintf("raw_theta_ploidy[%d]", seq_len(L))],
+    ploidy_metric = ploidy_metric,
+    ploidy_effect_mask = ploidy_effect_mask
+  )
+}
+
+gpath_eval_instantaneous_net_growth <- function(
+  parms,
+  glucose,
+  resource2_value = 1.0,
+  extra_resource_value = 1.0
+) {
+  if (parms$R <= 1L) {
+    R_vec <- glucose
+  } else {
+    R_vec <- c(glucose, resource2_value, rep(extra_resource_value, max(parms$R - 2L, 0L)))
+  }
+  R_vec <- R_vec[seq_len(parms$R)]
+
+  u <- (parms$ae * R_vec) / (parms$ah + R_vec)
+  Phi <- parms$A_mat %*% (parms$Y_R * u)
+  mu_growth <- smooth_min_vec(Phi)
+  as.numeric(mu_growth - parms$m)
+}
+
+gpath_eval_instantaneous_net_growth_grid <- function(
+  parms,
+  env_grid,
+  glucose_col = "glucose",
+  resource2_col = "resource2",
+  extra_resource_value = 1.0
+) {
+  if (!is.data.frame(env_grid)) {
+    stop("env_grid must be a data.frame")
+  }
+  if (!(glucose_col %in% names(env_grid))) {
+    stop(sprintf("env_grid is missing glucose column '%s'", glucose_col))
+  }
+
+  glucose_vals <- as.numeric(env_grid[[glucose_col]])
+  resource2_vals <- if (resource2_col %in% names(env_grid)) as.numeric(env_grid[[resource2_col]]) else rep(1.0, nrow(env_grid))
+
+  vapply(
+    seq_len(nrow(env_grid)),
+    function(i) {
+      gpath_eval_instantaneous_net_growth(
+        parms = parms,
+        glucose = glucose_vals[[i]],
+        resource2_value = resource2_vals[[i]],
+        extra_resource_value = extra_resource_value
+      )
+    },
+    numeric(1)
+  )
+}
+
 rhs_mix <- function(t, y, parms) {
   # Extract biomass for both cell lines
   N1 <- max(y[1], 1e-12)
@@ -647,6 +721,9 @@ get_nuts_model_api <- function() {
   list(
     stan_file = get_model_stan_path("gpath", "v1"),
     prepare_nuts_data = gpath_prepare_nuts_data,
-    collect_nuts_outputs = gpath_collect_nuts_outputs
+    collect_nuts_outputs = gpath_collect_nuts_outputs,
+    reconstruct_state_from_draw = gpath_reconstruct_state_from_draw,
+    eval_instantaneous_net_growth = gpath_eval_instantaneous_net_growth,
+    eval_instantaneous_net_growth_grid = gpath_eval_instantaneous_net_growth_grid
   )
 }

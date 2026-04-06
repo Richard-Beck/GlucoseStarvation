@@ -1,0 +1,31 @@
+{
+  "model_name": null,
+  "model_version": "v1",
+  "stan_data_path": null,
+  "init": {
+    "mode": "random",
+    "source_path": null,
+    "seed": null
+  },
+  "sampling": {
+    "chains": 1,
+    "parallel_chains": 1,
+    "threads_per_chain": 1,
+    "chain_id": 1,
+    "seed": null,
+    "iter_warmup": 500,
+    "iter_sampling": 1000,
+    "adapt_delta": 0.99,
+    "max_treedepth": 12,
+    "save_warmup": true,
+    "metric": "dense_e",
+    "refresh": 10
+  },
+  "output": {
+    "output_root": "data/nuts",
+    "output_dir": null,
+    "run_tag": null
+  },
+  "model_specific_params": {},
+  "metadata": {}
+}

@@ -514,3 +514,139 @@ plot_trial <- function(G0, R = 2L, P = 2L, W = 0L, M = 1L) {
 #M <- 1
 #plot_trial(1,R,P,W,M)
 #plot_trial(25,R,P,W,M)
+
+gpath_nuts_or <- function(x, y) {
+  if (is.null(x) || !length(x) || all(is.na(x))) y else x
+}
+
+gpath_add_group_structure <- function(stan_data) {
+  grp_keys <- paste(stan_data$line_id, stan_data$ploidy_metric, sep = "_")
+  unique_grps <- unique(grp_keys)
+  stan_data$N_groups <- length(unique_grps)
+  stan_data$group_id <- match(grp_keys, unique_grps)
+  stan_data
+}
+
+gpath_build_R_init_base <- function(stan_data, R_val) {
+  R_init_base <- matrix(0.0, nrow = stan_data$N_wells, ncol = R_val)
+  if (R_val > 1) {
+    for (c in 2:R_val) {
+      R_init_base[, c] <- 1.0
+    }
+  }
+  R_init_base
+}
+
+gpath_inject_model_specific_stan_data <- function(
+  stan_data,
+  R_val,
+  P_val,
+  W_val,
+  constraint_flag,
+  waste_mech_flag,
+  ploidy_effect_mask_spec = NULL,
+  drop_character = TRUE
+) {
+  config <- generate_stan_config(
+    R = R_val,
+    P = P_val,
+    W = W_val,
+    strict_spec = (constraint_flag == 1L),
+    M = waste_mech_flag,
+    base_priors = base_priors
+  )
+
+  for (nm in names(config)) {
+    stan_data[[nm]] <- config[[nm]]
+  }
+
+  mask_info <- build_ploidy_effect_mask(
+    R = R_val,
+    P = P_val,
+    W = W_val,
+    C = constraint_flag,
+    M = waste_mech_flag,
+    target_spec = ploidy_effect_mask_spec,
+    priors = base_priors
+  )
+  stan_data$ploidy_effect_mask <- as.numeric(mask_info$mask)
+  attr(stan_data, "ploidy_effect_mask_info") <- mask_info
+
+  stan_data$waste_mech <- if (W_val > 0) {
+    rep(as.numeric(waste_mech_flag), W_val)
+  } else {
+    numeric(0)
+  }
+
+  stan_data$R_init_base <- gpath_build_R_init_base(stan_data, R_val)
+
+  if (drop_character) {
+    stan_data <- stan_data[!sapply(stan_data, is.character)]
+  }
+
+  stan_data
+}
+
+gpath_prepare_nuts_data <- function(stan_data, model_specific_params = list()) {
+  run_id <- gpath_nuts_or(model_specific_params$run_id, NULL)
+  if (is.null(run_id) || !nzchar(trimws(run_id))) {
+    dims <- gpath_nuts_or(model_specific_params$dims, list())
+    R_val <- as.integer(gpath_nuts_or(dims$R, gpath_nuts_or(model_specific_params$R, NA_integer_)))
+    P_val <- as.integer(gpath_nuts_or(dims$P, gpath_nuts_or(model_specific_params$P, NA_integer_)))
+    W_val <- as.integer(gpath_nuts_or(dims$W, gpath_nuts_or(model_specific_params$W, NA_integer_)))
+    C_val <- as.integer(gpath_nuts_or(dims$C, gpath_nuts_or(model_specific_params$C, NA_integer_)))
+    M_val <- as.integer(gpath_nuts_or(dims$M, gpath_nuts_or(model_specific_params$M, NA_integer_)))
+
+    if (any(!is.finite(c(R_val, P_val, W_val, C_val, M_val)))) {
+      stop("gpath NUTS prep requires `model_specific_params.run_id` or complete R/P/W/C/M dims")
+    }
+
+    run_id <- sprintf("%dR_%dP_%dW_C%d_M%d", R_val, P_val, W_val, C_val, M_val)
+  }
+
+  dims <- parse_run_id(run_id)
+
+  stan_data <- gpath_add_group_structure(stan_data)
+  stan_data <- gpath_inject_model_specific_stan_data(
+    stan_data = stan_data,
+    R_val = dims$R,
+    P_val = dims$P,
+    W_val = dims$W,
+    constraint_flag = dims$C,
+    waste_mech_flag = dims$M,
+    ploidy_effect_mask_spec = gpath_nuts_or(model_specific_params$ploidy_effect_mask_spec, NULL),
+    drop_character = TRUE
+  )
+
+  auto_init_sources <- c(
+    gpath_nuts_or(model_specific_params$auto_init_source_paths, list()),
+    gpath_nuts_or(model_specific_params$posterior_dir, NULL),
+    gpath_nuts_or(model_specific_params$optim_init_dir, NULL)
+  )
+  auto_init_sources <- unique(unlist(auto_init_sources, use.names = FALSE))
+  auto_init_sources <- auto_init_sources[!is.na(auto_init_sources) & nzchar(auto_init_sources)]
+
+  list(
+    stan_data = stan_data,
+    metadata = list(
+      run_id = run_id,
+      model_specific_params = model_specific_params
+    ),
+    init_context = list(
+      maxG0 = max(as.numeric(stan_data$G0_per_well), na.rm = TRUE),
+      auto_source_paths = auto_init_sources
+    )
+  )
+}
+
+gpath_collect_nuts_outputs <- function(fit, prep, config = list()) {
+  list()
+}
+
+get_nuts_model_api <- function() {
+  list(
+    stan_file = get_model_stan_path("gpath", "v1"),
+    prepare_nuts_data = gpath_prepare_nuts_data,
+    collect_nuts_outputs = gpath_collect_nuts_outputs
+  )
+}

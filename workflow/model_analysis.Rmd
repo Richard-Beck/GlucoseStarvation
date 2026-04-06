@@ -93,96 +93,29 @@ if (file.exists(optim_objects_path)) {
 }
 ```
 
-Oracle NUTS note: in [`scripts/run_gpath_transfer_nuts.R`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/scripts/run_gpath_transfer_nuts.R), `FIT_TYPE == "oracle"` sets `stan_data$is_train <- rep(1L, stan_data$N_wells)`, so the fit target is all wells regardless of the transfer-style `line_id` and direction labels used to route the job. The current oracle directories may therefore contain multiple duplicated oracle run tags per model from reused transfer machinery; this chunk intentionally binds only one canonical oracle chain set per `model_id`.
+Oracle NUTS note: this chunk now treats the full-data oracle job definition in [`config/jobs/gpath_full_oracle_assessment.json`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/config/jobs/gpath_full_oracle_assessment.json) as the source of truth for which model IDs should be checked and where their standard per-model NUTS output directories should live. The deployment path for that job is: materialize per-task configs with [`scripts/prepare_jobs.R`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/scripts/prepare_jobs.R), submit the resulting manifest with [`slurm/submit_gpath_full_oracle_job.sh`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/slurm/submit_gpath_full_oracle_job.sh), dispatch array tasks through [`slurm/jobs/gpath_full_oracle_array.sh`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/slurm/jobs/gpath_full_oracle_array.sh), and execute each task via the R entrypoint [`scripts/run_job.R`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/scripts/run_job.R), which sources [`R/job_config_utils.R`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/R/job_config_utils.R) and then calls the generic sampler in [`R/nuts_utils.R`](/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/R/nuts_utils.R).
 
 ```{r nuts-output-binding-diagnostic}
-source("R/posterior_io_utils.R")
+source("R/job_config_utils.R")
+source("R/nuts_utils.R")
 
-bind_one_nuts_run <- function(model_id, roots, run_tag = NULL, subdir = file.path("low_to_high", "oracle")) {
-  dirs <- file.path(roots, model_id, subdir)
-  dir_path <- dirs[dir.exists(dirs)][1]
-  if (is.na(dir_path)) stop(sprintf("No NUTS directory found for %s under: %s", model_id, paste(roots, collapse = ", ")))
-
-  draw_files <- list_matching_rds(dir_path, "^nuts_draws_.*\\.Rds$")
-  draw_tags <- sub("^nuts_draws_(.*)\\.Rds$", "\\1", basename(draw_files))
-  run_tags <- sort(unique(sub("_chain[0-9]+$", "", draw_tags)))
-  if (is.null(run_tag)) run_tag <- run_tags[[1]]
-  if (!(run_tag %in% run_tags)) {
-    stop(sprintf(
-      "Run tag '%s' not found in %s; available tags: %s",
-      run_tag, dir_path, paste(run_tags, collapse = ", ")
-    ))
-  }
-  draw_files <- draw_files[sub("_chain[0-9]+$", "", draw_tags) == run_tag]
-
-  info <- lapply(draw_files, function(path) {
-    dm <- posterior::as_draws_matrix(readRDS(path))
-    list(
-      file = basename(path),
-      chain_id = as.integer(sub("^.*_chain([0-9]+)\\.Rds$", "\\1", basename(path))),
-      n_iter = nrow(dm),
-      vars = colnames(dm),
-      has_draw_cols = all(c(".draw", ".iteration", ".chain") %in% colnames(dm))
-    )
-  })
-
-  chain_ids <- vapply(info, `[[`, integer(1), "chain_id")
-  if (anyDuplicated(chain_ids)) stop(sprintf("Duplicate chain ids in %s: %s", dir_path, paste(sort(unique(chain_ids[duplicated(chain_ids)])), collapse = ", ")))
-  if (!setequal(chain_ids, seq_len(max(chain_ids)))) stop(sprintf("Missing chain ids in %s; observed: %s", dir_path, paste(sort(chain_ids), collapse = ", ")))
-  if (length(unique(vapply(info, `[[`, integer(1), "n_iter"))) != 1L) stop(sprintf("Iteration-count mismatch across chains in %s", dir_path))
-  if (length(unique(vapply(info, `[[`, logical(1), "has_draw_cols"))) != 1L) stop(sprintf("Warmup/sampling convention mismatch across chains in %s", dir_path))
-
-  ref_vars <- info[[1]]$vars
-  bad_vars <- Filter(function(x) !setequal(x$vars, ref_vars), info)
-  if (length(bad_vars)) {
-    msg <- vapply(bad_vars, function(x) {
-      sprintf(
-        "%s | missing: [%s] | extra: [%s]",
-        x$file,
-        paste(setdiff(ref_vars, x$vars), collapse = ", "),
-        paste(setdiff(x$vars, ref_vars), collapse = ", ")
-      )
-    }, character(1))
-    stop(sprintf("Variable-set mismatch in %s\n%s", dir_path, paste(msg, collapse = "\n")))
-  }
-
-  list(
-    draws = bind_rds_draws(draw_files[order(chain_ids)], along = "chain"),
-    chain_ids = sort(chain_ids),
-    run_tag = run_tag
-  )
-}
-
-summarize_one_nuts_run_diagnostics <- function(bound_obj) {
-  posterior::summarise_draws(
-    bound_obj$draws,
-    mean = mean,
-    sd = stats::sd,
-    rhat = posterior::rhat,
-    ess_bulk = posterior::ess_bulk,
-    ess_tail = posterior::ess_tail
-  ) %>%
-    tibble::as_tibble() %>%
-    dplyr::rename(variable = variable)
-}
-
-diagnostic_roots <- "data/gpath_transfer_cv_nuts/gpath"
+oracle_job_config_path <- "config/jobs/gpath_full_oracle_assessment.json"
+oracle_job_info <- read_job_info(oracle_job_config_path)
+diagnostic_roots <- oracle_job_info$output_root
+oracle_subdir <- ""
 rhat_threshold <- 1.01
 ess_threshold <- 400
 
-oracle_subdir <- file.path("low_to_high", "oracle")
-model_ids <- basename(list.dirs(diagnostic_roots, recursive = FALSE, full.names = TRUE))
-model_ids <- model_ids[dir.exists(file.path(diagnostic_roots, model_ids, oracle_subdir))]
+model_ids <- oracle_job_info$run_ids
+available_model_ids <- model_ids[vapply(
+  model_ids,
+  function(model_id) dir.exists(get_job_output_dir(oracle_job_info$job_cfg, model_id)),
+  logical(1)
+)]
 
-extract_run_tags <- function(model_id, roots, subdir = oracle_subdir) {
-  dir_path <- file.path(roots, model_id, subdir)
-  draw_files <- list_matching_rds(dir_path, "^nuts_draws_.*\\.Rds$")
-  sort(unique(sub("_chain[0-9]+$", "", sub("^nuts_draws_(.*)\\.Rds$", "\\1", basename(draw_files)))))
-}
-
-batch_summary_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
-  dir_path <- file.path(diagnostic_roots, model_id, oracle_subdir)
-  available_run_tags <- extract_run_tags(model_id, diagnostic_roots)
+batch_summary_df <- dplyr::bind_rows(lapply(available_model_ids, function(model_id) {
+  dir_path <- get_job_output_dir(oracle_job_info$job_cfg, model_id)
+  available_run_tags <- nuts_list_run_tags(dir_path)
   bound_path <- file.path(dir_path, "bound_nuts_draws.Rds")
   diag_path <- file.path(dir_path, "nuts_chain_diagnostics.Rds")
 
@@ -190,8 +123,8 @@ batch_summary_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
     bound_obj <- readRDS(bound_path)
     chain_diag_df <- readRDS(diag_path)
   } else {
-    bound_obj <- bind_one_nuts_run(model_id, diagnostic_roots, run_tag = available_run_tags[[1]], subdir = oracle_subdir)
-    chain_diag_df <- summarize_one_nuts_run_diagnostics(bound_obj)
+    bound_obj <- nuts_bind_run(dir_path, run_tag = available_run_tags[[1]])
+    chain_diag_df <- nuts_summarize_draw_diagnostics(bound_obj$draws)
     saveRDS(bound_obj, bound_path)
     saveRDS(chain_diag_df, diag_path)
   }
@@ -214,9 +147,11 @@ batch_summary_df <- dplyr::bind_rows(lapply(model_ids, function(model_id) {
 }))
 
 cat(sprintf(
-  "Processed %d model ids under %s\nThresholds: rhat > %.2f, ess < %d\n",
+  "Processed %d/%d model ids from %s\nOutput root: %s\nThresholds: rhat > %.2f, ess < %d\n",
+  length(available_model_ids),
   length(model_ids),
-  diagnostic_roots,
+  oracle_job_config_path,
+  oracle_job_info$output_root,
   rhat_threshold,
   ess_threshold
 ))

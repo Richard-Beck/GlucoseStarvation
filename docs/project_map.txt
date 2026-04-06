@@ -78,6 +78,17 @@
      non-redundant full-data wrapper lives at scripts/make_gpath_full_nuts_manifest.R plus
      slurm/submit_gpath_full_nuts_pipeline.sh / slurm/jobs/gpath_full_nuts_array.sh, which reuse `oracle` mode with a
      single canonical line/direction per model instead of repeating duplicate all-data fits.
+     Full-data migration scaffolding now instead uses config/templates/nuts.json plus
+     config/jobs/gpath_full_oracle_assessment.json and thin wrappers in R/job_config_utils.R
+     (`prepare_jobs()`, `run_job()`). That path materializes per-task JSON configs from a human-authored job
+     definition into a standalone full-oracle root without carrying transfer-specific naming fields, and can now be
+     submitted directly via slurm/jobs/gpath_full_oracle_array.sh plus slurm/submit_gpath_full_oracle_job.sh using a
+     prepared config_manifest.tsv.
+     Cleanup refactor in progress: R/nuts_utils.R is now the intended generic JSON-configured NUTS runner and standard
+     reader/binder for per-run chain outputs, while model-specific Stan-data preparation / extra-output hooks are being
+     moved into the versioned model files (for the active path, models/gpath/v1/model.R). Train/test split and related
+     run-design mutations are also being separated into R/stan_design_utils.R. The current script entrypoints still
+     need to be migrated onto that API.
   5. Model comparison, diagnostics, plots/tables
      The main comparison notebook is workflow/model_analysis.Rmd. It is now intended as a reporting notebook rather than
      a scratchpad: it documents upstream commands, reads saved outputs from the current `gpath` workflow, reports model

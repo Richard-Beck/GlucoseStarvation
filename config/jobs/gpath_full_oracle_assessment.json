@@ -1,0 +1,60 @@
+{
+  "job_name": "gpath_full_oracle_assessment",
+  "job_type": "nuts",
+  "template_path": "config/templates/nuts.json",
+  "materialized": {
+    "config_dir": "configs",
+    "manifest_name": "config_manifest.tsv"
+  },
+  "run_ids": {
+    "source": "file",
+    "path": "models/gpath/v1/assessment_run_ids.txt"
+  },
+  "expand": {
+    "chain_ids": [1, 2, 3, 4]
+  },
+  "shared": {
+    "model_name": "gpath",
+    "model_version": "v1",
+    "stan_data_path": "data/stan_ready_data.Rds",
+    "init": {
+      "mode": "optim"
+    },
+    "sampling": {
+      "chains": 1,
+      "parallel_chains": 1,
+      "threads_per_chain": 16,
+      "iter_warmup": 500,
+      "iter_sampling": 1000,
+      "adapt_delta": 0.99,
+      "max_treedepth": 12,
+      "save_warmup": true,
+      "metric": "dense_e",
+      "refresh": 10
+    },
+    "output": {
+      "output_root": "data/gpath_full_oracle_assessment"
+    },
+    "model_specific_params": {
+      "ploidy_effect_mask_spec": "all"
+    },
+    "metadata": {
+      "design_label": "full_data_oracle"
+    }
+  },
+  "seeds": {
+    "init_base": 3000000,
+    "sampling_base": 4000000,
+    "task_stride": 1000
+  },
+  "naming": {
+    "output_path_template": "{output_root}/{run_id}",
+    "run_tag_template": "chain{chain_id_padded}"
+  },
+  "init_source": {
+    "mode": "optim_run_dir",
+    "dataset_label": "gstarvation_v1",
+    "run_label": "20260328_120555",
+    "root_override": ""
+  }
+}

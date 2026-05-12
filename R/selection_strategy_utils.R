@@ -5,7 +5,13 @@ source("R/optim_utils.R")
 source("R/parameter_transfer_utils.R")
 
 `%||%` <- function(x, y) {
-  if (is.null(x) || !length(x) || is.na(x[1])) y else x
+  if (is.null(x) || !length(x)) {
+    return(y)
+  }
+  if (is.atomic(x) && length(x) >= 1L && is.na(x[1])) {
+    return(y)
+  }
+  x
 }
 
 selection_default_config <- function() {

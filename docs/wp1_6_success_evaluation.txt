@@ -1,0 +1,92 @@
+WP1-6 goal and success evaluation
+
+Date: 2026-05-12
+
+Source context
+
+  This note summarizes the completed publication work packages defined in
+  docs/publication_work_packages.txt and evaluated from the corresponding
+  report exports under data/report_exports/wp*/ and figures under figures/wp*/.
+
+Overall goal
+
+  The work packages were designed to test the first-draft thesis that ploidy
+  changes glucose-starvation physiology, probably through cell-size or
+  resource-demand-linked effects, but that the effect is not universal across
+  all engineered comparisons. The whole-paper gate was whether SUM-159-fuse
+  could be excluded or mechanistically explained, and whether the remaining
+  ploidy-associated starvation effects align with area/volume differences well
+  enough to support a coherent volume-mediated ploidy-cost story.
+
+Overall assessment
+
+  Implementation success is high: the planned figures, audit tables, decision
+  notes, and reruns exist for the WP1-6 evidence stack.
+
+  Scientific success is partial. The evidence supports a descriptive and
+  qualified mechanism: ploidy-associated starvation phenotypes are real but
+  heterogeneous; morphology/volume explains an important part; SUM-159-fuse is
+  a justified biological/protocol exception candidate. The evidence does not
+  fully support a strong universal volume-mediated ploidy-cost mechanism with
+  robust mechanistic transfer and competition validation.
+
+Package-level assessment
+
+  WP1. Core starvation phenotype
+    Passed, but narrowly. One interpretable feature, Alive AUC glucose response,
+    met the sign-consistency gate: 4/5 lines all-line and 4/4 after excluding
+    SUM-159-fuse. Other growth, death, and yield summaries were weaker or mixed.
+
+  WP2. Morphology / volume analysis
+    Strong success. Size or inferred-volume separation is clear in most lines,
+    and SUM-159-fuse is a genuine outlier: adjusted q50 log2 ratio about -0.35,
+    latent-volume log2 ratio about -0.55, and z-scores around -2.6 and -2.3
+    versus non-SUM lines. Area explains part of the phenotype, not all of it;
+    the best phenotype-area summary gives roughly 28% RMSE reduction and R2
+    around 0.48.
+
+  WP3. Nuclear size extension
+    Successful as a bounded pilot and QC extension. The completed run has 90/90
+    images with ok status and about 99.8% alive-cell nuclear success. Nuclear
+    area tracks high ploidy in several lines, but not MDA-MB-231 or
+    SUM-159-fuse, so it reinforces heterogeneity rather than proving a universal
+    nuclear-size mechanism.
+
+  WP4. SUM-159-fuse exclusion analysis
+    Biologically motivated, but not performance-decisive. Excluding
+    SUM-159-fuse improves the main WP1 passing feature and some consistency
+    summaries, but the average model-free consistency shift is small and mixed.
+    Transfer performance does not improve on matched non-SUM holdouts. The
+    strongest exclusion rationale remains protocol plus morphology/volume plus
+    directional mechanistic coherence, not benchmark performance alone.
+
+  WP4b. No-SUM-159-fuse gpath generalization rerun
+    Computationally complete, scientifically mixed to negative for transfer.
+    The no-SUM optimization grid completed, but mean no-SUM minus all-line
+    transfer/null holdout gain is negative, with only about half of matched
+    cases improving. This does not support a strong claim that excluding
+    SUM-159-fuse materially improves gpath generalization.
+
+  WP5. Mechanistic representative model
+    Successful as a model-governance fix. The legacy 1R_1P_0W_C0_M1 model is no
+    longer treated as the representative because of visual-fit concerns.
+    2R_2P_0W_C0_M1 is the provisional representative with acceptable visual
+    review and passing NUTS QC. Strong claims should remain focused on fitted
+    alive/glucose dynamics because the current overlay path does not provide a
+    separate fitted dead-cell trajectory.
+
+  WP6. Selection and competition claims
+    Simulation support exists, but empirical validation is weak for the primary
+    model. Acceptable models generally predict that strategies for high ploidy
+    are stronger than strategies against high ploidy, including the no-SUM
+    global check. Competition validation is not reassuring for the primary
+    model and should remain a qualitative check rather than primary evidence.
+
+Practical manuscript implication
+
+  The most defensible first-draft spine is: ploidy-associated
+  glucose-starvation phenotypes are reproducible for selected summaries but
+  heterogeneous across lines; morphology/volume is a major explanatory axis;
+  SUM-159-fuse is a biologically and experimentally justified exception; ODE
+  and selection analyses should be framed as qualified model-supported
+  hypotheses rather than central proof.

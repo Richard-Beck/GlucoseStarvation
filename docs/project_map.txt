@@ -10,7 +10,9 @@
   A large legacy cleanup removed the older ecology tree, the transfer-CV workflow family, the old `*_old` image-training/
   eval branches, and the deprecated single-condition / deprecated-report notebooks. Some helper files and saved Slurm run
   records still contain transfer-oriented path strings; treat those as dangling historical references unless they are
-  wired back into a maintained workflow.
+  wired back into a maintained workflow. docs/publication_work_packages.txt is the current first-draft planning document:
+  it defines publication-oriented work packages, pass/fail criteria, and human-reviewable outputs. docs/
+  wp1_6_success_evaluation.txt records the current post-implementation assessment of WP1-6 goals and scientific success.
 
 • Core / canonical pipeline
 
@@ -54,6 +56,27 @@
      feature and signature panels under data/model_free_ploidy/. scripts/evaluate_model_free_ploidy_transfer.R performs a
      holdout-line transfer benchmark on those signatures as a robustness check on observed ploidy summaries. The reporting
      notebook is workflow/model_free_ploidy_analysis.Rmd, which also writes workflow/model_free_ploidy_analysis.txt.
+     scripts/make_wp1_core_starvation_figures.R is the publication WP1 output path: it rebuilds the model-free tables from
+     stan_ready_data and writes Figure 1/Figure 2 plus per-line trajectory grids under figures/wp1_core_starvation/ and
+     audit CSV/RDS/TXT outputs under data/report_exports/wp1_core_starvation/.
+     scripts/make_wp4_sum159_fuse_exclusion_analysis.R is the publication WP4 exception-analysis path: it reruns
+     model-free summaries and transfer/generalization benchmarks with SUM-159-fuse excluded, compares effect sign
+     consistency against all-line results, and writes figures plus audit CSV/RDS/TXT/MD outputs under
+     figures/wp4_sum159_fuse_exclusion/ and data/report_exports/wp4_sum159_fuse_exclusion/.
+     The SUM-159-fuse exception rationale is protocol plus biology: it is the only line with two batches and differing
+     protocol details, it has weak/reversed volume separation, and no-SUM checks move the y1/v1/K1/m directional
+     ploidy-effect conclusion further from zero with stronger inter-model agreement.
+     scripts/make_wp4b_no_sum_gpath_inputs.R is the publication WP4b setup path: it builds a remapped
+     no-SUM-159-fuse Stan-data object, materializes full/transfer/null gpath optimisation datasets, and writes smoke plus
+     full assessment specs for the maintained Slurm optimisation pipeline. scripts/make_wp4b_no_sum_gpath_report.R
+     summarizes completed no-SUM optimisation results against the existing all-line matched-holdout baseline under
+     data/report_exports/wp4b_no_sum159_fuse_gpath/ and figures/wp4b_no_sum159_fuse_gpath/. Current status: WP4b
+     optimisation is complete and at a review checkpoint; the full Slurm optimisation batch was submitted from
+     data/specs/wp4b_no_sum159_fuse_assessment.tsv with metadata in slurm/runs/gpath_optim_batch/20260511_160448/.
+     scripts/make_wp5_mechanistic_representative_model.R is the publication WP5 representative-model review path: it
+     combines full-data optimisation ranking, transfer/null gains, existing model_analysis Pareto-front overlay review,
+     model_analysis oracle-NUTS QC, automated alive/glucose overlay fit scores, and candidate overlay figures under
+     data/report_exports/wp5_mechanistic_representative_model/ and figures/wp5_mechanistic_representative_model/.
   2. Spline / hidden-state exploration
      workflow/transfer_spline_first_attempt.Rmd rebuilds observed trajectories from stan_ready_data, fits smooth empirical
      rate-vs-glucose relationships, and asks which extra state summaries reduce residual structure. scripts/
@@ -62,14 +85,22 @@
      not part of the canonical mechanistic workflow.
   3. Area / morphology side path
      The area-aware sidecar built in R/prepare_data.R writes data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd
-     is the lightweight reporting notebook for that object. This makes morphology available for exploratory analysis, but it
-     is not yet a first-class downstream fitting branch.
+     is the lightweight reporting notebook for that object. scripts/make_wp2_morphology_volume_figures.R is the publication
+     WP2 output path: it fits adjusted area/volume models and writes Figure 3/Figure 4 plus diagnostics under
+     figures/wp2_morphology_volume/ and data/report_exports/wp2_morphology_volume/. scripts/
+     make_wp2_morphology_model_report.R consumes that row-level export and writes markdown/HTML model-comparison reports
+     under data/report_exports/wp2_morphology_model_report/. This is still an auxiliary reporting path rather than a
+     canonical Stan fitting branch.
   4. Selection-strategy simulation
      This branch uses fitted gpath parameters rather than feature engineering. R/selection_strategy_utils.R builds a
      mixed-culture simulation ODE, scripts/run_gpath_selection_strategy_batch.R writes batch outputs under
      data/selection_strategy/gpath/v1/<dataset>/..., and workflow/selection_strategy_analysis.Rmd reports those results.
      Treat this as a downstream hypothesis-generation branch built on mechanistic fits, not part of the canonical fitting
-     pipeline itself.
+     pipeline itself. scripts/wp6_no_sum_selection_config.R runs the WP5-main-model no-SUM global selection subset, and
+     scripts/make_wp6_selection_competition_report.R is the publication WP6 output path: it filters models through the WP5
+     decision table, combines all-line selection outputs, no-SUM global selection outputs, and single-line competition
+     validation scores, then writes figures plus audit CSV/RDS/MD outputs under figures/wp6_selection_competition/ and
+     data/report_exports/wp6_selection_competition/.
 
   Competition-validation side branch
 
@@ -91,9 +122,11 @@
   data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd is the new lightweight reporting notebook for that
   object: it plots q50/q99/tail-ratio trajectories, derives a crowding-adjusted latent volume proxy from the central
   area quantiles, shows within-line ploidy contrasts, morphology-versus-glucose relationships, and a cleaned-up port of
-  the size-to-glucose-cost scaling idea from workflow/volume_aware_anal.Rmd. Current status: morphology is now
-  available as an auxiliary analysis dataset, but only through this area-quantile side path; there is still no
-  downstream fitting or transfer workflow that treats the broader image-derived feature panel as a primary branch.
+  the size-to-glucose-cost scaling idea from workflow/volume_aware_anal.Rmd. The publication WP2 script,
+  scripts/make_wp2_morphology_volume_figures.R, promotes the area quantiles into adjusted size/volume figures and
+  summary tables. scripts/make_wp2_morphology_model_report.R adds blocked-CV markdown/HTML reports comparing time,
+  density, glucose, and growth/death covariate models for pixel area. The broader image-derived feature panel is still
+  not a primary downstream modelling branch.
   A newer bootstrap path is scripts/image_processing/batch_extract_object_features.py plus
   scripts/image_processing/run_batch_object_features.sbatch: it runs Cellpose without the classifier layer, derives
   per-object `area_px`, `live_mean`, `dead_mean`, `live_bg_z`, and `dead_bg_z` from the normalized composite channels,
@@ -126,6 +159,21 @@
   regression on `log_area_px + obj_emb_* + frame_emb_*` with `label_int` as the target and saves metrics/predictions/
   coefficients/model bundle, the R script turns those saved artifacts into a compact PNG/TXT summary, and the sbatch
   wrapper runs both steps in the `cpose` environment.
+  The publication WP3 nuclear-size pilot is now manifest-driven and GPU-bound:
+  scripts/image_processing/make_wp3_nuclear_pilot_manifest.py selects a bounded
+  line/ploidy/glucose-bin/time-bin pilot from prelim_counts_by_image.csv,
+  slurm/submit_wp3_nuclear_size_pilot.sh submits the CPSAM job through
+  scripts/image_processing/run_wp3_nuclear_size_pilot.sbatch with an A30 GPU,
+  and scripts/image_processing/wp3_nuclear_size_pilot.py writes per-object
+  cell/nuclear features plus local cell/nuclear mask TIFFs under
+  data/image_processing_runs/wp3_nuclear_size_pilot/. scripts/
+  make_wp3_nuclear_size_report.R consumes a completed run and writes Figure
+  5-style nuclear-size plots, high/low ploidy nuclear-area violin comparisons by time/confluency, alive-cell-gated
+  QC summaries, and image-blocked nuclear-area covariate model comparisons under
+  figures/wp3_nuclear_size/ and data/report_exports/wp3_nuclear_size/. scripts/
+  image_processing/make_wp3_segmentation_overlay_examples.py writes RGB raw-image
+  overlay examples with CPSAM cell and nuclear outlines under
+  figures/wp3_nuclear_size/segmentation_examples/.
 
   Agent-sidecar utilities
 

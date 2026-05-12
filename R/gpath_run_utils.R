@@ -33,6 +33,141 @@ add_group_structure <- function(stan_data) {
   stan_data
 }
 
+subset_stan_data_to_lines <- function(stan_data, target_line_ids) {
+  target_line_ids <- sort(unique(as.integer(target_line_ids)))
+  target_line_ids <- target_line_ids[is.finite(target_line_ids)]
+  if (!length(target_line_ids)) {
+    stop("target_line_ids must contain at least one finite integer")
+  }
+
+  old_line_id <- as.integer(stan_data$line_id)
+  keep_wells <- which(old_line_id %in% target_line_ids)
+  if (!length(keep_wells)) {
+    stop(sprintf(
+      "No wells found for target_line_ids: %s",
+      paste(target_line_ids, collapse = ", ")
+    ))
+  }
+
+  observed_target_ids <- sort(unique(old_line_id[keep_wells]))
+  missing_ids <- setdiff(target_line_ids, observed_target_ids)
+  if (length(missing_ids)) {
+    stop(sprintf(
+      "No wells found for target_line_ids: %s",
+      paste(missing_ids, collapse = ", ")
+    ))
+  }
+
+  remap_index <- function(idx, keep) {
+    out <- integer(length(idx))
+    out[keep] <- seq_along(keep)
+    out
+  }
+
+  subset_by_well <- function(x, keep) {
+    if (is.null(x)) {
+      return(NULL)
+    }
+
+    if (is.matrix(x)) {
+      return(x[keep, , drop = FALSE])
+    }
+
+    if (is.array(x) && length(dim(x)) > 1L) {
+      return(x[keep, , drop = FALSE])
+    }
+
+    x[keep]
+  }
+
+  well_map <- remap_index(seq_len(stan_data$N_wells), keep_wells)
+
+  keep_count <- stan_data$well_idx_count %in% keep_wells
+  keep_gluc <- stan_data$well_idx_gluc %in% keep_wells
+
+  out <- stan_data
+
+  well_fields <- c(
+    "line_id", "ploidy_metric", "ploidy_abs", "has_starvation", "exp_id",
+    "G0_per_well", "g1_id", "group_id", "R_init_base", "is_train"
+  )
+  for (nm in intersect(well_fields, names(out))) {
+    out[[nm]] <- subset_by_well(out[[nm]], keep_wells)
+  }
+
+  count_fields <- c("well_idx_count", "grid_idx_count", "rep_id_count", "N_obs", "D_obs")
+  for (nm in intersect(count_fields, names(out))) {
+    out[[nm]] <- out[[nm]][keep_count]
+  }
+  out$well_idx_count <- well_map[out$well_idx_count]
+
+  gluc_fields <- c("well_idx_gluc", "grid_idx_gluc", "lum_obs", "dilution", "is_censored")
+  for (nm in intersect(gluc_fields, names(out))) {
+    out[[nm]] <- out[[nm]][keep_gluc]
+  }
+  out$well_idx_gluc <- well_map[out$well_idx_gluc]
+
+  exp_keep <- sort(unique(out$exp_id))
+  exp_map <- remap_index(seq_len(stan_data$N_exps), exp_keep)
+  out$exp_id <- exp_map[out$exp_id]
+  out$N_exps <- length(exp_keep)
+
+  calib_fields <- c("calib_a_fixed", "calib_b_fixed", "calib_sigma_fixed")
+  for (nm in intersect(calib_fields, names(out))) {
+    out[[nm]] <- out[[nm]][exp_keep]
+  }
+
+  if ("calib_exp_idx" %in% names(out)) {
+    keep_calib <- out$calib_exp_idx %in% exp_keep
+    out$calib_exp_idx <- exp_map[out$calib_exp_idx[keep_calib]]
+
+    for (nm in c("calib_G", "calib_Lum")) {
+      if (nm %in% names(out)) {
+        out[[nm]] <- out[[nm]][keep_calib]
+      }
+    }
+
+    if ("N_obs_calib" %in% names(out)) {
+      out$N_obs_calib <- length(out$calib_exp_idx)
+    }
+  }
+
+  line_id_levels <- sort(unique(out$line_id))
+  line_id_map <- setNames(seq_along(line_id_levels), as.character(line_id_levels))
+  out$line_id <- unname(line_id_map[as.character(out$line_id)])
+
+  line_name_map <- NULL
+  if ("line_map" %in% names(out) && length(out$line_map)) {
+    old_line_map <- as.integer(unname(out$line_map))
+    names(old_line_map) <- names(out$line_map)
+    keep_line_names <- names(out$line_map)[old_line_map %in% line_id_levels]
+    keep_line_old_ids <- old_line_map[old_line_map %in% line_id_levels]
+    new_line_ids <- unname(line_id_map[as.character(keep_line_old_ids)])
+    line_name_map <- setNames(as.integer(new_line_ids), keep_line_names)
+    line_name_map <- line_name_map[order(as.integer(line_name_map))]
+    out$line_map <- line_name_map
+  }
+
+  out$N_wells <- length(keep_wells)
+  out$N_lines <- length(line_id_levels)
+  out$N_obs_count <- length(out$well_idx_count)
+  out$N_obs_gluc <- length(out$well_idx_gluc)
+
+  out <- add_group_structure(out)
+
+  g1_key <- interaction(out$line_id, out$exp_id, out$G0_per_well, drop = TRUE)
+  out$g1_id <- as.integer(g1_key)
+  out$N_G1 <- max(out$g1_id)
+  out$g1_ref_well <- match(seq_len(out$N_G1), out$g1_id)
+
+  out$subset_source_line_ids <- target_line_ids
+  if (!is.null(line_name_map)) {
+    out$subset_source_line_names <- names(line_name_map)
+  }
+
+  out
+}
+
 subset_stan_data_to_line <- function(stan_data, target_line_id) {
   target_line_id <- as.integer(target_line_id)[1]
   if (is.na(target_line_id)) {

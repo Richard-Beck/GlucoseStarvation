@@ -1,0 +1,194 @@
+My read with this added context: **yes, the presentation’s claims are fair**, and the GitHub repo can be reframed to match the presentation much more closely without becoming misleading. The key is to separate three things that are currently somewhat tangled together:
+
+1. **The biological story:** high ploidy changes glucose-starvation ecology in a counterintuitive way.
+2. **The mechanistic interpretation:** fitted models suggest higher uptake, lower yield, and lower apparent starvation-associated maintenance/death.
+3. **The transfer question:** how far that inferred ploidy effect can be exported to held-out lines or conditions.
+
+Right now, the repo makes #3 feel too much like the success criterion. The presentation correctly makes #1 the success criterion, with #2 as the explanatory framework and #3 as a robustness/limitation analysis.
+
+## 1. Are the presentation claims fair?
+
+Yes — with mostly small wording guards. The March 31 presentation is strong but not reckless. It starts with a clear hypothesis that high-ploidy cells might need more energy, shows that the observed/model-inferred result is more interesting than that, and ends with “resource scarcity appears to favor high ploidy,” not “we have proven a universal law of WGD metabolism” .
+
+Here is how I would audit the main claims.
+
+| Presentation claim                                                                              |                                          Fair? | Best publication-safe wording                                                                                                                                                                                 |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| High-ploidy/WGD cells may have altered energy demand under glucose limitation.                  |                                            Yes | “We tested whether high ploidy alters the growth–death response to glucose depletion.”                                                                                                                        |
+| The basic glucose-only model is insufficient; hidden resources or waste are needed.             |                                            Yes | “Glucose alone does not explain the trajectories; models with additional resource or waste structure improve fit.”                                                                                            |
+| High ploidy generally does better in zero glucose.                                              |                                     Mostly yes | “Across much of the panel, high-ploidy cells retain higher live-cell burden or decline less sharply under zero/very low glucose.” Avoid “grow better” unless the specific plot shows growth.                  |
+| High ploidy depletes glucose faster.                                                            |                         Yes, but specify level | “High-ploidy states show higher apparent glucose uptake/depletion in the fitted models and many observed trajectories.”                                                                                       |
+| Ploidy increases glucose consumption, decreases yield, and decreases apparent maintenance cost. |                         Yes, as model-inferred | “Across model families, the shared ploidy-effect parameters consistently imply increased apparent uptake, reduced yield, and reduced apparent starvation-associated maintenance/death.”                       |
+| “Implies real signal.”                                                                          | Fair, if “signal” means reproducible structure | “Agreement across model variants and line-exclusion analyses argues that the ploidy-associated pattern is not a single-model artifact.”                                                                       |
+| Resource starvation is predicted to select for high ploidy.                                     |              Yes, and it is the exciting claim | “Fitted consumer-resource models predict a regime switch: low-resource environments can favor high ploidy, whereas resource-replete environments often favor low ploidy.”                                     |
+| The learned ploidy effect does not predict new data well.                                       |              Yes, but should be contextualized | “Stringent predictive-transfer tests reveal limited extrapolation to held-out line/state combinations.” This is a limitation of general extrapolation, not a refutation of the within-panel biological story. |
+| SUM-159-fuse is an outlier and may reflect size/protocol/state effects.                         |                                            Yes | Treat as sensitivity/heterogeneity, not as a reason to discard the project.                                                                                                                                   |
+| Cell size/volume may mediate the effect.                                                        |                           Yes, as a hypothesis | “Cell volume is a plausible mediator and a natural follow-up, but the glucose-starvation result stands first as a ploidy-associated metabolic/ecological phenotype.”                                          |
+
+The one claim I would not make without qualification is: **“high-ploidy cells require less energy.”** The data support lower apparent maintenance/death and possible lower per-division glucose cost under some definitions, but they do not directly measure ATP budgets, biomass production, oxidative phosphorylation, or total metabolic power. “Glucose economy,” “resource ecology,” “apparent maintenance,” and “starvation tolerance” are safer and more accurate.
+
+## 2. The presentation’s central story is not only fair — it is probably the strongest story
+
+The high-impact version is not:
+
+> “We built a complicated model and it does/doesn’t transfer.”
+
+It is:
+
+> “High ploidy is expected to be metabolically costly, but glucose-starvation dynamics reveal a counterintuitive ecological tradeoff: high-ploidy cells appear to consume glucose faster and convert it less efficiently, yet they may be favored under scarcity because they have lower apparent starvation-associated maintenance/death.”
+
+That is exciting because it reverses the naive expectation. The deck’s page 28 parameter summary and page 29 selection heatmaps are doing the right narrative work: they convert a collection of glucose-starvation timecourses into a mechanistic ecological prediction .
+
+The selection-strategy report in the repo supports this direction. It says robust selection **for** high ploidy is substantially stronger than selection **against** high ploidy in the tested strategy space, with best-for strategies reaching `frac_for` around 0.77–0.83 and best-against strategies around 0.60–0.63 . That reinforces the presentation’s “resource scarcity appears to favor high ploidy” message rather than undermining it.
+
+## 3. Where the GitHub framing currently pulls the story off-center
+
+The current README is already partly aligned: it explicitly says predictive transfer is not the end goal, and that transfer workflows are stress tests of whether inferred ploidy effects are stable enough to support selection ideas .
+
+The problem is that several repo/reporting artifacts still make transfer feel like the main verdict. The clearest example is the `model_analysis.txt` sidecar: its “Interpretation Verdict” says that some shortlisted models improve parameter transfer, but none are positive on average for predictive transfer . That is a valid audit result, but as the headline verdict it makes the project sound like it failed at prediction rather than succeeded at discovering a resource-selection phenotype.
+
+The uploaded repo summary also reflects that tone: it describes the project as scientifically “mixed,” with some transferable ploidy-related structure but heterogeneous predictive transfer, while noting that selection-for-high-ploidy simulations are more directional . That is accurate as a repo audit. It is not the best manuscript framing.
+
+## 4. The key conceptual change: make transfer a stress test, not the thesis
+
+Predictive transfer is a very hard standard. It asks whether a learned ploidy-effect vector can help predict a missing state or held-out condition despite cell-line differences, hidden resources, batch effects, protocol differences, stateless cell assumptions, and imperfect observation models. Failure there does **not** mean the core biological signal is weak.
+
+For the paper/repo framing, I would distinguish:
+
+**Primary claim:**
+High ploidy changes the ecology of glucose starvation in the observed five-line panel.
+
+**Mechanistic inference:**
+The best-supported models infer a tradeoff: higher apparent glucose use, lower yield, and lower apparent starvation-associated maintenance/death.
+
+**Prediction:**
+Those inferred tradeoffs predict that resource scarcity can favor high ploidy while abundance can favor low ploidy.
+
+**Robustness/generalizability:**
+The direction of the effect is not obviously driven by one line, but strict predictive transfer to held-out contexts is imperfect.
+
+That keeps the negative transfer result honest, but prevents it from becoming the project’s conclusion.
+
+## 5. What I would change in the GitHub repo
+
+### README
+
+The README should open with the biological discovery, not the transfer objective. Something like:
+
+> `GlucoseStarvation` analyzes a counterintuitive ploidy-dependent response to glucose limitation. High-ploidy cancer cells are often expected to be metabolically burdened, but live/dead-cell and glucose timecourses across five matched cell-line systems suggest a more complex tradeoff. Fitted consumer-resource models infer that high ploidy is associated with higher apparent glucose uptake and lower glucose-to-cell yield, but also lower apparent starvation-associated maintenance/death. These tradeoffs predict a regime shift: glucose-rich environments often favor low ploidy, whereas resource scarcity can favor high ploidy.
+>
+> The repository tests this story through mechanistic `gpath` models, model-free trajectory summaries, robustness/transfer analyses, and mixed-culture selection-strategy simulations. Directional transfer workflows are included as stringent stress tests of generalizability, not as the primary scientific endpoint.
+
+This preserves the current repo’s honesty but makes the reader start from the discovery.
+
+### `docs/project_map.txt`
+
+The first section should be reorganized around the manuscript logic:
+
+1. Raw images and glucose measurements.
+2. Descriptive starvation phenotype.
+3. Consumer-resource model family.
+4. Model-inferred ploidy tradeoff.
+5. Selection prediction.
+6. Competition/strategy validation.
+7. Robustness and generalization.
+8. Side branches: morphology/volume, model-free summaries, transfer screens.
+
+Right now the project map is very implementation-forward and transfer-forward. That is useful for agents, but it should have a manuscript-facing preamble.
+
+Add a short paragraph:
+
+> The active biological story is that high ploidy is not simply more metabolically costly under glucose limitation. Instead, high-ploidy states show a tradeoff between faster apparent glucose use/lower yield and improved performance under severe resource scarcity. Transfer analyses are used to assess how broadly that inferred tradeoff generalizes, but the primary endpoint is the resource-ecological prediction that starvation can favor high ploidy.
+
+### `workflow/model_analysis.Rmd` and `workflow/model_analysis.txt`
+
+Separate the current single “Interpretation Verdict” into two verdicts:
+
+**Biological verdict**
+
+> Across the fitted model families, ploidy-associated parameter shifts consistently indicate increased apparent glucose uptake, reduced glucose yield, and reduced apparent maintenance/death under starvation. These shifts predict that low-resource environments can favor high-ploidy states, whereas resource-rich environments often favor low-ploidy states.
+
+**Generalization verdict**
+
+> Directional transfer analyses show that this ploidy-effect structure is not sufficient for uniformly accurate held-out trajectory prediction. The effect should therefore be treated as a robust within-panel/resource-ecological pattern with heterogeneous cross-line extrapolation, not as a universal new-line predictor.
+
+That one change would dramatically improve the repo tone without hiding the transfer result.
+
+### `workflow/selection_strategy_analysis.Rmd`
+
+This should no longer feel like a downstream side branch. It is one of the core result generators because it directly supports the deck’s headline conclusion. The repo’s selection report already has the strongest one-sentence biological claim: robust selection for high ploidy is stronger than robust selection against high ploidy in the tested strategy space .
+
+I would pull a summary of that into the README and the top of `model_analysis.Rmd`.
+
+### `workflow/model_free_ploidy_analysis.Rmd`
+
+The model-free branch should be framed as **triangulation**, not primarily transfer. Its value is that some ploidy-associated features are visible without accepting the ODE model. Even if many feature-level transfer metrics are mixed, the model-free analysis can support the claim that the phenotype is not purely an artifact of the mechanistic model.
+
+The section should answer:
+
+> Which qualitative signatures of the ploidy effect are visible directly in the data?
+
+Only after that should it ask:
+
+> Which of those signatures transfer across lines?
+
+### Add `docs/manuscript_story.md`
+
+I would add a deliberately non-technical file with this structure:
+
+```text
+# Manuscript story
+
+## Central claim
+High ploidy rewires the response to glucose starvation. Instead of being simply more costly, high ploidy creates a tradeoff that can favor survival/selection under resource scarcity.
+
+## Evidence ladder
+1. Live/dead and glucose trajectories show ploidy-dependent starvation responses.
+2. Glucose-only models are insufficient; resource/waste extensions improve fit.
+3. Across model families, high ploidy is associated with higher apparent uptake, lower yield, and lower apparent maintenance/death.
+4. These parameters predict that scarce-resource conditions favor high ploidy.
+5. Strategy simulations and competition-validation analyses test this ecological prediction.
+6. Transfer analyses reveal context dependence and define the limits of extrapolation.
+
+## What we do not claim
+- We do not claim universal prediction for arbitrary new cell lines.
+- We do not claim direct measurement of ATP or absolute metabolic power.
+- We do not claim volume is proven to mediate the glucose effect.
+- We do not claim SUM-159-fuse can be discarded without sensitivity analysis.
+```
+
+This would give future readers — and future LLMs — the intended story before they get lost in transfer-CV details.
+
+## 6. How to align with the WGDsize independence project without making glucose starvation seem derivative
+
+Your context is important: the glucose-starvation project predates the WGD volume project and should be allowed to stand on its own. The right alignment is historical and mechanistic, not subordinating.
+
+I would frame it this way:
+
+> The glucose-starvation project identifies a ploidy-associated resource-ecology phenotype: high ploidy can be favored under glucose/resource scarcity. The WGDsize project asks whether that phenotype is explained by physical scale — cell volume, biomass, surface-area-to-volume constraints, or related geometry — rather than by ploidy labels alone.
+
+That fits the WGDsize overview, which describes the glucose arm as asking whether high-ploidy cells respond differently to glucose limitation and whether those differences imply an economy or penalty of scale . It also fits the application package’s Theme 2 framing, where preliminary glucose timecourses suggest a possible economy of scale, with biomass/volume normalization as the next critical step .
+
+The 3D volume work should be described as a **mechanistic follow-up and normalization layer**, not as something the original glucose-starvation story requires before it is publishable. The ongoing volume-calibration plan is valuable because it can test whether the glucose phenotypes scale with measured physical size/biomass rather than ploidy alone , but the current glucose paper can still make a fair claim about ploidy-associated starvation ecology.
+
+## 7. What I would not change
+
+I would not remove the predictive-transfer results. They are scientifically useful and make the repo trustworthy. I would also not hide SUM-159-fuse or the protocol/state issues. Those caveats are exactly what prevents the story from sounding overfit.
+
+The change is not to make the repo less rigorous. The change is to make its **narrative hierarchy** match the science:
+
+1. Discovery: high ploidy behaves unexpectedly under glucose starvation.
+2. Mechanism: models infer a tradeoff between uptake/yield and starvation maintenance.
+3. Ecology: that tradeoff predicts selection for high ploidy under scarcity.
+4. Robustness: model family agreement, line-exclusion stability, model-free summaries, selection simulations.
+5. Limits: predictive transfer is heterogeneous; volume/state/protocol effects remain unresolved.
+
+## 8. Final recommended framing
+
+For the glucose-starvation project alone:
+
+> High ploidy is usually expected to increase metabolic burden, but glucose-starvation experiments across five cell-line systems reveal a counterintuitive resource-ecological phenotype. High-ploidy cells appear to use glucose faster and less efficiently, yet fitted consumer-resource models infer lower apparent starvation-associated maintenance/death, producing a predicted regime switch in which resource scarcity can favor high ploidy. This effect is robust enough to motivate selection and competition experiments, though not yet general enough to predict arbitrary held-out cell lines without accounting for cell-line state, protocol, hidden resources, and possibly cell volume.
+
+For the WGDsize alignment:
+
+> These glucose-starvation results provide the metabolic foundation for the WGDsize program. They show that ploidy alters resource ecology; the next step is to test whether that alteration is driven by physical scale through volume and biomass normalization.

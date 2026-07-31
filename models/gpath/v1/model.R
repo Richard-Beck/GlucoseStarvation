@@ -113,9 +113,9 @@ rhs <- function(t, y, parms) {
 }
 
 base_priors <- list(
-  ae_c = 6.0e-5, ae_s = 0.5,
+  ae_c = 2.4e-4, ae_s = 0.5,
   ah_c = 1.0,    ah_s = 0.5,
-  Y_R_c = 2500.0, Y_R_s = 0.5,
+  Y_R_c = 625.0, Y_R_s = 0.5,
   A_c  = 1.0,    A_s  = 0.5,
   A_gap_c = 1.0, A_gap_s = 0.5,
   K_add_c = 0.01, K_add_s = 1.5,

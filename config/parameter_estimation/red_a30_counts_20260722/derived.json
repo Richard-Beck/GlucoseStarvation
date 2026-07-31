@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "parameter_draws": "all",
+  "prediction_draws": 400,
+  "surface_draws": 100,
+  "draw_selection": "chain_balanced_even",
+  "prediction_time_grid": "stan",
+  "growth_surface": {
+    "glucose_min": 0.0001,
+    "glucose_max": 25.0,
+    "glucose_points": 40,
+    "resource2_min": 0.0,
+    "resource2_max": 1.0,
+    "resource2_points": 40,
+    "extra_resource_value": 1.0
+  },
+  "resources": {
+    "qc": {"cpus": 4, "mem_gb": 16, "time": "02:00:00", "qos": "xxlarge"},
+    "parameters": {"cpus": 8, "mem_gb": 32, "time": "06:00:00", "qos": "xxlarge"},
+    "predictions": {"cpus": 8, "mem_gb": 32, "time": "06:00:00", "qos": "xxlarge"},
+    "finalize": {"cpus": 2, "mem_gb": 4, "time": "00:30:00", "qos": "normal"}
+  }
+}

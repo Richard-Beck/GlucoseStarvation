@@ -1,0 +1,4 @@
+interface:
+  display_name: "Serve Manuscript A/I/D"
+  short_description: "Serve locked A/I/D text with provenance"
+  default_prompt: "Use $serve-manuscript-abstract-introduction-discussion to prepare a provenance-locked context bundle and serve the current externally supplied sections."

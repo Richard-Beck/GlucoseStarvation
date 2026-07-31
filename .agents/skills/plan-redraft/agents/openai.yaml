@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Redraft"
+  short_description: "Route manuscript redraft stages"
+  default_prompt: "Use $plan-redraft to assess the manuscript redraft target, serve raw feedback to the next stage owner, route required inputs through terminal manuscript assembly, and update the active plan."

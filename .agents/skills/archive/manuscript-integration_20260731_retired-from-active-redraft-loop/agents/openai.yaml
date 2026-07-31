@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Manuscript Integration"
+  short_description: "Historical integration-boundary placeholder"
+  default_prompt: "Use $archived-manuscript-integration only to audit or compare the integration placeholder retired on 2026-07-31."

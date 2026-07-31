@@ -473,6 +473,12 @@ reset_state_for_refresh <- function(
   new_state
 }
 
+add_glucose_to_state <- function(state, glucose_increment) {
+  new_state <- as.numeric(state)
+  new_state[3] <- new_state[3] + glucose_increment
+  new_state
+}
+
 simulate_strategy <- function(
   strategy_row,
   parms_mix,
@@ -499,10 +505,21 @@ simulate_strategy <- function(
 
   summary_rows <- vector("list", 3L)
   detail_rows <- vector("list", 3L)
+  transition_states <- matrix(
+    NA_real_, nrow = 6L, ncol = length(state),
+    dimnames = list(
+      c("day0_post_seed", "day2_pre_action", "day2_post_action",
+        "day4_pre_action", "day4_post_action", "day6_end"),
+      state_column_names(parms_mix)
+    )
+  )
+  transition_states["day0_post_seed", ] <- state
   time_offset <- 0
 
   for (segment_idx in 1:3) {
     if (segment_idx > 1L) {
+      day_label <- if (segment_idx == 2L) "day2" else "day4"
+      transition_states[paste0(day_label, "_pre_action"), ] <- state
       if (segment_action[[segment_idx]] == "refresh") {
         state <- reset_state_for_refresh(
           state = state,
@@ -511,7 +528,12 @@ simulate_strategy <- function(
           seed_total_n = seed_total_n,
           reset_total_n = reset_total_n_on_refresh
         )
+      } else if (segment_action[[segment_idx]] == "add_glucose") {
+        state <- add_glucose_to_state(state, segment_g0[[segment_idx]])
+      } else if (segment_action[[segment_idx]] != "carry") {
+        stop("Unknown strategy action: ", segment_action[[segment_idx]], call. = FALSE)
       }
+      transition_states[paste0(day_label, "_post_action"), ] <- state
     }
 
     seg_out <- simulate_mixture_segment(
@@ -552,6 +574,7 @@ simulate_strategy <- function(
     state <- unname(as.numeric(end_row[, state_column_names(parms_mix), drop = TRUE]))
     time_offset <- time_offset + interval_hours
   }
+  transition_states["day6_end", ] <- state
 
   summary_df <- do.call(rbind, summary_rows)
   final_row <- summary_df[nrow(summary_df), , drop = FALSE]
@@ -564,7 +587,8 @@ simulate_strategy <- function(
   list(
     interval_summary = summary_df,
     final_summary = final_row,
-    detail = if (isTRUE(detailed)) do.call(rbind, detail_rows) else NULL
+    detail = if (isTRUE(detailed)) do.call(rbind, detail_rows) else NULL,
+    transition_states = as.data.frame(transition_states)
   )
 }
 

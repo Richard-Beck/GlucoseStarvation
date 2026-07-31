@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manuscript Assembly"
+  short_description: "Assemble final manuscript review packages"
+  default_prompt: "Use $manuscript-assembly to assemble a coherent manuscript release package from finalized sources, assets, evidence, review state, validation, and rebuild instructions."

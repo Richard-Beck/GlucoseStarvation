@@ -1,0 +1,4 @@
+interface:
+  display_name: "Method Table Provenance"
+  short_description: "Route figure provenance into Methods artifacts."
+  default_prompt: "Use $method-table-provenance to plan Methods-facing provenance work for these manuscript figures."

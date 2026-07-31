@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Figure Draft Reviewer"
+  short_description: "Historical independent figure-draft review"
+  default_prompt: "Use $archived-manuscript-figure-draft-reviewer only to audit or compare the figure-draft review workflow retired on 2026-07-31."

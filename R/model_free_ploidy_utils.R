@@ -246,11 +246,11 @@ build_model_free_tables <- function(stan_data_path = NULL) {
     well_idx = as.integer(stan_data$well_idx_count),
     hours = as.numeric(stan_data$t_grid[stan_data$grid_idx_count]),
     rep_id = as.character(stan_data$rep_id_count),
-    total_cells = as.numeric(stan_data$N_obs),
+    live_cells = as.numeric(stan_data$N_obs),
     dead_cells = as.numeric(stan_data$D_obs)
   ) %>%
     mutate(
-      live_cells = pmax(total_cells - dead_cells, 0),
+      total_cells = live_cells + dead_cells,
       dead_fraction = if_else(total_cells > 0, dead_cells / total_cells, NA_real_)
     )
 
@@ -509,6 +509,58 @@ fit_log_glucose_response <- function(g0, y, pred_grid = c(0, 0.1, 0.25, 1, 5, 25
     r_squared = summary(fit)$r.squared,
     n = length(y),
     pred = setNames(as.numeric(pred), pred_names)
+  )
+}
+
+fit_glucose_per_live_auc <- function(
+  g0,
+  live_auc,
+  glucose_drawdown,
+  max_g0 = 1,
+  include_intercept = TRUE,
+  conf_level = 0.95
+) {
+  ok <- is.finite(g0) & is.finite(live_auc) & is.finite(glucose_drawdown) & g0 <= max_g0
+  fit_data <- data.frame(
+    g0 = as.numeric(g0[ok]),
+    live_auc = as.numeric(live_auc[ok]),
+    glucose_drawdown = as.numeric(glucose_drawdown[ok])
+  )
+
+  if (nrow(fit_data) < 3L || length(unique(fit_data$live_auc)) < 2L) {
+    return(list(
+      intercept = NA_real_, slope = NA_real_, slope_se = NA_real_,
+      slope_conf_low = NA_real_, slope_conf_high = NA_real_,
+      r_squared = NA_real_, n = nrow(fit_data),
+      auc_min = if (nrow(fit_data)) min(fit_data$live_auc) else NA_real_,
+      auc_max = if (nrow(fit_data)) max(fit_data$live_auc) else NA_real_,
+      include_intercept = include_intercept, max_g0 = max_g0,
+      fit = NULL
+    ))
+  }
+
+  fit <- if (include_intercept) {
+    stats::lm(glucose_drawdown ~ live_auc, data = fit_data)
+  } else {
+    stats::lm(glucose_drawdown ~ 0 + live_auc, data = fit_data)
+  }
+  coef_table <- summary(fit)$coefficients
+  slope_row <- coef_table["live_auc", , drop = FALSE]
+  slope_ci <- stats::confint(fit, "live_auc", level = conf_level)
+
+  list(
+    intercept = if (include_intercept) unname(stats::coef(fit)["(Intercept)"]) else 0,
+    slope = unname(stats::coef(fit)["live_auc"]),
+    slope_se = unname(slope_row[1, "Std. Error"]),
+    slope_conf_low = unname(slope_ci[1]),
+    slope_conf_high = unname(slope_ci[2]),
+    r_squared = summary(fit)$r.squared,
+    n = nrow(fit_data),
+    auc_min = min(fit_data$live_auc),
+    auc_max = max(fit_data$live_auc),
+    include_intercept = include_intercept,
+    max_g0 = max_g0,
+    fit = fit
   )
 }
 

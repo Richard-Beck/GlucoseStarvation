@@ -1,0 +1,61 @@
+"metric","metric_label","model_id","model_alias","pareto_rank","parameter","parameter_label","log2_effect_per_metric_unit","fit_id","best_start"
+"ploidy","Ploidy","1R_1P_0W_C0_M1","1R",1,"ae[1]","v1",0.603951421488608,"all_lines__1r_1p_0w_c0_m1",1
+"ploidy","Ploidy","1R_1P_0W_C0_M1","1R",1,"ah[1]","K1",0.405152870669021,"all_lines__1r_1p_0w_c0_m1",1
+"ploidy","Ploidy","1R_1P_0W_C0_M1","1R",1,"Y_R[1]","y1",-0.810872374242302,"all_lines__1r_1p_0w_c0_m1",1
+"ploidy","Ploidy","1R_1P_0W_C0_M1","1R",1,"m","m",-0.421178053071158,"all_lines__1r_1p_0w_c0_m1",1
+"ploidy","Ploidy","1R_1P_1W_C0_M0","1R,W(m)",2,"ae[1]","v1",0.630797949213019,"all_lines__1r_1p_1w_c0_m0",12
+"ploidy","Ploidy","1R_1P_1W_C0_M0","1R,W(m)",2,"ah[1]","K1",0.398952275585408,"all_lines__1r_1p_1w_c0_m0",12
+"ploidy","Ploidy","1R_1P_1W_C0_M0","1R,W(m)",2,"Y_R[1]","y1",-0.591250396011035,"all_lines__1r_1p_1w_c0_m0",12
+"ploidy","Ploidy","1R_1P_1W_C0_M0","1R,W(m)",2,"m","m",-0.314033189638251,"all_lines__1r_1p_1w_c0_m0",12
+"ploidy","Ploidy","2R_1P_0W_C0_M1","2R(a)",3,"ae[1]","v1",0.559067635082857,"all_lines__2r_1p_0w_c0_m1",35
+"ploidy","Ploidy","2R_1P_0W_C0_M1","2R(a)",3,"ah[1]","K1",0.247354609249792,"all_lines__2r_1p_0w_c0_m1",35
+"ploidy","Ploidy","2R_1P_0W_C0_M1","2R(a)",3,"Y_R[1]","y1",-0.686047448993229,"all_lines__2r_1p_0w_c0_m1",35
+"ploidy","Ploidy","2R_1P_0W_C0_M1","2R(a)",3,"m","m",-0.105406346659273,"all_lines__2r_1p_0w_c0_m1",35
+"ploidy","Ploidy","2R_2P_0W_C0_M1","2R(f)",4,"ae[1]","v1",0.601207552576865,"all_lines__2r_2p_0w_c0_m1",113
+"ploidy","Ploidy","2R_2P_0W_C0_M1","2R(f)",4,"ah[1]","K1",0.291180056213971,"all_lines__2r_2p_0w_c0_m1",113
+"ploidy","Ploidy","2R_2P_0W_C0_M1","2R(f)",4,"Y_R[1]","y1",-0.157784519748965,"all_lines__2r_2p_0w_c0_m1",113
+"ploidy","Ploidy","2R_2P_0W_C0_M1","2R(f)",4,"m","m",-1.40958775769774,"all_lines__2r_2p_0w_c0_m1",113
+"ploidy","Ploidy","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ae[1]","v1",0.538507268684934,"all_lines__2r_2p_1w_c0_m0",120
+"ploidy","Ploidy","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ah[1]","K1",0.113343482024314,"all_lines__2r_2p_1w_c0_m0",120
+"ploidy","Ploidy","2R_2P_1W_C0_M0","2R(f),W(m)",5,"Y_R[1]","y1",-0.114659991743453,"all_lines__2r_2p_1w_c0_m0",120
+"ploidy","Ploidy","2R_2P_1W_C0_M0","2R(f),W(m)",5,"m","m",-0.741358104616223,"all_lines__2r_2p_1w_c0_m0",120
+"cell_area","Cell area","1R_1P_0W_C0_M1","1R",1,"ae[1]","v1",0.611913273105089,"all_lines_cell_area__1r_1p_0w_c0_m1",148
+"cell_area","Cell area","1R_1P_0W_C0_M1","1R",1,"ah[1]","K1",0.377393535365289,"all_lines_cell_area__1r_1p_0w_c0_m1",148
+"cell_area","Cell area","1R_1P_0W_C0_M1","1R",1,"Y_R[1]","y1",-1.10989270616166,"all_lines_cell_area__1r_1p_0w_c0_m1",148
+"cell_area","Cell area","1R_1P_0W_C0_M1","1R",1,"m","m",-0.474491001657556,"all_lines_cell_area__1r_1p_0w_c0_m1",148
+"cell_area","Cell area","1R_1P_1W_C0_M0","1R,W(m)",2,"ae[1]","v1",0.671275564627013,"all_lines_cell_area__1r_1p_1w_c0_m0",291
+"cell_area","Cell area","1R_1P_1W_C0_M0","1R,W(m)",2,"ah[1]","K1",0.236558777989315,"all_lines_cell_area__1r_1p_1w_c0_m0",291
+"cell_area","Cell area","1R_1P_1W_C0_M0","1R,W(m)",2,"Y_R[1]","y1",-1.03174141085344,"all_lines_cell_area__1r_1p_1w_c0_m0",291
+"cell_area","Cell area","1R_1P_1W_C0_M0","1R,W(m)",2,"m","m",-0.411509110907121,"all_lines_cell_area__1r_1p_1w_c0_m0",291
+"cell_area","Cell area","2R_1P_0W_C0_M1","2R(a)",3,"ae[1]","v1",0.719276098904774,"all_lines_cell_area__2r_1p_0w_c0_m1",33
+"cell_area","Cell area","2R_1P_0W_C0_M1","2R(a)",3,"ah[1]","K1",0.403198242506347,"all_lines_cell_area__2r_1p_0w_c0_m1",33
+"cell_area","Cell area","2R_1P_0W_C0_M1","2R(a)",3,"Y_R[1]","y1",-1.0772450223296,"all_lines_cell_area__2r_1p_0w_c0_m1",33
+"cell_area","Cell area","2R_1P_0W_C0_M1","2R(a)",3,"m","m",-0.451198978761413,"all_lines_cell_area__2r_1p_0w_c0_m1",33
+"cell_area","Cell area","2R_2P_0W_C0_M1","2R(f)",4,"ae[1]","v1",0.870468303012622,"all_lines_cell_area__2r_2p_0w_c0_m1",185
+"cell_area","Cell area","2R_2P_0W_C0_M1","2R(f)",4,"ah[1]","K1",0.577460460383974,"all_lines_cell_area__2r_2p_0w_c0_m1",185
+"cell_area","Cell area","2R_2P_0W_C0_M1","2R(f)",4,"Y_R[1]","y1",0.584877478218263,"all_lines_cell_area__2r_2p_0w_c0_m1",185
+"cell_area","Cell area","2R_2P_0W_C0_M1","2R(f)",4,"m","m",-0.339501575711377,"all_lines_cell_area__2r_2p_0w_c0_m1",185
+"cell_area","Cell area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ae[1]","v1",0.897862845661793,"all_lines_cell_area__2r_2p_1w_c0_m0",318
+"cell_area","Cell area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ah[1]","K1",0.597539334525477,"all_lines_cell_area__2r_2p_1w_c0_m0",318
+"cell_area","Cell area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"Y_R[1]","y1",0.438032265751591,"all_lines_cell_area__2r_2p_1w_c0_m0",318
+"cell_area","Cell area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"m","m",-0.168815370359687,"all_lines_cell_area__2r_2p_1w_c0_m0",318
+"nuclear_area","Nuclear area","1R_1P_0W_C0_M1","1R",1,"ae[1]","v1",1.19478333494913,"all_lines_nuclear_area__1r_1p_0w_c0_m1",131
+"nuclear_area","Nuclear area","1R_1P_0W_C0_M1","1R",1,"ah[1]","K1",1.02844658391905,"all_lines_nuclear_area__1r_1p_0w_c0_m1",131
+"nuclear_area","Nuclear area","1R_1P_0W_C0_M1","1R",1,"Y_R[1]","y1",-1.87556703173745,"all_lines_nuclear_area__1r_1p_0w_c0_m1",131
+"nuclear_area","Nuclear area","1R_1P_0W_C0_M1","1R",1,"m","m",-1.46239786935458,"all_lines_nuclear_area__1r_1p_0w_c0_m1",131
+"nuclear_area","Nuclear area","1R_1P_1W_C0_M0","1R,W(m)",2,"ae[1]","v1",1.36098634814892,"all_lines_nuclear_area__1r_1p_1w_c0_m0",8
+"nuclear_area","Nuclear area","1R_1P_1W_C0_M0","1R,W(m)",2,"ah[1]","K1",0.999837219910706,"all_lines_nuclear_area__1r_1p_1w_c0_m0",8
+"nuclear_area","Nuclear area","1R_1P_1W_C0_M0","1R,W(m)",2,"Y_R[1]","y1",-1.6710247584998,"all_lines_nuclear_area__1r_1p_1w_c0_m0",8
+"nuclear_area","Nuclear area","1R_1P_1W_C0_M0","1R,W(m)",2,"m","m",-1.33008017035463,"all_lines_nuclear_area__1r_1p_1w_c0_m0",8
+"nuclear_area","Nuclear area","2R_1P_0W_C0_M1","2R(a)",3,"ae[1]","v1",1.19547698272479,"all_lines_nuclear_area__2r_1p_0w_c0_m1",164
+"nuclear_area","Nuclear area","2R_1P_0W_C0_M1","2R(a)",3,"ah[1]","K1",0.898208154719828,"all_lines_nuclear_area__2r_1p_0w_c0_m1",164
+"nuclear_area","Nuclear area","2R_1P_0W_C0_M1","2R(a)",3,"Y_R[1]","y1",-1.66359502330873,"all_lines_nuclear_area__2r_1p_0w_c0_m1",164
+"nuclear_area","Nuclear area","2R_1P_0W_C0_M1","2R(a)",3,"m","m",-0.756175130910268,"all_lines_nuclear_area__2r_1p_0w_c0_m1",164
+"nuclear_area","Nuclear area","2R_2P_0W_C0_M1","2R(f)",4,"ae[1]","v1",0.962093071577208,"all_lines_nuclear_area__2r_2p_0w_c0_m1",19
+"nuclear_area","Nuclear area","2R_2P_0W_C0_M1","2R(f)",4,"ah[1]","K1",0.401540376713585,"all_lines_nuclear_area__2r_2p_0w_c0_m1",19
+"nuclear_area","Nuclear area","2R_2P_0W_C0_M1","2R(f)",4,"Y_R[1]","y1",-0.813642997933577,"all_lines_nuclear_area__2r_2p_0w_c0_m1",19
+"nuclear_area","Nuclear area","2R_2P_0W_C0_M1","2R(f)",4,"m","m",-1.88005470778554,"all_lines_nuclear_area__2r_2p_0w_c0_m1",19
+"nuclear_area","Nuclear area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ae[1]","v1",1.04969135041742,"all_lines_nuclear_area__2r_2p_1w_c0_m0",33
+"nuclear_area","Nuclear area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"ah[1]","K1",0.444710731927073,"all_lines_nuclear_area__2r_2p_1w_c0_m0",33
+"nuclear_area","Nuclear area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"Y_R[1]","y1",-0.924451859534878,"all_lines_nuclear_area__2r_2p_1w_c0_m0",33
+"nuclear_area","Nuclear area","2R_2P_1W_C0_M0","2R(f),W(m)",5,"m","m",-2.18304398032408,"all_lines_nuclear_area__2r_2p_1w_c0_m0",33

@@ -1,0 +1,12 @@
+{
+  "assembly_root": "manuscripts/20260731T101031_v03",
+  "manifest": "source/figure_set_manifest.csv",
+  "legends": "source/integrated_figure_legends.md",
+  "results_dir": "source/manuscript_sections/results",
+  "methods": "source/manuscript_sections/methods.md",
+  "output": "draft/manuscript_draft.html",
+  "expected_panel_rows": 79,
+  "expected_figures": 23,
+  "expected_results_sections": 5,
+  "expected_user_fixed_claims": 8
+}

@@ -1,0 +1,7 @@
+section_id	old_paragraphs	retained	lightly_revised	substantially_revised	removed_or_replaced	new_paragraphs	old_words	new_words	main_change	writer_report
+results_measurement_foundation	3	0	3	0	0	1	472	526	Updated measurement metrics; clarified the 3/5 size pattern; replaced the SUM-159 paragraph with the unresolved identity concern and exclusion/sensitivity policy; compressed the trajectory synthesis	writer_reports/results_measurement_foundation.md
+results_direct_features	4	1	3	0	0	0	510	457	Preserved the argument while removing unsupported legacy raw slope coefficients	writer_reports/results_direct_features.md
+results_mechanistic_models	8	1	3	2	2	0	1061	648	Retained F3 and S5-S9 logic while removing the obsolete S14 environment-selection transfer branch	writer_reports/results_mechanistic_models.md
+results_posterior_size_context	4	0	1	3	0	0	619	724	Preserved the four-paragraph geometry but updated uniform F4 parameter directions and current S13-S14 morphology context	writer_reports/results_posterior_size_context.md
+results_selection_simulations	6	0	1	2	3	1	701	538	Preserved ecological framing but replaced superseded endpoint and leave-one-line evidence with current F5 and S12 displays	writer_reports/results_selection_simulations.md
+TOTAL	25	2	11	7	5	2	3363	3054	Thirteen of 25 prior paragraphs were retained or lightly revised; five obsolete paragraphs were removed or replaced	NA

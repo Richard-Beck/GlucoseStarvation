@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "figure_count": 23,
+  "panel_endpoint_count": 79,
+  "result_sidecar_count": 5,
+  "assembly_root": "manuscripts/20260731T101031_v03",
+  "source_roots": [
+    "agent-dev/manuscript_integration/20260729_v03_figure_set_integration",
+    "agent-dev/manuscript_results/20260731_v03_results_revision",
+    "agent-dev/manuscript_methods/20260730_v03_methods_provenance_reconstruction",
+    "agent-dev/manuscript_claim_graph/20260730_v03_clean_figure_level_graph",
+    "agent-dev/manuscript_aid/20260731_v03_aid_serving"
+  ]
+}

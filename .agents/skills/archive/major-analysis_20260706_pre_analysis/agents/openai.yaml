@@ -1,0 +1,4 @@
+interface:
+  display_name: "Major Analysis"
+  short_description: "Plan and run complex analyses reproducibly"
+  default_prompt: "Use $major-analysis to plan and execute a significant analysis package with approval, provenance, SLURM deployment, and validation."

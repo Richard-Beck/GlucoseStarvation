@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Serve feedback spans and existing consumer-created items."""
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+SPAN_FIELDS = [
+    "span_id",
+    "raw_source",
+    "start_line",
+    "end_line",
+    "source_sha256",
+    "excerpt_hash",
+    "created_by",
+    "created_at",
+]
+
+ITEM_FIELDS = [
+    "item_id",
+    "source_spans",
+    "created_by_consumer",
+    "created_at",
+    "active",
+    "updated_by_consumer",
+    "updated_at",
+    "item_update_note",
+    "supersedes",
+    "related_items",
+    "consumer_responses",
+]
+
+
+def read_jsonl(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    records = []  # type: List[Dict[str, Any]]
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise SystemExit("%s:%s: invalid JSONL: %s" % (path, line_no, exc))
+    return records
+
+
+def find_repo_root(start: Path) -> Path:
+    start = start.resolve()
+    for path in [start] + list(start.parents):
+        if (path / "docs" / "project_map.txt").exists() or (path / ".git").exists():
+            return path
+    raise SystemExit("Could not find repository root from current directory.")
+
+
+def resolve_repo_path(repo_root: Path, path_text: str) -> Path:
+    path = Path(path_text)
+    if path.is_absolute():
+        return path
+    return repo_root / path
+
+
+def display_path(repo_root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def clean_record(record: Dict[str, Any], fields: List[str]) -> Dict[str, Any]:
+    return {key: record[key] for key in fields if key in record}
+
+
+def consumer_signed_off(item: Dict[str, Any], consumer: str) -> bool:
+    responses = item.get("consumer_responses", [])
+    if not isinstance(responses, list):
+        return False
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        if response.get("consumer_name") == consumer and response.get("status") == "signed_off":
+            return True
+    return False
+
+
+def span_signed_off(span: Dict[str, Any], consumer: str) -> bool:
+    responses = span.get("consumer_responses", [])
+    if not isinstance(responses, list):
+        return False
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        if response.get("consumer_name") == consumer and response.get("status") == "signed_off":
+            return True
+    return False
+
+
+def raw_excerpt(repo_root: Path, span: Dict[str, Any]) -> Dict[str, Any]:
+    source_text = span.get("raw_source")
+    start_line = span.get("start_line")
+    end_line = span.get("end_line")
+    result = {"source_exists": False, "excerpt": ""}  # type: Dict[str, Any]
+    if not source_text:
+        result["note"] = "No raw_source recorded for this span."
+        return result
+    source_path = resolve_repo_path(repo_root, str(source_text))
+    result["source_path"] = display_path(repo_root, source_path)
+    if not source_path.exists():
+        result["note"] = "Raw source path does not exist."
+        return result
+    result["source_exists"] = True
+    try:
+        start = int(start_line) if start_line is not None else 1
+        end = int(end_line) if end_line is not None else start
+    except (TypeError, ValueError):
+        result["note"] = "Span line range is not numeric."
+        return result
+    if start < 1 or end < start:
+        result["note"] = "Span line range is invalid."
+        return result
+    lines = source_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    result["excerpt"] = "\n".join(lines[start - 1 : end])
+    return result
+
+
+def sanitize_name(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    return value.strip("-") or "consumer"
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def build_readme(consumer: str, tracking_root: str, served_dir: Path, span_count: int, item_count: int) -> str:
+    return """# Served Feedback
+
+Consumer: `%s`
+
+Tracking root: `%s`
+
+Spans served: %s
+
+Existing items served: %s
+
+Read `served_feedback.json`, inspect the raw feedback spans, existing items, and
+relevant manuscript artifacts, then fill out `feedback_response_template.json`.
+
+## Rules
+
+- Spans are raw feedback pointers. Read each served span and decide what, if
+  anything, it requires in your scope.
+- Use `span_signoffs` to close out spans you have inspected. A signed-off span is
+  not reopened for the same consumer.
+- Use `new_items` only when one or more spans require a consumer-owned work unit
+  in your scope. A new item must cite one or more `source_spans`.
+- Use `item_signoffs` to record completion, no-change, or not-applicable work on
+  an existing item. Put the consumer's completion summary in `response`.
+- Use `item_modifications` only to change the durable item record itself. Every
+  actual item modification reopens prior item signoffs.
+- Put a given item in only one of `item_signoffs` or `item_modifications`.
+- Use `deferred_by_run_policy` only when the routed run policy explicitly
+  authorizes deferral; cite its blocker fingerprint in `residual_risk`.
+- Sign off an item when your scope is complete for the current item state.
+- Do not edit `feedback_tracking/*.jsonl` directly.
+
+Submit the completed response with:
+
+```bash
+.agents/skills/feedback-manager/scripts/feedback_signoff \\
+  %s \\
+  path/to/feedback_response.json
+```
+""" % (consumer, tracking_root, span_count, item_count, served_dir)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--consumer_name", "--consumer-name", dest="consumer_name")
+    parser.add_argument(
+        "--tracking_root",
+        "--tracking-root",
+        dest="tracking_root",
+        required=True,
+        help="Explicit feedback_tracking/<feedback_id> directory.",
+    )
+    parser.add_argument("--output_dir", "--output-dir", dest="output_dir")
+    parser.add_argument("--repo_root", "--repo-root", dest="repo_root")
+    parser.add_argument(
+        "--include_signed",
+        "--include-signed",
+        action="store_true",
+        help="Include existing items already signed off by this consumer.",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(Path.cwd())
+    consumer = (
+        args.consumer_name
+        or os.environ.get("CODEX_SKILL_NAME")
+        or os.environ.get("CONSUMER_NAME")
+    )
+    if not consumer:
+        raise SystemExit(
+            "Missing consumer name. Pass --consumer_name or set CODEX_SKILL_NAME/CONSUMER_NAME."
+        )
+
+    tracking_root = resolve_repo_path(repo_root, args.tracking_root).resolve()
+    if not tracking_root.exists():
+        raise SystemExit("Tracking root does not exist: %s" % tracking_root)
+
+    spans = read_jsonl(tracking_root / "feedback_spans.jsonl")
+    items = read_jsonl(tracking_root / "feedback_items.jsonl")
+
+    served_spans = []
+    for span in spans:
+        if not args.include_signed and span_signed_off(span, consumer):
+            continue
+        served_spans.append(
+            {
+                "span": clean_record(span, SPAN_FIELDS),
+                "raw_feedback": raw_excerpt(repo_root, span),
+            }
+        )
+
+    served_items = []  # type: List[Dict[str, Any]]
+    for item in items:
+        if not item.get("item_id"):
+            continue
+        if item.get("active", True) is False:
+            continue
+        if not args.include_signed and consumer_signed_off(item, consumer):
+            continue
+        served_items.append({"item": clean_record(item, ITEM_FIELDS)})
+
+    now = dt.datetime.now().astimezone().replace(microsecond=0)
+    out_dir = (
+        resolve_repo_path(repo_root, args.output_dir).resolve()
+        if args.output_dir
+        else tracking_root
+        / "served_feedback"
+        / ("%s_%s" % (now.strftime("%Y%m%dT%H%M%S"), sanitize_name(consumer)))
+    )
+    out_dir.mkdir(parents=True, exist_ok=False)
+
+    tracking_display = display_path(repo_root, tracking_root)
+    payload = {
+        "metadata": {
+            "consumer_name": consumer,
+            "served_at": now.isoformat(),
+            "repo_root": str(repo_root),
+            "tracking_root": tracking_display,
+            "span_count": len(served_spans),
+            "existing_item_count": len(served_items),
+            "selection_rule": "all spans and active existing items without signed-off response from this consumer",
+        },
+        "spans": served_spans,
+        "items": served_items,
+    }
+
+    template = {
+        "consumer_name": consumer,
+        "checked_artifacts": [],
+        "span_signoffs": [],
+        "span_signoff_template": {
+            "span_id": "SPAN-...",
+            "response_type": "not_applicable",
+            "status": "signed_off",
+            "response": "",
+            "checked_artifacts": [],
+            "evidence_artifacts": [],
+            "changed_artifacts": [],
+            "residual_risk": "",
+        },
+        "new_items": [],
+        "item_signoffs": [],
+        "item_modifications": [],
+        "new_item_template": {
+            "source_spans": ["SPAN-..."],
+            "response_type": "scope_satisfied",
+            "status": "signed_off",
+            "response": "",
+            "checked_artifacts": [],
+            "evidence_artifacts": [],
+            "changed_artifacts": [],
+            "residual_risk": "",
+        },
+        "item_signoff_template": {
+            "item_id": "ITEM-...",
+            "response_type": "scope_satisfied",
+            "status": "signed_off",
+            "response": "",
+            "checked_artifacts": [],
+            "evidence_artifacts": [],
+            "changed_artifacts": [],
+            "residual_risk": "",
+        },
+        "item_modification_template": {
+            "item_id": "ITEM-...",
+            "modification_reason": "",
+            "set": {
+                "source_spans": ["SPAN-..."],
+                "active": True,
+                "item_update_note": "",
+            },
+            "response_type": "scope_satisfied",
+            "status": "signed_off",
+            "response": "",
+            "checked_artifacts": [],
+            "evidence_artifacts": [],
+            "changed_artifacts": [],
+            "residual_risk": "",
+        },
+    }
+
+    write_json(out_dir / "served_feedback.json", payload)
+    write_json(out_dir / "feedback_response_template.json", template)
+    (out_dir / "README.md").write_text(
+        build_readme(consumer, tracking_display, out_dir, len(served_spans), len(served_items)),
+        encoding="utf-8",
+    )
+
+    print(out_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,6 +2,32 @@ library(dplyr)
 library(data.table)
 library(stringr)
 
+args <- commandArgs(trailingOnly = TRUE)
+stan_output_path <- if (length(args) >= 1 && nzchar(args[[1]])) args[[1]] else "data/stan_ready_data.Rds"
+area_output_path <- if (length(args) >= 2 && toupper(args[[2]]) == "NONE") "" else if (length(args) >= 2 && nzchar(args[[2]])) args[[2]] else "data/stan_ready_data_with_area.Rds"
+counts_input_path <- if (length(args) >= 3 && nzchar(args[[3]])) args[[3]] else "data/counts/uncorrected.Rds"
+area_counts_path <- if (length(args) >= 4 && nzchar(args[[4]])) args[[4]] else "data/counts/batch_results_TEMP_MEASURE_SIZE.csv"
+
+normalize_glucose_ploidy_column <- function(x, source_path) {
+  matches <- which(tolower(names(x)) == "ploidy")
+  if (length(matches) > 1L) {
+    stop(sprintf("Ambiguous ploidy columns in %s: %s", source_path, paste(names(x)[matches], collapse = ", ")))
+  }
+  if (!length(matches)) {
+    x$ploidy <- NA_character_
+    return(x)
+  }
+
+  values <- tolower(trimws(as.character(x[[matches]])))
+  values[values == ""] <- NA_character_
+  unexpected <- setdiff(unique(stats::na.omit(values)), c("low", "high"))
+  if (length(unexpected)) {
+    stop(sprintf("Unexpected ploidy labels in %s: %s", source_path, paste(unexpected, collapse = ", ")))
+  }
+  x$ploidy <- values
+  x
+}
+
 area_quantile_probs <- c(0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1)
 
 format_prob_label <- function(p) {
@@ -10,10 +36,9 @@ format_prob_label <- function(p) {
   sub("\\.?0+$", "", formatC(p, format = "f", digits = 4))
 }
 
-build_area_summary_matrix <- function(long_counts, quantile_probs = area_quantile_probs) {
-  counts_csv <- "data/counts/batch_results_TEMP_MEASURE_SIZE.csv"
+build_area_summary_matrix <- function(long_counts, counts_csv, quantile_probs = area_quantile_probs) {
   if (!file.exists(counts_csv)) {
-    stop("Expected area-measurement source at 'data/counts/batch_results_TEMP_MEASURE_SIZE.csv'.")
+    stop(sprintf("Expected area-measurement source at '%s'.", counts_csv))
   }
 
   size_raw <- data.table::fread(counts_csv)
@@ -22,7 +47,14 @@ build_area_summary_matrix <- function(long_counts, quantile_probs = area_quantil
   }
 
   if (!("fname" %in% names(size_raw))) {
-    names(size_raw)[1] <- "fname"
+    if ("image_key" %in% names(size_raw)) {
+      size_raw$fname <- size_raw$image_key
+    } else {
+      names(size_raw)[1] <- "fname"
+    }
+  }
+  if (!("cell_size_px" %in% names(size_raw)) && "segmented_area_px" %in% names(size_raw)) {
+    size_raw$cell_size_px <- size_raw$segmented_area_px
   }
 
   meta_path <- "data/counts/image_metadata.Rds"
@@ -186,7 +218,7 @@ as_corrected_counts <- function(x){
 }
 
 cat("Processing Count Data...\n")
-counts_raw <- as_corrected_counts(readRDS("data/counts/uncorrected.Rds"))
+counts_raw <- as_corrected_counts(readRDS(counts_input_path))
 
 counts <- counts_raw %>%
   mutate(exp_key = paste0(cellLine, ".", experiment)) %>%
@@ -235,7 +267,9 @@ for (folder in unique_folders) {
   calib_store[[folder]] <- calib_df[, c("G", "Lum", "calib_batch")]
   
   # 2. Load Data
-  xg <- fread(file.path(path_base, "data.csv"))
+  glucose_data_path <- file.path(path_base, "data.csv")
+  xg <- fread(glucose_data_path)
+  xg <- normalize_glucose_ploidy_column(xg, glucose_data_path)
   
   # Identify valid replicate columns (R1:4 or R1:3 depending on file)
   measure_cols <- intersect(paste0("R", 1:4), names(xg))
@@ -383,7 +417,7 @@ for (i in 1:N_wells) {
 
 long_counts <- do.call(rbind, obs_counts_list)
 long_gluc   <- do.call(rbind, obs_gluc_list)
-area_summary <- build_area_summary_matrix(long_counts)
+area_summary <- if (nzchar(area_output_path)) build_area_summary_matrix(long_counts, area_counts_path) else NULL
 
 all_calib_raw$exp_idx <- calib_map_int[all_calib_raw$calib_batch]
 
@@ -391,7 +425,10 @@ all_calib_raw$exp_idx <- calib_map_int[all_calib_raw$calib_batch]
 # 5. CALCULATE DATA-SPECIFIC PRIORS
 # ==============================================================================
 idx_t0 <- which(long_counts$grid_idx == 1)
-prior_mu_N0 <- mean(log(long_counts$N_live[idx_t0] + 1e-9))
+prior_N0_center <- mean(long_counts$N_live[idx_t0])
+if (!is.finite(prior_N0_center) || prior_N0_center <= 0) {
+  stop("The arithmetic mean of live-cell observations at t=0 must be positive and finite.")
+}
 prior_mu_D0 <- mean(log(long_counts$D[idx_t0] + 1e-9))
 
 # Estimate Fixed Calibration per Experiment
@@ -490,8 +527,7 @@ stan_data <- list(
   G0_per_well    = G0_vector,
   grainsize      = 1,
   
-  prior_mu_N0_mean = prior_mu_N0,
-  prior_mu_N0_sd   = 0.5,
+  prior_N0_center  = prior_N0_center,
   prior_mu_D0_mean = prior_mu_D0,
   prior_mu_D0_sd   = 1.0,
   
@@ -505,12 +541,16 @@ key <- interaction(stan_data$line_id, stan_data$exp_id, stan_data$G0_per_well, d
 stan_data$g1_id <- as.integer(key)
 stan_data$N_G1 <- max(stan_data$g1_id)
 stan_data$g1_ref_well <- match(seq_len(stan_data$N_G1), stan_data$g1_id)
-saveRDS(stan_data, "data/stan_ready_data.Rds")
-cat("Data saved to 'data/stan_ready_data.Rds'.\n")
+dir.create(dirname(stan_output_path), recursive = TRUE, showWarnings = FALSE)
+saveRDS(stan_data, stan_output_path)
+cat(sprintf("Data saved to '%s'.\n", stan_output_path))
 
-stan_data_area <- c(
-  stan_data,
-  area_summary
-)
-saveRDS(stan_data_area, "data/stan_ready_data_with_area.Rds")
-cat("Area-augmented data saved to 'data/stan_ready_data_with_area.Rds'.\n")
+if (nzchar(area_output_path)) {
+  stan_data_area <- c(
+    stan_data,
+    area_summary
+  )
+  dir.create(dirname(area_output_path), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(stan_data_area, area_output_path)
+  cat(sprintf("Area-augmented data saved to '%s'.\n", area_output_path))
+}

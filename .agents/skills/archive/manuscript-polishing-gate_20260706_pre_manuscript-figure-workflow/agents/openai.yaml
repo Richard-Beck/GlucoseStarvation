@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Polishing Gate"
+  short_description: "Historical pre-unified polishing skill"
+  default_prompt: "Use $archived-manuscript-polishing-gate only to audit or compare the pre-2026-07-06 manuscript polishing workflow."

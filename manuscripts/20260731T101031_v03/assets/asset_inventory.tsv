@@ -1,0 +1,24 @@
+asset_id	asset_path	manuscript_location	legend_label	rebuild_manifest_figure_id	sha256
+F1	assets/figures/F1.png	main Results	Figure 1	F1	141a692d3fe11197b8780b4e85a31bbad2539cbbf98ced319a3ff9a385a8d262
+F2	assets/figures/F2.png	main Results	Figure 2	F2	a719945ec28ea6ccb88c08c4a7ff97189226baa31995d349d5e988e2e8d7becb
+F3	assets/figures/F3.png	main Results	Figure 3	F3	d1ebc090f854197bcba87128cd9770e052827d97a581c8e994fb54b9637af2bc
+F4	assets/figures/F4.png	main Results	Figure 4	F4	689f049463e57e64123fecf5c9e66b5dc30b1b45d3b381993c462b8af3492de6
+F5	assets/figures/F5.png	main Results	Figure 5	F5	375fbd6339ffe8f55e6503f9a717410d907f3ec5f3c3adb2e3c60d2d0287326d
+S1	assets/figures/S1.png	supplemental figure index	Figure S1	S1	b910b61f5dc0cafbcacfe2b1232bb45820ce1945606a10809376fb7cae06511f
+S2	assets/figures/S2.png	supplemental figure index	Figure S2	S2	8a8ff36cf20449ba3372d7740ca4ab2cfc43b603a28fde870b4367e66abb6f6e
+S3	assets/figures/S3.png	supplemental figure index	Figure S3	S3	5351f8591952344b17033e12b706a6f39119c1c77e5ddf2f18a1d567d1e26bdf
+S4	assets/figures/S4.png	supplemental figure index	Figure S4	S4	bb7d2b56c57c53513d7cca3bbaf2bbf13eac74bf1ee6b6f7d1ddad753828490b
+S5	assets/figures/S5.png	supplemental figure index	Figure S5	S5	28bf2174f3e68f5041520fe4152cac97a8341477817bf7d14f54f9a2a9a7500b
+S6	assets/figures/S6.png	supplemental figure index	Figure S6	S6	d1119af9f26a738fc96a4455cb18b11b3377fafa6f2a8c9405aa7fd524c19806
+S7	assets/figures/S7.png	supplemental figure index	Figure S7	S7	230fa9a90349b3d9beb22daa0a32253b86f5fb90b1626c981fda0af821e80f67
+S8	assets/figures/S8.png	supplemental figure index	Figure S8	S8	e08cfd788072878a7d6c06ac78053b523aaa22fecac02cfd699e05a50c346058
+S9	assets/figures/S9.png	supplemental figure index	Figure S9	S9	07b898848b842e5a8d7185bd152e35fe4c5e8a3adcda3c86b3290d774b463d36
+S10	assets/figures/S10.png	supplemental figure index	Figure S10	S10	4033e89591214a5fa1f0427e8fc083cfed17576718aabce7c9072b6120f9a6d3
+S11	assets/figures/S11.png	supplemental figure index	Figure S11	S11	e7880a77d05a3824432984a47af9ebcf5e6aa554017c34aa722abaa832ce0b6c
+S12	assets/figures/S12.png	supplemental figure index	Figure S12	S12	5847234c059249428feb67384f95c9ffd37d2632be91dd9fa4edf60618afd6a6
+S13	assets/figures/S13.png	supplemental figure index	Figure S13	S13	cc1d51b90dfd8181e3e03b029e7cd3932456c19e6beb369c0d6bfe4f2f37fe17
+S14	assets/figures/S14.png	supplemental figure index	Figure S14	S14	872f6cee7208baa4feee809b2aa4e2e71ae1066b3db97ceb22442fbcec973ceb
+S15	assets/figures/S15.png	supplemental figure index	Figure S15	S15	74379b5137abf0cca3352d9fd9b1f5533e28c6fbf605457f27b087f24dee6707
+S16	assets/figures/S16.png	supplemental figure index	Figure S16	S16	220612d1108b26912c2c93cbd16a3c6294c4b4fe9acaf2010326d417760fb8d2
+S17	assets/figures/S17.png	supplemental figure index	Figure S17	S17	24f4af0607975068e53f1f96197ba0a959b833c83afa78d1a80f2cde76da8300
+S18	assets/figures/S18.png	supplemental figure index	Figure S18	S18	7a4b0caf518491ef40009e88155a26c65909b31d474127b382161ce84b228652

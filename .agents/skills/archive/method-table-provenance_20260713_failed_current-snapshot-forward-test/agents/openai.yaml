@@ -1,0 +1,4 @@
+interface:
+  display_name: "Method Table Provenance"
+  short_description: "Validate current panel provenance for Methods."
+  default_prompt: "Use $method-table-provenance to validate or build current Methods-facing provenance for these manuscript panels."

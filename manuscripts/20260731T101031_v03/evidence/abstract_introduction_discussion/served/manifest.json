@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "source_bundle_id": "aid-bundle-sha256:844d6c705ed85336285922497f709c8d7aa1dd06efb3ddbb0439ff239256d729",
+  "source_path": "../old_bundle_1/aid_source.md",
+  "extraction": "heading-delimited byte-preserving blocks",
+  "served_files": [
+    {
+      "path": "abstract.md",
+      "section": "Abstract",
+      "byte_size": 1594,
+      "sha256": "8db1c0a7bb099b23e9a7d6af820d756f73a06cf18d248b1871b3d699b55d8959"
+    },
+    {
+      "path": "introduction.md",
+      "section": "Introduction",
+      "byte_size": 4787,
+      "sha256": "cf1ce2dc387b65f9ec4ad1aed0bda306e221650ecc70fdcd728ce9dd3ba465d6"
+    },
+    {
+      "path": "discussion.md",
+      "section": "Discussion",
+      "byte_size": 9795,
+      "sha256": "47beeb7d5fe73f24f199abf390846fbc9d8dc319b47b73eabd1fab7864aec270"
+    },
+    {
+      "path": "references.md",
+      "section": "References cited",
+      "byte_size": 5013,
+      "sha256": "999ca06b67201316942ae294127fb43c94501255e1c7d3df3675e45621686d86"
+    }
+  ]
+}

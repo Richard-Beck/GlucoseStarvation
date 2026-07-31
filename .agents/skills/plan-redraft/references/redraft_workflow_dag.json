@@ -1,0 +1,105 @@
+{
+  "schema_version": 2,
+  "edge_semantics": "Each edge is one direct artifact consumption: producer stage -> consumer stage, labeled with the artifact consumed. Edges are not stage-order rules or transitive dependencies.",
+  "nodes": [
+    {
+      "id": "analysis",
+      "label": "Analysis"
+    },
+    {
+      "id": "figures",
+      "label": "Figures"
+    },
+    {
+      "id": "claim_graph_integration",
+      "label": "Claim graph integration"
+    },
+    {
+      "id": "legends",
+      "label": "Legends"
+    },
+    {
+      "id": "results",
+      "label": "Results"
+    },
+    {
+      "id": "methods",
+      "label": "Methods"
+    },
+    {
+      "id": "abstract_introduction_discussion",
+      "label": "Abstract, Introduction, and Discussion"
+    },
+    {
+      "id": "final_assembly_validation",
+      "label": "Final assembly and validation"
+    }
+  ],
+  "edges": [
+    {
+      "from": "analysis",
+      "to": "figures",
+      "artifact": "analysis outputs"
+    },
+    {
+      "from": "figures",
+      "to": "claim_graph_integration",
+      "artifact": "current evidence package"
+    },
+    {
+      "from": "figures",
+      "to": "legends",
+      "artifact": "figure package"
+    },
+    {
+      "from": "figures",
+      "to": "results",
+      "artifact": "figure descriptions"
+    },
+    {
+      "from": "figures",
+      "to": "methods",
+      "artifact": "figure provenance"
+    },
+    {
+      "from": "claim_graph_integration",
+      "to": "results",
+      "artifact": "claim/evidence graph"
+    },
+    {
+      "from": "results",
+      "to": "abstract_introduction_discussion",
+      "artifact": "Results prose"
+    },
+    {
+      "from": "methods",
+      "to": "abstract_introduction_discussion",
+      "artifact": "Methods constraints"
+    },
+    {
+      "from": "figures",
+      "to": "final_assembly_validation",
+      "artifact": "figure assets"
+    },
+    {
+      "from": "legends",
+      "to": "final_assembly_validation",
+      "artifact": "legend text"
+    },
+    {
+      "from": "results",
+      "to": "final_assembly_validation",
+      "artifact": "Results prose"
+    },
+    {
+      "from": "methods",
+      "to": "final_assembly_validation",
+      "artifact": "Methods prose"
+    },
+    {
+      "from": "abstract_introduction_discussion",
+      "to": "final_assembly_validation",
+      "artifact": "A/I/D prose"
+    }
+  ]
+}

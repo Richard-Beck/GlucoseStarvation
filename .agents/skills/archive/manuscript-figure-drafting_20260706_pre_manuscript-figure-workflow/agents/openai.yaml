@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Figure Drafting"
+  short_description: "Historical pre-unified figure drafting skill"
+  default_prompt: "Use $archived-manuscript-figure-drafting only to audit or compare the pre-2026-07-06 figure drafting workflow."

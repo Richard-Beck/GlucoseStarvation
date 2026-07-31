@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manuscript Legend Writing"
+  short_description: "Write legends from served figure packets"
+  default_prompt: "Use $manuscript-legend-writing to write or validate figure legends from bounded per-figure assignment packets prepared from the integration package."

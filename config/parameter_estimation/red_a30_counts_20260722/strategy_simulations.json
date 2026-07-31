@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "dataset_ids": [
+    "all_lines",
+    "loo_exclude_sum_159_fuse",
+    "single_mcf10a",
+    "single_mda_mb_231",
+    "single_snu668",
+    "single_sum_159_chem",
+    "single_sum_159_fuse"
+  ],
+  "model_ids": [
+    "1R_1P_0W_C0_M1",
+    "1R_1P_1W_C0_M0",
+    "2R_1P_0W_C0_M1",
+    "2R_2P_0W_C0_M1",
+    "2R_2P_1W_C0_M0"
+  ],
+  "posterior_draws": 100,
+  "draw_selection": "chain_balanced_even",
+  "glucose_mM": [0, 0.1, 0.25, 0.5, 1, 5, 25],
+  "interval_hours": 48,
+  "segments": 3,
+  "time_step_hours": 0.25,
+  "initial_high_fraction": 0.5,
+  "seed_total_n": "draw_specific_mean_fitted_N0",
+  "refresh_resets_total_n": false,
+  "refresh_resets_latent_resources": true,
+  "refresh_clears_waste": true,
+  "storage": {
+    "format": "qs",
+    "preset": "high",
+    "algorithm": "zstd"
+  },
+  "resources": {
+    "cpus": 8,
+    "mem_gb": 16,
+    "time": "01:00:00",
+    "qos": "xxlarge",
+    "validator_cpus": 2,
+    "validator_mem_gb": 8,
+    "validator_time": "02:00:00"
+  },
+  "smoke": {
+    "draws": 4,
+    "schedules": 8
+  }
+}

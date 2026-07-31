@@ -60,7 +60,11 @@ resolve_well_index <- function(
     stop(sprintf("Could not find %s in draw_vec", g1_param_name))
   }
 
-  N0 <- exp(log(500) + as.numeric(draw_vec[[n0_param_name]]) * 1.0)
+  prior_N0_center <- as.numeric(stan_data$prior_N0_center)
+  if (length(prior_N0_center) != 1L || !is.finite(prior_N0_center) || prior_N0_center <= 0) {
+    stop("stan_data$prior_N0_center must be a positive finite scalar")
+  }
+  N0 <- exp(log(prior_N0_center) + as.numeric(draw_vec[[n0_param_name]]) * 1.0)
   fitted_G0 <- as.numeric(draw_vec[[g1_param_name]])
 
   raw_theta_line <- draw_vec[sprintf("raw_theta_line[%d,%d]", seq_len(L), line_id)]

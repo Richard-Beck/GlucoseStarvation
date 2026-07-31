@@ -1,0 +1,48 @@
+dataset_id	parent_dataset	transform	line_name	direction	notes
+all_lines		identity			canonical all-line input
+loo_exclude_mcf10a	all_lines	exclude_line	MCF10A		leave one line out
+loo_exclude_mda_mb_231	all_lines	exclude_line	MDA-MB-231		leave one line out
+loo_exclude_snu668	all_lines	exclude_line	SNU668		leave one line out
+loo_exclude_sum_159_chem	all_lines	exclude_line	SUM-159-chem		leave one line out
+loo_exclude_sum_159_fuse	all_lines	exclude_line	SUM-159-fuse		canonical no-SUM-fuse subset
+single_mcf10a	all_lines	single_line	MCF10A		single-line input
+single_mda_mb_231	all_lines	single_line	MDA-MB-231		single-line input
+single_snu668	all_lines	single_line	SNU668		single-line input
+single_sum_159_chem	all_lines	single_line	SUM-159-chem		single-line input
+single_sum_159_fuse	all_lines	single_line	SUM-159-fuse		single-line input
+all_l2h_mcf10a	all_lines	ploidy_holdout	MCF10A	low_to_high	all-line directional transfer
+all_h2l_mcf10a	all_lines	ploidy_holdout	MCF10A	high_to_low	all-line directional transfer
+all_l2h_mda_mb_231	all_lines	ploidy_holdout	MDA-MB-231	low_to_high	all-line directional transfer
+all_h2l_mda_mb_231	all_lines	ploidy_holdout	MDA-MB-231	high_to_low	all-line directional transfer
+all_l2h_snu668	all_lines	ploidy_holdout	SNU668	low_to_high	all-line directional transfer
+all_h2l_snu668	all_lines	ploidy_holdout	SNU668	high_to_low	all-line directional transfer
+all_l2h_sum_159_chem	all_lines	ploidy_holdout	SUM-159-chem	low_to_high	all-line directional transfer
+all_h2l_sum_159_chem	all_lines	ploidy_holdout	SUM-159-chem	high_to_low	all-line directional transfer
+all_l2h_sum_159_fuse	all_lines	ploidy_holdout	SUM-159-fuse	low_to_high	all-line directional transfer
+all_h2l_sum_159_fuse	all_lines	ploidy_holdout	SUM-159-fuse	high_to_low	all-line directional transfer
+all_l2h_null_mcf10a	all_lines	ploidy_null	MCF10A	low_to_high	matched ploidy-null transfer
+all_h2l_null_mcf10a	all_lines	ploidy_null	MCF10A	high_to_low	matched ploidy-null transfer
+all_l2h_null_mda_mb_231	all_lines	ploidy_null	MDA-MB-231	low_to_high	matched ploidy-null transfer
+all_h2l_null_mda_mb_231	all_lines	ploidy_null	MDA-MB-231	high_to_low	matched ploidy-null transfer
+all_l2h_null_snu668	all_lines	ploidy_null	SNU668	low_to_high	matched ploidy-null transfer
+all_h2l_null_snu668	all_lines	ploidy_null	SNU668	high_to_low	matched ploidy-null transfer
+all_l2h_null_sum_159_chem	all_lines	ploidy_null	SUM-159-chem	low_to_high	matched ploidy-null transfer
+all_h2l_null_sum_159_chem	all_lines	ploidy_null	SUM-159-chem	high_to_low	matched ploidy-null transfer
+all_l2h_null_sum_159_fuse	all_lines	ploidy_null	SUM-159-fuse	low_to_high	matched ploidy-null transfer
+all_h2l_null_sum_159_fuse	all_lines	ploidy_null	SUM-159-fuse	high_to_low	matched ploidy-null transfer
+nosum_l2h_mcf10a	loo_exclude_sum_159_fuse	ploidy_holdout	MCF10A	low_to_high	no-SUM directional transfer
+nosum_h2l_mcf10a	loo_exclude_sum_159_fuse	ploidy_holdout	MCF10A	high_to_low	no-SUM directional transfer
+nosum_l2h_mda_mb_231	loo_exclude_sum_159_fuse	ploidy_holdout	MDA-MB-231	low_to_high	no-SUM directional transfer
+nosum_h2l_mda_mb_231	loo_exclude_sum_159_fuse	ploidy_holdout	MDA-MB-231	high_to_low	no-SUM directional transfer
+nosum_l2h_snu668	loo_exclude_sum_159_fuse	ploidy_holdout	SNU668	low_to_high	no-SUM directional transfer
+nosum_h2l_snu668	loo_exclude_sum_159_fuse	ploidy_holdout	SNU668	high_to_low	no-SUM directional transfer
+nosum_l2h_sum_159_chem	loo_exclude_sum_159_fuse	ploidy_holdout	SUM-159-chem	low_to_high	no-SUM directional transfer
+nosum_h2l_sum_159_chem	loo_exclude_sum_159_fuse	ploidy_holdout	SUM-159-chem	high_to_low	no-SUM directional transfer
+nosum_l2h_null_mcf10a	loo_exclude_sum_159_fuse	ploidy_null	MCF10A	low_to_high	matched no-SUM ploidy-null transfer
+nosum_h2l_null_mcf10a	loo_exclude_sum_159_fuse	ploidy_null	MCF10A	high_to_low	matched no-SUM ploidy-null transfer
+nosum_l2h_null_mda_mb_231	loo_exclude_sum_159_fuse	ploidy_null	MDA-MB-231	low_to_high	matched no-SUM ploidy-null transfer
+nosum_h2l_null_mda_mb_231	loo_exclude_sum_159_fuse	ploidy_null	MDA-MB-231	high_to_low	matched no-SUM ploidy-null transfer
+nosum_l2h_null_snu668	loo_exclude_sum_159_fuse	ploidy_null	SNU668	low_to_high	matched no-SUM ploidy-null transfer
+nosum_h2l_null_snu668	loo_exclude_sum_159_fuse	ploidy_null	SNU668	high_to_low	matched no-SUM ploidy-null transfer
+nosum_l2h_null_sum_159_chem	loo_exclude_sum_159_fuse	ploidy_null	SUM-159-chem	low_to_high	matched no-SUM ploidy-null transfer
+nosum_h2l_null_sum_159_chem	loo_exclude_sum_159_fuse	ploidy_null	SUM-159-chem	high_to_low	matched no-SUM ploidy-null transfer

@@ -1,0 +1,31 @@
+{
+  "release_id": "morphology_metrics_a30_20260729",
+  "model_name": "gpath",
+  "model_version": "v1",
+  "output_root": "data/modelling",
+  "build_area_stan_data": false,
+  "optimization_init_radius": 0.2,
+  "optimization_init_source_root": "data/modelling/gpath_v1/red_a30_counts_20260722/datasets/all_lines/optim",
+  "counts": {
+    "mode": "existing_rds",
+    "input_path": "data/image_processing_runs/full_segmentation_classification_nuclear/run_20260721_163410/summaries/counts.Rds",
+    "materialize": false,
+    "expected_sha256": "9d17ded4eb7787d02e2917a111eecf770fd8d05ff176b7a09c58ead2ffd35b4c",
+    "count_definition": "mean_per_imaged_field_including_zero-count_fields"
+  },
+  "base_stan_data": {
+    "input_path": "data/modelling/gpath_v1/red_a30_counts_20260722/datasets/all_lines/stan_data.Rds",
+    "expected_sha256": "cd847f2bae8e541467ee6c86b7891e608c53b6e542f4a481c697bac5e479f650"
+  },
+  "derived_config": "config/parameter_estimation/morphology_metrics_a30_20260729/derived.json",
+  "morphology_metrics": {
+    "summary_path": "data/image_processing_runs/full_segmentation_classification_nuclear/run_20260721_163410/summaries/cell_nuclear_area_summaries.Rds",
+    "expected_sha256": "2ce0f67d0f30002e914836ac24221aaab1960afa36f55af1d9417a5967265f9b",
+    "pair_map_tsv": "config/parameter_estimation/morphology_metrics_a30_20260729/pair_map.tsv",
+    "object_scope": "alive",
+    "min_hours": 24,
+    "max_hours": 48
+  },
+  "datasets_tsv": "config/parameter_estimation/morphology_metrics_a30_20260729/datasets.tsv",
+  "fits_tsv": "config/parameter_estimation/morphology_metrics_a30_20260729/fits.tsv"
+}

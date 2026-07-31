@@ -77,6 +77,7 @@ functions {
       matrix raw_theta_line,
       vector raw_theta_ploidy,
       vector raw_N0,
+      real prior_N0_center,
       real nu_N,
       real sigma_N,
       // Mapping and Priors
@@ -100,7 +101,7 @@ functions {
       int N_obs_count,
       array[] int well_idx_count,
       array[] int grid_idx_count,
-      array[] int N_obs,
+      array[] real N_obs,
       int N_obs_gluc,
       array[] int well_idx_gluc,
       array[] int grid_idx_gluc,
@@ -120,7 +121,7 @@ functions {
           
           if (is_train[w] == 1) {
           
-            real N0_w = exp(log(500) + raw_N0[group_id[w]] * 1.0);
+            real N0_w = exp(log(prior_N0_center) + raw_N0[group_id[w]] * 1.0);
             
             vector[L] raw_w = raw_theta_line[, line_id[w]] + (raw_theta_ploidy .* ploidy_effect_mask) * ploidy_metric[w];
             vector[L] theta_phys = exp(log(prior_centers) + raw_w .* prior_scales);
@@ -203,7 +204,7 @@ functions {
             }
         } else {
             // Minimal evaluation for holdout wells at t=0 (Bypasses ODE solve)
-            real N0_w = exp(log(500) + raw_N0[group_id[w]] * 1.0);
+            real N0_w = exp(log(prior_N0_center) + raw_N0[group_id[w]] * 1.0);
             real G1_0_w = G1_0[g1_id[w]];
 
             // Evaluate Initial Cell Counts
@@ -274,8 +275,8 @@ data {
   // Observation Mappings
   array[N_obs_count] int<lower=1, upper=N_wells> well_idx_count;
   array[N_obs_count] int<lower=1, upper=N_grid>  grid_idx_count;
-  array[N_obs_count] int<lower=0> N_obs; 
-  array[N_obs_count] int<lower=0> D_obs; 
+  array[N_obs_count] real<lower=0> N_obs;
+  array[N_obs_count] real<lower=0> D_obs;
 
   array[N_obs_gluc] int<lower=1, upper=N_wells> well_idx_gluc;
   array[N_obs_gluc] int<lower=1, upper=N_grid>  grid_idx_gluc;
@@ -293,6 +294,7 @@ data {
   array[L] int<lower=1, upper=L> param_map; 
   vector[L] param_mask; 
   vector[L] ploidy_effect_mask;
+  real<lower=0> prior_N0_center;
   
   //CV masks
   array[N_wells] int<lower=0, upper=1> is_train;
@@ -353,7 +355,7 @@ model {
   for (j in 1:N_G1) G1_0[j] ~ normal(G0_per_well[g1_ref_well[j]], sigma_vec[g1_ref_well[j]]);
   target += reduce_sum(
       partial_sum_likelihood, well_indices, 1, 
-      raw_theta_line, raw_theta_ploidy, raw_N0, nu_N,sigma_N,
+      raw_theta_line, raw_theta_ploidy, raw_N0, prior_N0_center, nu_N,sigma_N,
       line_id, ploidy_metric, ploidy_effect_mask, group_id,
       prior_centers, prior_scales, param_map, param_mask,
       R, P, W, L, waste_mech, G1_0,g1_id, R_init_base, exp_id, t_grid, N_grid,
@@ -370,7 +372,7 @@ generated quantities {
   vector[N_wells] ll_well = rep_vector(0.0, N_wells);
 
   for (w in 1:N_wells) {
-      real N0_w = exp(log(500) + raw_N0[group_id[w]] * 1.0);
+      real N0_w = exp(log(prior_N0_center) + raw_N0[group_id[w]] * 1.0);
           
       vector[L] raw_w = raw_theta_line[, line_id[w]] + (raw_theta_ploidy .* ploidy_effect_mask) * ploidy_metric[w];
       vector[L] theta_phys = exp(log(prior_centers) + raw_w .* prior_scales);

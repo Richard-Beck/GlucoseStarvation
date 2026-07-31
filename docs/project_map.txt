@@ -1,211 +1,128 @@
-• Project aim
+Project map
+Updated: 2026-07-31
 
-  The scientific aim is to determine how ploidy changes cancer cell behavior under glucose limitation, and whether
-  those ploidy-associated changes are robust enough across cell lines to support broader mechanistic interpretation and,
-  only if warranted later, selection-oriented hypotheses. The map below distinguishes the canonical pipeline from a few
-  remaining side paths that are scientifically useful but not part of the default mechanistic path.
+Purpose
 
-• Current repo state
+  Compact navigation for the retained, current manuscript-rebuild repository.
+  Historical, exploratory, superseded, and transient paths were relocated to
+  junk/ with their original repository-relative layout. junk/ is local,
+  Git-ignored, and not an active dependency.
 
-  A large legacy cleanup removed the older ecology tree, the transfer-CV workflow family, the old `*_old` image-training/
-  eval branches, and the deprecated single-condition / deprecated-report notebooks. Some helper files and saved Slurm run
-  records still contain transfer-oriented path strings; treat those as dangling historical references unless they are
-  wired back into a maintained workflow. docs/publication_work_packages.txt is the current first-draft planning document:
-  it defines publication-oriented work packages, pass/fail criteria, and human-reviewable outputs. docs/
-  wp1_6_success_evaluation.txt records the current post-implementation assessment of WP1-6 goals and scientific success.
+Start here
 
-• Core / canonical pipeline
+  - README.md gives the project-level scientific orientation.
+  - docs/current_manuscript_rebuild.md defines the cleanup/rebuild boundary,
+    validation commands, limitations, and recovery policy.
+  - docs/current_manuscript_rebuild_keep_roots.txt is the exact keep-root
+    manifest used by scripts/audit_cleanup_keep_roots.py.
+  - AGENTS.md contains the HPC execution rules. In particular, invoke R scripts
+    through scripts/agentRrunner.sh and use SLURM for jobs expected to exceed
+    five minutes or require large/GPU resources.
 
-  1. Raw images to object-level classifications
-     The counts path starts by linking raw images with workflow/preliminaries_and_metadata.Rmd via scripts/mapFolders.R,
-     then parsing filename metadata with get_meta() in scripts/define_plate_maps.R. Object classification is produced by
-     scripts/image_processing/batch_segment_and_classify.py and its helper functions.
-  2. Count aggregation and optional smoothing
-     workflow/adaptive_cell_count.Rmd aggregates batch object results into data/counts/uncorrected.Rds. It can also run
-     optimize_counts() in src/optimize_counts.R, which calls the C++ smoothing code in src/count_smoothing.cpp and writes
-     data/counts/corrected.Rds.
-  3. Canonical Stan-data build
-     The base Stan input is built by R/prepare_data.R. It reads the count tables, merges glucose calibration/data CSVs,
-     aligns the alive-cell area quantile sidecar from data/counts/batch_results_TEMP_MEASURE_SIZE.csv, and writes
-     data/stan_ready_data.Rds plus data/stan_ready_data_with_area.Rds. Treat this script as the canonical builder for the
-     full-data mechanistic input object; derived/subset Stan-data objects may be created elsewhere for special workflows.
-  4. Versioned gpath optimization
-     The active mechanistic model family is models/gpath/v1/model.R plus models/gpath/v1/gpath_hier.stan. The canonical
-     optimization path is pipelines/gpath/optim/run_start.R plus pipelines/gpath/optim/combine.R, which load stan_ready_data
-     via R/gpath_run_utils.R, run multi-start optimization, and write run directories plus run_manifest.json under
-     data/runs/gpath/v1/optim/<dataset>/<run_id>/<run_label>/. The assessment model set lives at
-     models/gpath/v1/assessment_run_ids.txt. Locked reruns use the reproducibility directories plus sha256 helpers in
-     R/validation_utils.R.
-  5. Canonical full-data NUTS
-     The current full-data sampling path is driven by config/jobs/gpath_full_oracle_assessment.json, scripts/prepare_jobs.R,
-     scripts/run_job.R, R/job_config_utils.R, and R/nuts_utils.R. Submission goes through
-     slurm/submit_gpath_full_oracle_job.sh and slurm/jobs/gpath_full_oracle_array.sh. This is the current maintained NUTS
-     path for oracle/full-data posterior checks.
-  6. Canonical reporting
-     workflow/model_analysis.Rmd is the main reporting notebook for the current mechanistic path. It reads saved optimization
-     summaries, reports model-selection diagnostics, checks the current oracle-NUTS outputs, visualizes reconstructed
-     line/ploidy parameter structure, and summarizes held-out-condition predictive/parameter comparisons from the saved
-     optimization summaries. It is a reporting notebook with some cache regeneration, not a full rebuild of every upstream
-     artifact. Notebook-specific helpers live in R/model_analysis_utils.R.
+Current manuscript
 
-• Exploratory / hypothesis-generating branches
+  - manuscripts/20260731T101031_v03/ is the latest assembled v03 review
+    manuscript: 23 figures (F1-F5 and S1-S18), 79 visible panel endpoints,
+    editable source, a self-contained HTML review draft, evidence, traceability,
+    assembly-local plotting packages, rebuild scripts, and validation reports.
+  - Run rebuild/figures/run_all_figures.sh with an empty output directory to
+    regenerate and byte-check all 23 figures. Run rebuild/manuscript/
+    build_manuscript_html.py through rebuild/python_runner.sh to render the
+    manuscript. See the package README and docs/current_manuscript_rebuild.md.
+  - The package's WARN status records accepted documentation and external-model
+    limitations; it is a coherent review assembly, not submission-complete.
 
-  1. Model-free ploidy summaries
-     This branch uses the same stan_ready_data object but does not fit the ODE. R/model_free_ploidy_utils.R reconstructs
-     count/glucose trajectories per well, derives summary features, and scripts/extract_model_free_ploidy_features.R writes
-     feature and signature panels under data/model_free_ploidy/. scripts/evaluate_model_free_ploidy_transfer.R performs a
-     holdout-line transfer benchmark on those signatures as a robustness check on observed ploidy summaries. The reporting
-     notebook is workflow/model_free_ploidy_analysis.Rmd, which also writes workflow/model_free_ploidy_analysis.txt.
-     scripts/make_wp1_core_starvation_figures.R is the publication WP1 output path: it rebuilds the model-free tables from
-     stan_ready_data and writes Figure 1/Figure 2 plus per-line trajectory grids under figures/wp1_core_starvation/ and
-     audit CSV/RDS/TXT outputs under data/report_exports/wp1_core_starvation/.
-     scripts/make_wp4_sum159_fuse_exclusion_analysis.R is the publication WP4 exception-analysis path: it reruns
-     model-free summaries and transfer/generalization benchmarks with SUM-159-fuse excluded, compares effect sign
-     consistency against all-line results, and writes figures plus audit CSV/RDS/TXT/MD outputs under
-     figures/wp4_sum159_fuse_exclusion/ and data/report_exports/wp4_sum159_fuse_exclusion/.
-     The SUM-159-fuse exception rationale is protocol plus biology: it is the only line with two batches and differing
-     protocol details, it has weak/reversed volume separation, and no-SUM checks move the y1/v1/K1/m directional
-     ploidy-effect conclusion further from zero with stronger inter-model agreement.
-     scripts/make_wp4b_no_sum_gpath_inputs.R is the publication WP4b setup path: it builds a remapped
-     no-SUM-159-fuse Stan-data object, materializes full/transfer/null gpath optimisation datasets, and writes smoke plus
-     full assessment specs for the maintained Slurm optimisation pipeline. scripts/make_wp4b_no_sum_gpath_report.R
-     summarizes completed no-SUM optimisation results against the existing all-line matched-holdout baseline under
-     data/report_exports/wp4b_no_sum159_fuse_gpath/ and figures/wp4b_no_sum159_fuse_gpath/. Current status: WP4b
-     optimisation is complete and at a review checkpoint; the full Slurm optimisation batch was submitted from
-     data/specs/wp4b_no_sum159_fuse_assessment.tsv with metadata in slurm/runs/gpath_optim_batch/20260511_160448/.
-     scripts/make_wp5_mechanistic_representative_model.R is the publication WP5 representative-model review path: it
-     combines full-data optimisation ranking, transfer/null gains, existing model_analysis Pareto-front overlay review,
-     model_analysis oracle-NUTS QC, automated alive/glucose overlay fit scores, and candidate overlay figures under
-     data/report_exports/wp5_mechanistic_representative_model/ and figures/wp5_mechanistic_representative_model/.
-  2. Spline / hidden-state exploration
-     workflow/transfer_spline_first_attempt.Rmd rebuilds observed trajectories from stan_ready_data, fits smooth empirical
-     rate-vs-glucose relationships, and asks which extra state summaries reduce residual structure. scripts/
-     explore_transfer_spline_integrated_state.R is a follow-up screen that writes CSV summaries under
-     data/report_exports/transfer_spline_integrated_state/. This branch is exploratory support for hidden-state reasoning,
-     not part of the canonical mechanistic workflow.
-  3. Area / morphology side path
-     The area-aware sidecar built in R/prepare_data.R writes data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd
-     is the lightweight reporting notebook for that object. scripts/make_wp2_morphology_volume_figures.R is the publication
-     WP2 output path: it fits adjusted area/volume models and writes Figure 3/Figure 4 plus diagnostics under
-     figures/wp2_morphology_volume/ and data/report_exports/wp2_morphology_volume/. scripts/
-     make_wp2_morphology_model_report.R consumes that row-level export and writes markdown/HTML model-comparison reports
-     under data/report_exports/wp2_morphology_model_report/. This is still an auxiliary reporting path rather than a
-     canonical Stan fitting branch.
-  4. Selection-strategy simulation
-     This branch uses fitted gpath parameters rather than feature engineering. R/selection_strategy_utils.R builds a
-     mixed-culture simulation ODE, scripts/run_gpath_selection_strategy_batch.R writes batch outputs under
-     data/selection_strategy/gpath/v1/<dataset>/..., and workflow/selection_strategy_analysis.Rmd reports those results.
-     Treat this as a downstream hypothesis-generation branch built on mechanistic fits, not part of the canonical fitting
-     pipeline itself. scripts/wp6_no_sum_selection_config.R runs the WP5-main-model no-SUM global selection subset, and
-     scripts/make_wp6_selection_competition_report.R is the publication WP6 output path: it filters models through the WP5
-     decision table, combines all-line selection outputs, no-SUM global selection outputs, and single-line competition
-     validation scores, then writes figures plus audit CSV/RDS/MD outputs under figures/wp6_selection_competition/ and
-     data/report_exports/wp6_selection_competition/.
+Current manuscript component roots
 
-  Competition-validation side branch
+  - agent-dev/manuscript_integration/20260729_v03_figure_set_integration/ is the
+    approved 23-figure integration, final image set, semantic inventory, legend
+    package, replay register, and visual QC source.
+  - agent-dev/manuscript_methods/
+    20260730_v03_methods_provenance_reconstruction/ contains the verified
+    271-object/417-edge provenance graph, exact 79-panel endpoint manifest,
+    classifications, Methods spine and canonical Methods prose.
+  - agent-dev/manuscript_results/20260731_v03_results_revision/ contains the
+    approved five-section Results source.
+  - agent-dev/manuscript_claim_graph/
+    20260730_v03_clean_figure_level_graph/ contains the clean graph used by the
+    current assembly.
+  - agent-dev/manuscript_aid/20260731_v03_aid_serving/ contains the ordered
+    Abstract/Introduction/Discussion/References serving bundle.
 
-  data/counts/competition/ currently holds empirical mixed-culture count tables that are not part of the Stan training
-  path. workflow/competition_analysis.Rmd is the lightweight report for this branch: it audits the object structure,
-  reconstructs 2N/4N/dead competition summaries such as `frac_4N`, `log(4N/2N)`, total-live, and dead-fraction
-  trajectories, and frames those summaries as validation targets for the mixed-culture selection-strategy simulations
-  rather than as model-fitting input.
+Accepted figure-generation packages
 
-  Image-derived feature branch
+  - manuscript_figures/20260722T141236_resegmentation_fix/ generates the core,
+    mechanistic-diagnostic, posterior-size, and morphology figure families.
+  - manuscript_figures/20260728_posterior_strategy_figure_set/ generates F5 and
+    the strategy-context supplement.
+  - manuscript_figures/20260729_sum159_label_swap_evidence_figures/ generates
+    S15-S18, including microscopy views from source channels and masks.
+  - figures/user-approved-raster-figures/ is the immutable approved-raster
+    source; F3a uses model_family_schematic_placeholder.png.
 
-  This is separate from the Stan path. The size-aware classifier is scripts/image_processing/
-  batch_segment_and_classify_TEMP_MEASURE_SIZE.py, which adds cell_size_px. workflow/preliminaries_and_metadata.Rmd:65
-  reads batch_results_TEMP_MEASURE_SIZE.csv, builds data/counts/uncorrected_features.Rds at line 87, and uses that for
-  exploratory feature plots. That feature table is still not consumed by R/prepare_data.R or the Stan fitting scripts,
-  so the original image-derived branch remains exploratory rather than a first-class modelling path. The current live
-  extension is an area-aware sidecar in R/prepare_data.R:
-  it aligns alive-cell size quantiles from batch_results_TEMP_MEASURE_SIZE.csv to the count-observation rows and writes
-  data/stan_ready_data_with_area.Rds. workflow/area_quantile_eda.Rmd is the new lightweight reporting notebook for that
-  object: it plots q50/q99/tail-ratio trajectories, derives a crowding-adjusted latent volume proxy from the central
-  area quantiles, shows within-line ploidy contrasts, morphology-versus-glucose relationships, and a cleaned-up port of
-  the size-to-glucose-cost scaling idea from workflow/volume_aware_anal.Rmd. The publication WP2 script,
-  scripts/make_wp2_morphology_volume_figures.R, promotes the area quantiles into adjusted size/volume figures and
-  summary tables. scripts/make_wp2_morphology_model_report.R adds blocked-CV markdown/HTML reports comparing time,
-  density, glucose, and growth/death covariate models for pixel area. The broader image-derived feature panel is still
-  not a primary downstream modelling branch.
-  A newer bootstrap path is scripts/image_processing/batch_extract_object_features.py plus
-  scripts/image_processing/run_batch_object_features.sbatch: it runs Cellpose without the classifier layer, derives
-  per-object `area_px`, `live_mean`, `dead_mean`, `live_bg_z`, and `dead_bg_z` from the normalized composite channels,
-  and writes each run into a timestamped folder with the invocation and script copy saved alongside the CSV.
-  Preliminary live/dead counts from that object-level output now run through
-  scripts/image_processing/make_prelim_counts_from_object_features.R, which computes a global
-  median-area cutoff (`area_px >= 0.05 * median(area_px)`), labels kept objects by sign of `live_bg_z - dead_bg_z`,
-  parses `image_key` metadata with `get_meta()` from scripts/define_plate_maps.R, writes per-image counts plus
-  condition columns (`prelim_counts_by_image.csv`), and saves commit/checksum provenance in
-  `prelim_counts_meta.json` under the same run folder.
-  A single-image annotation mockup helper now lives at
-  scripts/image_processing/make_sample_annotation_preview.py: it builds an RGB composite for one `image_key`,
-  extracts a 400x400 context crop, and overlays the central 200x200 annotation target box.
-  Batch annotation-set construction now lives at scripts/image_processing/build_annotation_stack_90.py:
-  it reads prelim_counts_by_image.csv, excludes `MCF10A-ctrl`/`MCF10A-hras`, selects one image per
-  `cellLine x ploidy x glucose_bin(low/mid/high) x time_bin(early/mid/late)` stratum (90 total), and writes a
-  single 16-bit ImageJ stack (`annotation_stack_90.tif`, axes `TCYX`) plus a per-frame manifest/metadata sidecar.
-  Post-annotation object-dataset construction now lives at
-  scripts/image_processing/build_object_dataset_and_embeddings.py: it runs batched Cellpose on the annotation stack,
-  writes per-frame label masks (`0` background, `1..N` object ids), maps point annotations to object ids for binary
-  `alive`/`not_alive` labels, excludes boundary-touching objects by default, and exports concatenated
-  frame-embedding + masked-object-embedding + `log(area)` feature tables for classifier training.
-  Cluster execution wrapper for that step now lives at
-  scripts/image_processing/run_build_object_dataset_and_embeddings.sbatch (activates `cpose` and writes
-  labels/feature-table outputs into the chosen run folder).
-  A simple downstream training/reporting path now lives at
-  scripts/image_processing/train_object_embedding_classifier.py,
-  scripts/image_processing/plot_object_embedding_classifier_results.R, and
-  scripts/image_processing/run_train_object_embedding_classifier.sbatch: the trainer fits a standardized logistic
-  regression on `log_area_px + obj_emb_* + frame_emb_*` with `label_int` as the target and saves metrics/predictions/
-  coefficients/model bundle, the R script turns those saved artifacts into a compact PNG/TXT summary, and the sbatch
-  wrapper runs both steps in the `cpose` environment.
-  The publication WP3 nuclear-size pilot is now manifest-driven and GPU-bound:
-  scripts/image_processing/make_wp3_nuclear_pilot_manifest.py selects a bounded
-  line/ploidy/glucose-bin/time-bin pilot from prelim_counts_by_image.csv,
-  slurm/submit_wp3_nuclear_size_pilot.sh submits the CPSAM job through
-  scripts/image_processing/run_wp3_nuclear_size_pilot.sbatch with an A30 GPU,
-  and scripts/image_processing/wp3_nuclear_size_pilot.py writes per-object
-  cell/nuclear features plus local cell/nuclear mask TIFFs under
-  data/image_processing_runs/wp3_nuclear_size_pilot/. scripts/
-  make_wp3_nuclear_size_report.R consumes a completed run and writes Figure
-  5-style nuclear-size plots, high/low ploidy nuclear-area violin comparisons by time/confluency, alive-cell-gated
-  QC summaries, and image-blocked nuclear-area covariate model comparisons under
-  figures/wp3_nuclear_size/ and data/report_exports/wp3_nuclear_size/. scripts/
-  image_processing/make_wp3_segmentation_overlay_examples.py writes RGB raw-image
-  overlay examples with CPSAM cell and nuclear outlines under
-  figures/wp3_nuclear_size/segmentation_examples/.
+Current scientific inputs and releases
 
-  Agent-sidecar utilities
+  - all_raw/ is retained conservatively as the broad raw-acquisition boundary
+    because parts of the current Methods graph identify source collections
+    semantically rather than by per-file locks.
+  - data/image_processing_runs/full_segmentation_classification_nuclear/
+    run_20260721_163410/ is the current 33,600-field segmentation,
+    classification, count, and cell/nuclear-area release.
+  - data/image_processing_runs/run_20260324_233122/ and
+    data/image_processing_validation/segmentation_classifier_90frame/20260722/
+    provide the current classifier-training/validation and montage sources.
+  - data/image_processing_runs/sum159_competition_resegmentation/
+    run_20260720_143217/ and data/image_processing_runs/
+    sum159_targeted_nuclear_area/run_20260721_114700/ provide current SUM-159
+    competition and targeted nuclear inputs.
+  - data/modelling/gpath_v1/red_a30_counts_20260722/ is the active mechanistic
+    count-based fit/posterior/strategy release.
+  - data/modelling/gpath_v1/morphology_metrics_a30_20260729/ is the active
+    matched cell-area/nuclear-area covariate optimization release.
+  - data/empirical_features/20260722/, the retained data/glucose/processed/
+    experiment groups, data/train/ collections, and retained report exports are
+    the other file-backed current provenance inputs.
 
-  agent-dev/ is a local handoff folder for agent reruns. It now contains a localized `1R_1P_0W_C0_M0` sidecar:
-  agent-dev/gpath_hier.stan is a fixed-dimension specialization of the gpath hierarchy for one resource / one pathway /
-  no waste, agent-dev/minimal_model_utils.R rebuilds the reduced Stan data directly from data/stan_ready_data.Rds plus
-  the manifest-backed best-fit parameter row, agent-dev/run_log_lik.R recompiles that copy and prints the
-  corresponding `best_lp` and `log_lik`, and agent-dev/run_optimize.R performs graceful hybrid-random multistart BFGS
-  optimization against the simplified model while reporting hit rates relative to the canonical `log_lik`. The
-  parameter source is still the canonical `1R_1P_0W_C0_M1` optimization output because `M` is irrelevant when `W=0`.
-  agent-dev/task_1/ is now a small model-sweep sandbox around alternative reduced ODEs: task1_model_specs.R holds the
-  generator/spec definitions, run_task1_model7_stabilization.R records stabilization attempts for the switching-P/Q
-  variant, run_task1_directional_transfer.R runs directional low->high and high->low holdouts for all eight task-1
-  models using split-clean random-prior starts, now refits both the original ploidy-aware form and a matched
-  `null_ploidy` version with `ploidy_metric` zeroed on the same splits, and ranks split representatives by training fit
-  before reading out held-out likelihood; summarize_task1_directional_transfer.R recomputes the aggregate ranking plus
-  per-model gain-versus-null summaries from the saved per-split outputs, summarize_task1_parameter_transfer.R adds a
-  parameter-view sidecar by comparing the transferred `ae`/`ah`/`Y_core`/`m` values against each model's full-data best
-  fit, plot_task1_directional_transfer_summary.R adds a delta-vs-null plot, plot_task1_per_cell_line_fits.R writes
-  per-line live/glucose fit panels under agent-dev/task_1/line_fit_plots/, and task1_report.Rmd reports the in-sample
-  sweep, stabilization outcomes, and transfer/null comparison results from agent-dev/task_1/results/. Current status:
-  these reduced-model transfer results look promising enough that the strongest task-1 candidates may be worth
-  upgrading into the main workflow for a stricter apples-to-apples comparison against the existing `gpath` assessment
-  set.
+Current analysis code
 
-  Dead code / duplicated pathways
+  - R/ holds the retained current model, fitting, posterior, simulation,
+    morphology, validation, and path helpers.
+  - config/parameter_estimation/{red_a30_counts_20260722,
+    morphology_metrics_a30_20260729}/ defines the two current releases.
+  - models/gpath/v1/ and pipelines/gpath/optim/ define and fit the current Stan
+    model family.
+  - scripts/parameter_estimation/run.sh is the release-oriented entrypoint for
+    dataset preparation, optimization, NUTS, derived objects, and strategy
+    simulations. Its current helpers and SLURM job wrappers are retained.
+  - scripts/image_processing/ contains only the retained acquisition-to-current-
+    measurement, classifier-validation, competition, and targeted-nuclear
+    entrypoints named by the keep policy.
+  - workflow/preliminaries_and_metadata.Rmd is retained for raw acquisition
+    metadata and plate-map construction.
 
-  - corrected.Rds is not in the Stan path. workflow/adaptive_cell_count.Rmd:156 writes data/counts/corrected.Rds, but R/
-    prepare_data.R:72 reads data/counts/uncorrected.Rds. So count smoothing is currently QC/side-path, not model input.
-  - uncorrected_features.Rds is exploratory only. It is created in workflow/preliminaries_and_metadata.Rmd:87 and not
-    used in Stan-data construction.
-  - workflow/model_analysis.Rmd:48 has a broken/stale block: it uses undefined variable f when trying to derive
-    cellLine/ploidy from rel_path.
-  - There are obvious stale duplicates: create_image_set_old.py, batch_segment_and_classify_TEMP_MEASURE_SIZE.py, and
-    run_batch_TEMP_MEASURE_SIZE.sbatch.
+Provenance and limitations
+
+  - The locked v03 table and endpoint manifest pass deterministic verification:
+    234 hashed local objects are unchanged and all 79 panel leaves match.
+  - Thirty-seven graph nodes are unhashed semantic collections, external
+    dependencies, or explicit unresolved boundaries. The local collections are
+    retained conservatively. External classifier/segmentation implementations
+    and weights remain accepted Methods limitations rather than invented local
+    dependencies.
+
+Codex workflows
+
+  - .agents/ is retained in full. Active project skills and shared references
+    remain at their original locations; archived skills remain available for
+    explicit historical audit.
+
+Cleanup and recovery
+
+  - python3 scripts/audit_cleanup_keep_roots.py must report zero unexpected
+    paths in a settled repository state and verifies coverage of the current
+    provenance and declared figure inputs.
+  - junk/ mirrors every relocated path beneath its former repository-relative
+    name. Restore an item by moving junk/<path> back to <path> and adding the
+    path to the keep manifest if it is a genuine current dependency.
+  - Do not make current code depend on junk/. Historical comparisons should be
+    explicit and should not silently reactivate junk content.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Results Text"
+  short_description: "Draft Results sections from served evidence"
+  default_prompt: "Use $results-text to draft one Results section using only its served figure descriptions, locked claims, permitted prior text, routing metadata, and style guidance."

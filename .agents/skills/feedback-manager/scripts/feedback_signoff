@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""Create or update consumer-owned feedback items."""
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+RESPONSE_TYPES = {
+    "scope_satisfied",
+    "not_applicable",
+    "no_change_decision",
+    "validation_only",
+    "artifact_changed",
+    "partial_change",
+    "deferred_by_run_policy",
+}
+
+INPUT_STATUSES = {"signed_off", "needs_followup"}
+REOPENED_STATUS = "reopened"
+
+
+def read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit("%s: invalid JSON: %s" % (path, exc))
+
+
+def read_jsonl(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    records = []  # type: List[Dict[str, Any]]
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise SystemExit("%s:%s: invalid JSONL: %s" % (path, line_no, exc))
+    return records
+
+
+def write_jsonl(path: Path, records: List[Dict[str, Any]]) -> None:
+    text = "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
+    path.write_text(text, encoding="utf-8")
+
+
+def resolve_repo_path(repo_root: Path, path_text: str) -> Path:
+    path = Path(path_text)
+    if path.is_absolute():
+        return path
+    return repo_root / path
+
+
+def display_path(repo_root: Path, path_text: Any) -> str:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = repo_root / path
+    try:
+        return str(path.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def sha256_if_exists(repo_root: Path, path_text: str) -> str:
+    path = resolve_repo_path(repo_root, path_text)
+    if not path.exists() or not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def artifact_path(entry: Any) -> str:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        value = entry.get("path")
+        if value:
+            return str(value)
+    raise SystemExit("Artifact entries must be path strings or objects with path: %r" % entry)
+
+
+def artifact_role(entry: Any, default: str) -> str:
+    if isinstance(entry, dict) and entry.get("role"):
+        return str(entry["role"])
+    return default
+
+
+def artifact_entries(repo_root: Path, entries: List[Any], default_role: str) -> List[Dict[str, str]]:
+    seen = set()
+    output = []  # type: List[Dict[str, str]]
+    for entry in entries:
+        path = artifact_path(entry)
+        display = display_path(repo_root, path)
+        if display in seen:
+            continue
+        seen.add(display)
+        output.append(
+            {
+                "path": display,
+                "sha256": sha256_if_exists(repo_root, path),
+                "role": artifact_role(entry, default_role),
+            }
+        )
+    return output
+
+
+def sanitize_name(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    return value.strip("-") or "consumer"
+
+
+def make_response_id(stamp: str, counter: int, consumer: str) -> str:
+    return "RESPONSE-%s-%03d-%s" % (stamp, counter, sanitize_name(consumer))
+
+
+def make_item_id(stamp: str, counter: int, consumer: str) -> str:
+    return "ITEM-%s-%03d-%s" % (stamp, counter, sanitize_name(consumer))
+
+
+def require_list(value: Any, field_name: str) -> List[Any]:
+    if not isinstance(value, list):
+        raise SystemExit("%s must be a list." % field_name)
+    return value
+
+
+def unique_item_ids(entries: List[Any], field_name: str) -> set:
+    item_ids = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise SystemExit("%s entries must be objects." % field_name)
+        item_id = str(entry.get("item_id", ""))
+        if not item_id:
+            raise SystemExit("%s entries require item_id." % field_name)
+        if item_id in item_ids:
+            raise SystemExit("%s repeats item_id %s." % (field_name, item_id))
+        item_ids.add(item_id)
+    return item_ids
+
+
+def validate_spans(source_spans: List[Any], span_ids: set, context: str) -> List[str]:
+    spans = [str(span_id) for span_id in source_spans]
+    if not spans:
+        raise SystemExit("%s requires at least one source span." % context)
+    missing = [span_id for span_id in spans if span_id not in span_ids]
+    if missing:
+        raise SystemExit("%s references missing spans: %s" % (context, missing))
+    return spans
+
+
+def response_record(
+    repo_root: Path,
+    response_item: Dict[str, Any],
+    global_checked: List[Any],
+    consumer: str,
+    now_text: str,
+    stamp: str,
+    counter: int,
+    response_path: Path,
+) -> Dict[str, Any]:
+    response_type = str(response_item.get("response_type", response_item.get("outcome", "scope_satisfied")))
+    if response_type not in RESPONSE_TYPES:
+        raise SystemExit(
+            "Unsupported response_type %r. Supported response types: %s"
+            % (response_type, ", ".join(sorted(RESPONSE_TYPES)))
+        )
+    status = str(response_item.get("status", "signed_off"))
+    if status not in INPUT_STATUSES:
+        raise SystemExit(
+            "Unsupported status %r. Supported statuses: %s"
+            % (status, ", ".join(sorted(INPUT_STATUSES)))
+        )
+    response_text = str(
+        response_item.get("response")
+        or response_item.get("action_taken")
+        or response_item.get("scope_note")
+        or ""
+    )
+    if not response_text.strip():
+        raise SystemExit("Response text is required.")
+
+    residual_risk = str(response_item.get("residual_risk", ""))
+    if response_type == "deferred_by_run_policy":
+        if status != "signed_off":
+            raise SystemExit("deferred_by_run_policy responses must use status signed_off.")
+        if not re.search(r"\bBLOCKER-[0-9a-f]{64}\b", residual_risk):
+            raise SystemExit(
+                "deferred_by_run_policy responses must cite a full BLOCKER-<sha256> "
+                "fingerprint in residual_risk."
+            )
+
+    checked_raw = require_list(response_item.get("checked_artifacts", []), "checked_artifacts")
+    evidence_raw = require_list(response_item.get("evidence_artifacts", []), "evidence_artifacts")
+    changed_raw = require_list(response_item.get("changed_artifacts", []), "changed_artifacts")
+
+    return {
+        "response_id": make_response_id(stamp, counter, consumer),
+        "consumer_name": consumer,
+        "responded_at": now_text,
+        "status": status,
+        "response_type": response_type,
+        "response": response_text,
+        "checked_artifacts": artifact_entries(
+            repo_root, list(global_checked) + list(checked_raw), "checked artifact"
+        ),
+        "evidence_artifacts": artifact_entries(repo_root, evidence_raw, "evidence artifact"),
+        "changed_artifacts": artifact_entries(repo_root, changed_raw, "changed artifact"),
+        "residual_risk": residual_risk,
+        "response_file": display_path(repo_root, response_path),
+    }
+
+
+ITEM_FIELDS = {"source_spans", "active", "item_update_note"}
+
+
+def reject_item_fields(entry: Dict[str, Any], context: str) -> None:
+    forbidden = sorted(ITEM_FIELDS.intersection(entry))
+    if forbidden:
+        raise SystemExit(
+            "%s cannot modify item fields %s. Put completion text in response, "
+            "or use item_modifications for a genuine durable-item change."
+            % (context, forbidden)
+        )
+
+
+def item_modification_values(
+    modification: Dict[str, Any],
+    item: Dict[str, Any],
+    span_ids: set,
+) -> Dict[str, Any]:
+    reason = str(modification.get("modification_reason", "")).strip()
+    if not reason:
+        raise SystemExit("item_modifications entries require modification_reason.")
+    values = modification.get("set")
+    if not isinstance(values, dict) or not values:
+        raise SystemExit("item_modifications entries require a nonempty set object.")
+    unsupported = sorted(set(values).difference(ITEM_FIELDS))
+    if unsupported:
+        raise SystemExit("Unsupported durable item fields in set: %s" % unsupported)
+
+    normalized = {}  # type: Dict[str, Any]
+    if "source_spans" in values:
+        normalized["source_spans"] = validate_spans(
+            require_list(values["source_spans"], "set.source_spans"),
+            span_ids,
+            "item modification %s" % item.get("item_id", ""),
+        )
+    if "active" in values:
+        if not isinstance(values["active"], bool):
+            raise SystemExit("set.active must be true or false.")
+        normalized["active"] = values["active"]
+    if "item_update_note" in values:
+        if not isinstance(values["item_update_note"], str):
+            raise SystemExit("set.item_update_note must be a string.")
+        normalized["item_update_note"] = values["item_update_note"]
+
+    changed = {}
+    for field, value in normalized.items():
+        current = item.get(field)
+        if field == "active":
+            current = bool(item.get("active", True))
+        elif field == "source_spans":
+            current = [str(x) for x in item.get("source_spans", [])]
+        elif field == "item_update_note":
+            current = str(item.get("item_update_note", ""))
+        if value != current:
+            changed[field] = value
+    if not changed:
+        raise SystemExit(
+            "item_modifications entry for %s does not change the durable item record."
+            % item.get("item_id", "")
+        )
+    return changed
+
+
+def reopen_item_signoffs(item: Dict[str, Any], consumer: str, now_text: str, reason: str) -> int:
+    reopened = 0
+    for response in item.get("consumer_responses", []):
+        if not isinstance(response, dict):
+            continue
+        if response.get("status") != "signed_off":
+            continue
+        response["status"] = REOPENED_STATUS
+        response["reopened_at"] = now_text
+        response["reopened_by_consumer"] = consumer
+        response["reopen_reason"] = reason
+        reopened += 1
+    return reopened
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("served_feedback_dir", nargs="?")
+    parser.add_argument("feedback_response", nargs="?")
+    parser.add_argument("--served_feedback", "--served-feedback", dest="served_feedback_opt")
+    parser.add_argument("--feedback_response", "--feedback-response", dest="feedback_response_opt")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    served_dir_text = args.served_feedback_opt or args.served_feedback_dir
+    response_text = args.feedback_response_opt or args.feedback_response
+    if not served_dir_text or not response_text:
+        raise SystemExit(
+            "Usage: feedback_signoff path/to/served_feedback_dir path/to/feedback_response.json"
+        )
+
+    served_dir = Path(served_dir_text).resolve()
+    response_path = Path(response_text).resolve()
+    served = read_json(served_dir / "served_feedback.json")
+    response = read_json(response_path)
+
+    metadata = served.get("metadata", {})
+    repo_root = Path(metadata.get("repo_root", ".")).resolve()
+    tracking_root_text = metadata.get("tracking_root")
+    if not tracking_root_text:
+        raise SystemExit("served_feedback.json lacks metadata.tracking_root")
+    tracking_root = resolve_repo_path(repo_root, str(tracking_root_text)).resolve()
+    if not tracking_root.exists():
+        raise SystemExit("Tracking root does not exist: %s" % tracking_root)
+
+    consumer = response.get("consumer_name") or metadata.get("consumer_name")
+    if not consumer:
+        raise SystemExit("Response lacks consumer_name and served metadata has no consumer_name.")
+    consumer = str(consumer)
+
+    spans_path = tracking_root / "feedback_spans.jsonl"
+    items_path = tracking_root / "feedback_items.jsonl"
+    spans = read_jsonl(spans_path)
+    items = read_jsonl(items_path)
+    span_ids = {span.get("span_id") for span in spans}
+    spans_by_id = {span.get("span_id"): span for span in spans}
+    items_by_id = {item.get("item_id"): item for item in items}
+    existing_ids = set(items_by_id)
+
+    global_checked = require_list(response.get("checked_artifacts", []), "checked_artifacts")
+    span_signoffs = require_list(response.get("span_signoffs", []), "span_signoffs")
+    new_items = require_list(response.get("new_items", []), "new_items")
+    if "item_updates" in response or "items" in response:
+        raise SystemExit(
+            "item_updates is no longer supported. Use item_signoffs for responses "
+            "or item_modifications for durable-item changes."
+        )
+    item_signoffs = require_list(response.get("item_signoffs", []), "item_signoffs")
+    item_modifications = require_list(
+        response.get("item_modifications", []), "item_modifications"
+    )
+    signoff_item_ids = unique_item_ids(item_signoffs, "item_signoffs")
+    modification_item_ids = unique_item_ids(item_modifications, "item_modifications")
+    overlap = sorted(signoff_item_ids.intersection(modification_item_ids))
+    if overlap:
+        raise SystemExit(
+            "An item cannot be both signed off and modified in one response: %s" % overlap
+        )
+
+    now = dt.datetime.now().astimezone().replace(microsecond=0)
+    stamp = now.strftime("%Y%m%dT%H%M%S")
+    now_text = now.isoformat()
+    created_count = 0
+    updated_count = 0
+    span_updated_count = 0
+    item_reopened_count = 0
+    response_counter = 1
+    item_counter = 1
+
+    for span_signoff in span_signoffs:
+        if not isinstance(span_signoff, dict):
+            raise SystemExit("span_signoffs entries must be objects.")
+        span_id = str(span_signoff.get("span_id", ""))
+        if not span_id:
+            raise SystemExit("span_signoffs entries require span_id.")
+        span = spans_by_id.get(span_id)
+        if span is None:
+            raise SystemExit("Cannot sign off missing span: %s" % span_id)
+        span.setdefault("consumer_responses", [])
+        if not isinstance(span["consumer_responses"], list):
+            raise SystemExit("%s: consumer_responses exists but is not a list." % span_id)
+        span["consumer_responses"].append(
+            response_record(
+                repo_root,
+                span_signoff,
+                global_checked,
+                consumer,
+                now_text,
+                stamp,
+                response_counter,
+                response_path,
+            )
+        )
+        response_counter += 1
+        span_updated_count += 1
+
+    for new_item in new_items:
+        if not isinstance(new_item, dict):
+            raise SystemExit("new_items entries must be objects.")
+        source_spans = validate_spans(
+            require_list(new_item.get("source_spans", []), "source_spans"),
+            span_ids,
+            "new item",
+        )
+        item_id = str(new_item.get("item_id") or make_item_id(stamp, item_counter, consumer))
+        item_counter += 1
+        if item_id in existing_ids:
+            raise SystemExit("New item ID already exists: %s" % item_id)
+        record = response_record(
+            repo_root,
+            new_item,
+            global_checked,
+            consumer,
+            now_text,
+            stamp,
+            response_counter,
+            response_path,
+        )
+        response_counter += 1
+        item = {
+            "item_id": item_id,
+            "source_spans": source_spans,
+            "created_by_consumer": consumer,
+            "created_at": now_text,
+            "active": bool(new_item.get("active", True)),
+            "consumer_responses": [record],
+        }
+        if new_item.get("item_update_note"):
+            item["item_update_note"] = str(new_item["item_update_note"])
+        items.append(item)
+        items_by_id[item_id] = item
+        existing_ids.add(item_id)
+        created_count += 1
+
+    for signoff in item_signoffs:
+        if not isinstance(signoff, dict):
+            raise SystemExit("item_signoffs entries must be objects.")
+        item_id = str(signoff.get("item_id", ""))
+        if not item_id:
+            raise SystemExit("item_signoffs entries require item_id.")
+        item = items_by_id.get(item_id)
+        if item is None:
+            raise SystemExit("Cannot sign off missing item: %s" % item_id)
+        reject_item_fields(signoff, "item_signoffs entry for %s" % item_id)
+        item.setdefault("consumer_responses", [])
+        if not isinstance(item["consumer_responses"], list):
+            raise SystemExit("%s: consumer_responses exists but is not a list." % item_id)
+        item["consumer_responses"].append(
+            response_record(
+                repo_root,
+                signoff,
+                global_checked,
+                consumer,
+                now_text,
+                stamp,
+                response_counter,
+                response_path,
+            )
+        )
+        response_counter += 1
+        updated_count += 1
+
+    for modification in item_modifications:
+        if not isinstance(modification, dict):
+            raise SystemExit("item_modifications entries must be objects.")
+        item_id = str(modification.get("item_id", ""))
+        if not item_id:
+            raise SystemExit("item_modifications entries require item_id.")
+        item = items_by_id.get(item_id)
+        if item is None:
+            raise SystemExit("Cannot modify missing item: %s" % item_id)
+        changed_values = item_modification_values(modification, item, span_ids)
+        reason = str(modification["modification_reason"]).strip()
+        item_reopened_count += reopen_item_signoffs(item, consumer, now_text, reason)
+        for field, value in changed_values.items():
+            if field == "item_update_note" and value == "":
+                item.pop(field, None)
+            else:
+                item[field] = value
+        item["updated_by_consumer"] = consumer
+        item["updated_at"] = now_text
+        item.setdefault("consumer_responses", [])
+        if not isinstance(item["consumer_responses"], list):
+            raise SystemExit("%s: consumer_responses exists but is not a list." % item_id)
+        item["consumer_responses"].append(
+            response_record(
+                repo_root,
+                modification,
+                global_checked,
+                consumer,
+                now_text,
+                stamp,
+                response_counter,
+                response_path,
+            )
+        )
+        response_counter += 1
+        updated_count += 1
+
+    updated_ledgers = []
+    if span_updated_count:
+        write_jsonl(spans_path, spans)
+        updated_ledgers.append(display_path(repo_root, spans_path))
+    if created_count or updated_count or items_path.exists():
+        write_jsonl(items_path, items)
+        updated_ledgers.append(display_path(repo_root, items_path))
+
+    summary = {
+        "tracking_root": display_path(repo_root, tracking_root),
+        "consumer_name": consumer,
+        "items_created": created_count,
+        "items_updated": updated_count,
+        "item_signoffs_reopened": item_reopened_count,
+        "spans_signed_off": span_updated_count,
+        "ledgers_updated": updated_ledgers,
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

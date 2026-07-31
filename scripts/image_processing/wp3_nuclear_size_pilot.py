@@ -91,6 +91,12 @@ def read_manifest(path: str, max_images: int) -> list[dict]:
     if len(rows) > max_images:
         print(f"Manifest has {len(rows)} rows; processing first {max_images} due to --max_images.", flush=True)
         rows = rows[:max_images]
+    image_keys = [row["image_key"] for row in rows]
+    if len(image_keys) != len(set(image_keys)):
+        raise ValueError("Manifest contains duplicate image_key values.")
+    safe_keys = [safe_name(key) for key in image_keys]
+    if len(safe_keys) != len(set(safe_keys)):
+        raise ValueError("Manifest image_key values collide after filename normalization.")
     return rows
 
 
@@ -455,6 +461,12 @@ def main() -> None:
                     args.min_cell_area_px,
                     args.min_nucleus_area_px,
                 )
+                if args.save_masks:
+                    dtype = np.uint16 if int(cell_masks.max()) <= np.iinfo(np.uint16).max else np.uint32
+                    tifffile.imwrite(os.path.join(run_dir, "masks", "cell", f"{safe_name(key)}_cell_masks.tif"), cell_masks.astype(dtype, copy=False))
+                    tifffile.imwrite(os.path.join(run_dir, "masks", "nuclear", f"{safe_name(key)}_nuclear_masks.tif"), nuclear_masks.astype(dtype, copy=False))
+                if idx <= args.qc_count:
+                    write_qc_panel(os.path.join(run_dir, "qc", f"{idx:03d}_{safe_name(key)}.png"), row, channels, cell_masks, nuclear_masks)
                 for object_row in object_rows:
                     out = {name: row.get(name, "") for name in ("image_key", "cellLine", "ploidy", "G0", "glucose_bin", "time_bin", "hours")}
                     out.update(object_row)
@@ -462,13 +474,6 @@ def main() -> None:
                 image_writer.writerow(summarize_image(row, object_rows, "ok"))
                 total_cells += len(object_rows)
                 total_cells_with_nucleus += sum(1 for object_row in object_rows if int(object_row["nuclear_area_px"]) > 0)
-
-                if args.save_masks:
-                    dtype = np.uint16 if int(cell_masks.max()) <= np.iinfo(np.uint16).max else np.uint32
-                    tifffile.imwrite(os.path.join(run_dir, "masks", "cell", f"{safe_name(key)}_cell_masks.tif"), cell_masks.astype(dtype, copy=False))
-                    tifffile.imwrite(os.path.join(run_dir, "masks", "nuclear", f"{safe_name(key)}_nuclear_masks.tif"), nuclear_masks.astype(dtype, copy=False))
-                if idx <= args.qc_count:
-                    write_qc_panel(os.path.join(run_dir, "qc", f"{idx:03d}_{safe_name(key)}.png"), row, channels, cell_masks, nuclear_masks)
                 object_handle.flush()
                 image_handle.flush()
             except Exception as exc:

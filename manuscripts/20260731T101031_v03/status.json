@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "WARN",
+  "assembly_timestamp": "2026-07-31T10:21:14-04:00",
+  "assembly_root": "manuscripts/20260731T101031_v03",
+  "package_purpose": "coherent manuscript review assembly",
+  "source_roots": {
+    "figures_and_legends": "agent-dev/manuscript_integration/20260729_v03_figure_set_integration",
+    "results": "agent-dev/manuscript_results/20260731_v03_results_revision",
+    "methods": "agent-dev/manuscript_methods/20260730_v03_methods_provenance_reconstruction",
+    "claim_graph": "agent-dev/manuscript_claim_graph/20260730_v03_clean_figure_level_graph",
+    "abstract_introduction_discussion": "agent-dev/manuscript_aid/20260731_v03_aid_serving"
+  },
+  "rendered_draft": "draft/manuscript_draft.html",
+  "rendered_draft_sha256": "99c380d6f24d6d8cc3453956847a15affa45c43c44c9d282cef9e8b9c5efe2f3",
+  "figures": 23,
+  "panel_endpoints": 79,
+  "figure_rebuild_status": "PASS",
+  "draft_validation_status": "PASS",
+  "warnings": [
+    "Approved Methods retains unresolved wet-lab protocol, replication, software-version, numerical-acceptance, and archival-release details.",
+    "Abstract, Introduction, Discussion, and References were carried forward verbatim from the valid v02 bundle rather than newly reconciled against v03 prose.",
+    "The feedback-manager and plan-redraft completeness gates were bypassed at the project owner's direction."
+  ],
+  "accepted_exceptions": "review_state/accepted_exceptions.md",
+  "validation_reports": [
+    "validation/draft_validation_report.md",
+    "validation/figure_rebuild_validation.md",
+    "validation/assembly_validation_report.md"
+  ]
+}

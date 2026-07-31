@@ -1,0 +1,4 @@
+dataset_id	parent_dataset	transform	line_name	direction	notes
+all_lines		identity			corrected-run five-line parent input
+all_lines_cell_area	all_lines	morphology_cell_area			alive-cell segmented-area q50; all glucose; 24-48 h inclusive
+all_lines_nuclear_area	all_lines	morphology_nuclear_area			detected nuclear-area q50 among alive cells; all glucose; 24-48 h inclusive

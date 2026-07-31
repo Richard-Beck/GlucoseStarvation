@@ -13,6 +13,15 @@ TASK_ID <- if (length(args) >= 5) as.integer(args[5]) else 1L
 STAN_DATA_PATH <- if (length(args) >= 6) args[6] else ""
 DATASET_LABEL <- if (length(args) >= 7) args[7] else "gstarvation_v1"
 OUTPUT_DIR <- if (length(args) >= 8) args[8] else stop("output_dir required")
+INIT_RADIUS <- suppressWarnings(as.numeric(Sys.getenv("GPATH_OPTIM_INIT_RADIUS", "2")))
+if (length(INIT_RADIUS) != 1L || !is.finite(INIT_RADIUS) || INIT_RADIUS <= 0) {
+  stop("GPATH_OPTIM_INIT_RADIUS must be a finite number greater than zero")
+}
+INIT_SOURCE_ROOT <- Sys.getenv("GPATH_OPTIM_INIT_SOURCE_ROOT", "")
+INIT_OFFSET <- suppressWarnings(as.integer(Sys.getenv("GPATH_OPTIM_INIT_OFFSET", "0")))
+if (length(INIT_OFFSET) != 1L || is.na(INIT_OFFSET) || INIT_OFFSET < 0L) {
+  stop("GPATH_OPTIM_INIT_OFFSET must be a non-negative integer")
+}
 
 source("R/project_paths.R")
 source(get_model_r_path(MODEL_NAME, MODEL_VERSION))
@@ -52,7 +61,8 @@ manifest <- build_run_manifest(
     constraint_flag = CONSTRAINT_FLAG,
     waste_mech_flag = WASTE_MECH_FLAG,
     num_threads = NUM_THREADS,
-    task_id = TASK_ID
+    task_id = TASK_ID,
+    init_radius = INIT_RADIUS
   ),
   output_dir = OUTPUT_DIR
 )
@@ -75,11 +85,32 @@ stan_data <- apply_gpath_run_config(
 
 mod <- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE))
 
+init_spec <- INIT_RADIUS
+init_source_dir <- NULL
+if (nzchar(INIT_SOURCE_ROOT)) {
+  source("R/posterior_io_utils.R")
+  init_source_dir <- file.path(
+    INIT_SOURCE_ROOT,
+    RUN_ID,
+    sprintf("all_lines__%s", tolower(RUN_ID))
+  )
+  init_list <- load_optim_init_from_dir(
+    path = init_source_dir,
+    chain_id = TASK_ID + INIT_OFFSET,
+    maxG0 = max(stan_data$G0_per_well)
+  )
+  init_spec <- function(chain_id = 1L) init_list
+}
+
+manifest$command_args$init_source_dir <- init_source_dir
+manifest$command_args$init_source_rank <- TASK_ID + INIT_OFFSET
+write_run_manifest(OUTPUT_DIR, manifest)
+
 res <- tryCatch({
   opt <- mod$optimize(
     data = stan_data,
     algorithm = "bfgs",
-    init = 2,
+    init = init_spec,
     refresh = 0,
     threads = NUM_THREADS,
     save_latent_dynamics = TRUE,

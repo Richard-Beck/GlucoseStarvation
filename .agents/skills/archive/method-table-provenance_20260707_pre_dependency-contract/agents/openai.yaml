@@ -1,0 +1,4 @@
+interface:
+  display_name: "Method Table Provenance"
+  short_description: "Trace manuscript subpanels into method-table provenance rows."
+  default_prompt: "Generate method-table provenance for a manuscript subpanel."

@@ -1,0 +1,1373 @@
+{
+  "metadata": {
+    "id": "v03_clean_figure_level_claim_graph_20260730",
+    "schema_version": "claim-graph/v4",
+    "created_at": "2026-07-30T15:55:05.138094+00:00",
+    "scope": "First clean graph reconstructed from the accepted v03 23-figure semantic package.",
+    "source_figure_integration": "agent-dev/manuscript_integration/20260729_v03_figure_set_integration",
+    "relation_values": [
+      "support",
+      "undermine"
+    ],
+    "strength_values": [
+      "strong",
+      "moderate",
+      "weak"
+    ],
+    "authoritative_claim_contract": {
+      "claims": [
+        {
+          "id": "C0",
+          "text": "Ploidy modulates response to glucose starvation.",
+          "tier": "tier_0",
+          "status": "supported"
+        },
+        {
+          "id": "C1",
+          "text": "High ploidy increases glucose consumption rate.",
+          "tier": "tier_1",
+          "status": "qualified_supported"
+        },
+        {
+          "id": "C2",
+          "text": "High ploidy decreases yield (per cell).",
+          "tier": "tier_1",
+          "status": "model_supported"
+        },
+        {
+          "id": "C3",
+          "text": "High ploidy cells are more robust to starvation.",
+          "tier": "tier_1",
+          "status": "qualified_supported"
+        },
+        {
+          "id": "C4",
+          "text": "Starvation selects for high ploidy.",
+          "tier": "tier_0",
+          "status": "model_supported"
+        },
+        {
+          "id": "C7",
+          "text": "Cell size is proportional to ploidy.",
+          "tier": "tier_1",
+          "status": "qualified_supported"
+        },
+        {
+          "id": "C11",
+          "text": "Abundance selects for low ploidy.",
+          "tier": "tier_0",
+          "status": "model_supported"
+        },
+        {
+          "id": "C12",
+          "text": "High ploidy increases yield (volumetric).",
+          "tier": "tier_1",
+          "status": "working_hypothesis"
+        }
+      ]
+    },
+    "reconciliation": {
+      "figure_audits": 23,
+      "worker_relationships": 103,
+      "accepted_worker_relationships": 81,
+      "rejected_worker_relationships": 22,
+      "umbrella_claims": 5,
+      "prior_graph_migrated": false,
+      "qualification_edges": false
+    }
+  },
+  "claims": [
+    {
+      "id": "C0",
+      "text": "Ploidy modulates response to glucose starvation.",
+      "tier": "tier_0",
+      "status": "supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C1",
+      "text": "High ploidy increases glucose consumption rate.",
+      "tier": "tier_1",
+      "status": "qualified_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C2",
+      "text": "High ploidy decreases yield (per cell).",
+      "tier": "tier_1",
+      "status": "model_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C3",
+      "text": "High ploidy cells are more robust to starvation.",
+      "tier": "tier_1",
+      "status": "qualified_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C4",
+      "text": "Starvation selects for high ploidy.",
+      "tier": "tier_0",
+      "status": "model_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C7",
+      "text": "Cell size is proportional to ploidy.",
+      "tier": "tier_1",
+      "status": "qualified_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C11",
+      "text": "Abundance selects for low ploidy.",
+      "tier": "tier_0",
+      "status": "model_supported",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "C12",
+      "text": "High ploidy increases yield (volumetric).",
+      "tier": "tier_1",
+      "status": "working_hypothesis",
+      "user_fixed": true,
+      "kind": "authoritative_claim"
+    },
+    {
+      "id": "U1",
+      "text": "High ploidy is associated with higher glucose use or uptake and lower cell-number or per-cell yield across complementary readouts.",
+      "user_fixed": false,
+      "kind": "reconciliation_umbrella",
+      "notes": "Groups empirical feature and posterior-parameter evidence without equating total-cell gain with the fixed per-cell-yield construct."
+    },
+    {
+      "id": "U2",
+      "text": "High ploidy often improves persistence or relative growth under zero or low glucose.",
+      "user_fixed": false,
+      "kind": "reconciliation_umbrella",
+      "notes": "Groups direct live-cell persistence and model-derived low-resource growth evidence; counterexamples remain separate."
+    },
+    {
+      "id": "U3",
+      "text": "Modeled high-versus-low ploidy fitness changes direction across resource schedules and biological or model contexts.",
+      "user_fixed": false,
+      "kind": "reconciliation_umbrella",
+      "notes": "Groups selection-relevant growth surfaces and equal-starting-fraction simulations; empirical competition is not implied."
+    },
+    {
+      "id": "U4",
+      "text": "Higher ploidy is associated with larger cell area in multiple non-fusion or SUM-159-chem contexts.",
+      "user_fixed": false,
+      "kind": "reconciliation_umbrella",
+      "notes": "Groups repeated positive cell-area contrasts."
+    },
+    {
+      "id": "U5",
+      "text": "Cell-area scaling with ploidy reverses or fails in SUM-159-fuse and several other contexts.",
+      "user_fixed": false,
+      "kind": "reconciliation_umbrella",
+      "notes": "Groups genuine negative or heterogeneous cell-area contrasts; simple overlap/no separation is excluded."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E_F1_RESPONSE",
+      "figure_id": "F1",
+      "panels": [
+        "b",
+        "e"
+      ],
+      "observation": "Cell-area and live-cell trajectories separate by ploidy across starting-glucose conditions, with direction and magnitude varying among cell lines.",
+      "source": "figure_audits/F1.md (W_F1_01,W_F1_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F1_01",
+          "W_F1_02"
+        ],
+        "audit_path": "figure_audits/F1.md"
+      }
+    },
+    {
+      "id": "E_F1_STARVATION_SUPPORT",
+      "figure_id": "F1",
+      "panels": [
+        "e"
+      ],
+      "observation": "At 0 mM glucose MCF10A high-ploidy cells decline more gradually than low-ploidy cells; weaker persistence patterns also appear in SNU668 and SUM-159-chem at 1 mM.",
+      "source": "figure_audits/F1.md (W_F1_03,W_F1_05,W_F1_06)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F1_03",
+          "W_F1_05",
+          "W_F1_06"
+        ],
+        "audit_path": "figure_audits/F1.md"
+      }
+    },
+    {
+      "id": "E_F1_STARVATION_COUNTER",
+      "figure_id": "F1",
+      "panels": [
+        "e"
+      ],
+      "observation": "MCF10A at 1 mM and SUM-159-chem at 0 mM do not show a high-ploidy live-cell abundance advantage.",
+      "source": "figure_audits/F1.md (W_F1_04,W_F1_07)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F1_04",
+          "W_F1_07"
+        ],
+        "audit_path": "figure_audits/F1.md"
+      }
+    },
+    {
+      "id": "E_F1_SIZE_POSITIVE",
+      "figure_id": "F1",
+      "panels": [
+        "b",
+        "c"
+      ],
+      "observation": "High-ploidy median cell area is larger in MCF10A, MDA-MB-231, SUM-159-chem, and SNU668 across many displayed conditions.",
+      "source": "figure_audits/F1.md (W_F1_08,W_F1_10)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F1_08",
+          "W_F1_10"
+        ],
+        "audit_path": "figure_audits/F1.md"
+      }
+    },
+    {
+      "id": "E_F1_SIZE_REVERSED",
+      "figure_id": "F1",
+      "panels": [
+        "b",
+        "c",
+        "d"
+      ],
+      "observation": "SUM-159-fuse has smaller high-ploidy cell area despite an approximately twofold ploidy increase, and condition-level ratios include additional negative values.",
+      "source": "figure_audits/F1.md (W_F1_09,W_F1_11,W_F1_12,W_F1_13)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F1_09",
+          "W_F1_11",
+          "W_F1_12",
+          "W_F1_13"
+        ],
+        "audit_path": "figure_audits/F1.md"
+      }
+    },
+    {
+      "id": "E_F2_BROAD_FEATURE_SHIFT",
+      "figure_id": "F2",
+      "panels": [
+        "a",
+        "c"
+      ],
+      "observation": "All six standardized feature summaries differ by ploidy, and the representative raw trajectories change their separation across G0.",
+      "source": "figure_audits/F2.md (W_F2_01,W_F2_10)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F2_01",
+          "W_F2_10"
+        ],
+        "audit_path": "figure_audits/F2.md"
+      }
+    },
+    {
+      "id": "E_F2_METABOLIC_TRADEOFF",
+      "figure_id": "F2",
+      "panels": [
+        "a"
+      ],
+      "observation": "Glucose drawdown per live-cell AUC is higher in all four non-fusion lines, while net total-cell yield at 1 mM is lower in all four.",
+      "source": "figure_audits/F2.md (W_F2_02,W_F2_03)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F2_02",
+          "W_F2_03"
+        ],
+        "audit_path": "figure_audits/F2.md"
+      }
+    },
+    {
+      "id": "E_F2_STARVATION_SUPPORT",
+      "figure_id": "F2",
+      "panels": [
+        "a"
+      ],
+      "observation": "Live-cell AUC at 0 mM is higher in high-ploidy cells in all four lines, and the low-glucose AUC intercept is higher in three of four.",
+      "source": "figure_audits/F2.md (W_F2_04,W_F2_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F2_04",
+          "W_F2_05"
+        ],
+        "audit_path": "figure_audits/F2.md"
+      }
+    },
+    {
+      "id": "E_F2_STARVATION_COUNTER",
+      "figure_id": "F2",
+      "panels": [
+        "a"
+      ],
+      "observation": "Low-glucose growth is lower in high-ploidy cells in three of four lines.",
+      "source": "figure_audits/F2.md (W_F2_06)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F2_06"
+        ],
+        "audit_path": "figure_audits/F2.md"
+      }
+    },
+    {
+      "id": "E_F2_HIGH_GLUCOSE_GROWTH",
+      "figure_id": "F2",
+      "panels": [
+        "a"
+      ],
+      "observation": "High-glucose exponential growth is lower in high-ploidy cells in three of four lines.",
+      "source": "figure_audits/F2.md (W_F2_09)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F2_09"
+        ],
+        "audit_path": "figure_audits/F2.md"
+      }
+    },
+    {
+      "id": "E_F4_JOINT_PARAMETER_SHIFT",
+      "figure_id": "F4",
+      "panels": [
+        "a",
+        "d",
+        "f"
+      ],
+      "observation": "All 20 model-by-line comparisons show nonzero joint parameter displacement with consistent high-minus-low directions for y1, v1, K1, and m.",
+      "source": "figure_audits/F4.md (W_F4_01,W_F4_02,W_F4_03)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F4_01",
+          "W_F4_02",
+          "W_F4_03"
+        ],
+        "audit_path": "figure_audits/F4.md"
+      }
+    },
+    {
+      "id": "E_F4_METABOLIC_TRADEOFF",
+      "figure_id": "F4",
+      "panels": [
+        "f"
+      ],
+      "observation": "Across all 20 comparisons, the high-ploidy v1 uptake contrast is positive and the y1 yield contrast is negative.",
+      "source": "figure_audits/F4.md (W_F4_04,W_F4_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F4_04",
+          "W_F4_05"
+        ],
+        "audit_path": "figure_audits/F4.md"
+      }
+    },
+    {
+      "id": "E_F5_STRATEGY_CONTEXT",
+      "figure_id": "F5",
+      "panels": [
+        "a",
+        "c",
+        "d",
+        "f",
+        "g"
+      ],
+      "observation": "Modeled high-versus-low abundance and growth trajectories vary substantially across glucose strategies, cell lines, models, seeding levels, and time.",
+      "source": "figure_audits/F5.md (W_F5_01,W_F5_08,W_F5_11,W_F5_16,W_F5_17)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F5_01",
+          "W_F5_08",
+          "W_F5_11",
+          "W_F5_16",
+          "W_F5_17"
+        ],
+        "audit_path": "figure_audits/F5.md"
+      }
+    },
+    {
+      "id": "E_F5_ZERO_GLUCOSE_ADVANTAGE",
+      "figure_id": "F5",
+      "panels": [
+        "a",
+        "b",
+        "c"
+      ],
+      "observation": "The zero-glucose carry strategy repeatedly favors greater high-ploidy abundance across seeding levels, days, and several model structures.",
+      "source": "figure_audits/F5.md (W_F5_02,W_F5_05,W_F5_09)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F5_02",
+          "W_F5_05",
+          "W_F5_09"
+        ],
+        "audit_path": "figure_audits/F5.md"
+      }
+    },
+    {
+      "id": "E_F5_HIGH_RESOURCE_SCHEDULES",
+      "figure_id": "F5",
+      "panels": [
+        "b"
+      ],
+      "observation": "The 25XX schedule favors low-ploidy abundance, whereas 25AA and 25CC shift toward high-ploidy abundance by day 6.",
+      "source": "figure_audits/F5.md (W_F5_06,W_F5_07)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F5_06",
+          "W_F5_07"
+        ],
+        "audit_path": "figure_audits/F5.md"
+      }
+    },
+    {
+      "id": "E_F5_RESOURCE_GROWTH_SURFACE",
+      "figure_id": "F5",
+      "panels": [
+        "e"
+      ],
+      "observation": "Posterior-median high-minus-low instantaneous growth is typically positive in low-glucose/lower-resource regions and negative in higher-glucose/higher-resource regions.",
+      "source": "figure_audits/F5.md (W_F5_13,W_F5_14,W_F5_15)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_F5_13",
+          "W_F5_14",
+          "W_F5_15"
+        ],
+        "audit_path": "figure_audits/F5.md"
+      }
+    },
+    {
+      "id": "E_S3_RAW_FEATURE_VARIATION",
+      "figure_id": "S3",
+      "panels": [
+        "a"
+      ],
+      "observation": "Raw paired growth, live-cell AUC, glucose-use, and total-cell-yield features differ between low- and high-ploidy states across lines.",
+      "source": "figure_audits/S3.md (W_S3_01,W_S3_03,W_S3_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S3_01",
+          "W_S3_03",
+          "W_S3_05"
+        ],
+        "audit_path": "figure_audits/S3.md"
+      }
+    },
+    {
+      "id": "E_S3_GLUCOSE_USE_EXCEPTION",
+      "figure_id": "S3",
+      "panels": [
+        "a"
+      ],
+      "observation": "Raw glucose-drawdown-per-live-cell-AUC ordering is mixed across the five lines, including the SUM-159-fuse context.",
+      "source": "figure_audits/S3.md (W_S3_04)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S3_04"
+        ],
+        "audit_path": "figure_audits/S3.md"
+      }
+    },
+    {
+      "id": "E_S4_RESPONSE_TRAJECTORIES",
+      "figure_id": "S4",
+      "panels": [
+        "a"
+      ],
+      "observation": "Low- and high-ploidy growth and net-total-cell-yield trajectories separate differently by cell line and starting glucose.",
+      "source": "figure_audits/S4.md (W_S4_01)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S4_01"
+        ],
+        "audit_path": "figure_audits/S4.md"
+      }
+    },
+    {
+      "id": "E_S6_CELL_COUNT_RESPONSE",
+      "figure_id": "S6",
+      "panels": [
+        "e"
+      ],
+      "observation": "Displayed 4N cell-count trajectories generally peak higher or later than 2N trajectories across several starting-glucose rows.",
+      "source": "figure_audits/S6.md (W_S6_01)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S6_01"
+        ],
+        "audit_path": "figure_audits/S6.md"
+      }
+    },
+    {
+      "id": "E_S8_RESOURCE_LANDSCAPE",
+      "figure_id": "S8",
+      "panels": [
+        "a",
+        "b"
+      ],
+      "observation": "Modeled high-minus-low growth surfaces and fraction-positive fields change across glucose, latent R2, cell line, and model.",
+      "source": "figure_audits/S8.md (W_S8_01,W_S8_03,W_S8_04)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S8_01",
+          "W_S8_03",
+          "W_S8_04"
+        ],
+        "audit_path": "figure_audits/S8.md"
+      }
+    },
+    {
+      "id": "E_S8_LOW_RESOURCE_ADVANTAGE",
+      "figure_id": "S8",
+      "panels": [
+        "a",
+        "b"
+      ],
+      "observation": "Several model/cell-line surfaces show positive high-minus-low growth at low glucose, including nearly uniform positive support for SUM-159-fuse.",
+      "source": "figure_audits/S8.md (W_S8_05,W_S8_07)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S8_05",
+          "W_S8_07"
+        ],
+        "audit_path": "figure_audits/S8.md"
+      }
+    },
+    {
+      "id": "E_S10_PER_CELL_TRADEOFF",
+      "figure_id": "S10",
+      "panels": [
+        "a"
+      ],
+      "observation": "Across four lines, per-cell posterior yield summaries are negative and uptake summaries are positive for high versus low ploidy.",
+      "source": "figure_audits/S10.md (W_S10_01,W_S10_02,W_S10_03)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S10_01",
+          "W_S10_02",
+          "W_S10_03"
+        ],
+        "audit_path": "figure_audits/S10.md"
+      }
+    },
+    {
+      "id": "E_S10_VOLUME_PROXY_YIELD",
+      "figure_id": "S10",
+      "panels": [
+        "a"
+      ],
+      "observation": "Volume-proxy yield is positive for MCF10A and SUM-159-chem, negative for MDA-MB-231, and near zero for SNU668.",
+      "source": "figure_audits/S10.md (W_S10_04,W_S10_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S10_04",
+          "W_S10_05"
+        ],
+        "audit_path": "figure_audits/S10.md"
+      }
+    },
+    {
+      "id": "E_S12_RESOURCE_SELECTION",
+      "figure_id": "S12",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "observation": "Starting from equal high/low fractions, low-glucose strategies often enrich high ploidy while high-glucose strategies often enrich low ploidy, with substantial line/model variation.",
+      "source": "figure_audits/S12.md (W_S12_01,W_S12_02,W_S12_06)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S12_01",
+          "W_S12_02",
+          "W_S12_06"
+        ],
+        "audit_path": "figure_audits/S12.md"
+      }
+    },
+    {
+      "id": "E_S12_SELECTION_COUNTEREXAMPLES",
+      "figure_id": "S12",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "observation": "SNU668 often enriches low ploidy under low glucose, whereas SUM-159-fuse and many MDA-MB-231 configurations retain high-ploidy enrichment under high glucose.",
+      "source": "figure_audits/S12.md (W_S12_03,W_S12_07)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S12_03",
+          "W_S12_07"
+        ],
+        "audit_path": "figure_audits/S12.md"
+      }
+    },
+    {
+      "id": "E_S12_STARVATION_ENRICHMENT",
+      "figure_id": "S12",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "observation": "Several low-glucose simulations predict high-ploidy enrichment from equal starting fractions.",
+      "source": "figure_audits/S12.md (W_S12_04)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S12_04"
+        ],
+        "audit_path": "figure_audits/S12.md"
+      }
+    },
+    {
+      "id": "E_S12_STARVATION_DISADVANTAGE",
+      "figure_id": "S12",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "observation": "SNU668 and portions of SUM-159-chem and MCF10A instead predict low-ploidy enrichment under starved or low-glucose schedules.",
+      "source": "figure_audits/S12.md (W_S12_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S12_05"
+        ],
+        "audit_path": "figure_audits/S12.md"
+      }
+    },
+    {
+      "id": "E_S13_SIZE_HETEROGENEITY",
+      "figure_id": "S13",
+      "panels": [
+        "a"
+      ],
+      "observation": "Positive ploidy contrasts coexist with cell-area contrasts ranging from positive to negative across the five displayed pairs.",
+      "source": "figure_audits/S13.md (W_S13_01)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S13_01"
+        ],
+        "audit_path": "figure_audits/S13.md"
+      }
+    },
+    {
+      "id": "E_S14_MODELED_EFFECTS",
+      "figure_id": "S14",
+      "panels": [
+        "a",
+        "b"
+      ],
+      "observation": "Across fitted-model aliases and cell-line pairs, ploidy has nonzero modeled effects on v1, K1, y1, and m, without displayed statistical or model-selection uncertainty.",
+      "source": "figure_audits/S14.md (W_S14_01,W_S14_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S14_01",
+          "W_S14_02"
+        ],
+        "audit_path": "figure_audits/S14.md"
+      }
+    },
+    {
+      "id": "E_S15_MORPHOLOGY_RESPONSE",
+      "figure_id": "S15",
+      "panels": [
+        "a",
+        "b"
+      ],
+      "observation": "Segmented-cell-area and nuclear-area trajectories differ by ploidy across glucose concentrations and SUM-159 contexts.",
+      "source": "figure_audits/S15.md (W_S15_01,W_S15_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S15_01",
+          "W_S15_02"
+        ],
+        "audit_path": "figure_audits/S15.md"
+      }
+    },
+    {
+      "id": "E_S15_SIZE_POSITIVE",
+      "figure_id": "S15",
+      "panels": [
+        "a"
+      ],
+      "observation": "SUM-159-chem M00b and several low-glucose mixture facets show larger high/4N segmented-cell area.",
+      "source": "figure_audits/S15.md (W_S15_03,W_S15_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S15_03",
+          "W_S15_05"
+        ],
+        "audit_path": "figure_audits/S15.md"
+      }
+    },
+    {
+      "id": "E_S15_SIZE_REVERSED",
+      "figure_id": "S15",
+      "panels": [
+        "a"
+      ],
+      "observation": "SUM-159-fuse C00/I00 and higher-glucose mixture facets show smaller, crossing, or non-separated high/4N segmented-cell area.",
+      "source": "figure_audits/S15.md (W_S15_04,W_S15_06)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S15_04",
+          "W_S15_06"
+        ],
+        "audit_path": "figure_audits/S15.md"
+      }
+    },
+    {
+      "id": "E_S16_SIZE_REVERSED",
+      "figure_id": "S16",
+      "panels": [
+        "a",
+        "c"
+      ],
+      "observation": "In C00 and I00, empirical low/2N cell-area point clouds lie above high/4N point clouds at 0.5 and 1 mM glucose.",
+      "source": "figure_audits/S16.md (W_S16_01)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S16_01"
+        ],
+        "audit_path": "figure_audits/S16.md"
+      }
+    },
+    {
+      "id": "E_S16_SIZE_POSITIVE",
+      "figure_id": "S16",
+      "panels": [
+        "a",
+        "c"
+      ],
+      "observation": "In SUM-159-chem M00b, empirical high/4N cell-area point clouds lie above low/2N across 0.1, 0.5, and 1 mM glucose.",
+      "source": "figure_audits/S16.md (W_S16_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S16_02"
+        ],
+        "audit_path": "figure_audits/S16.md"
+      }
+    },
+    {
+      "id": "E_S16_MORPHOLOGY_RESPONSE",
+      "figure_id": "S16",
+      "panels": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "observation": "Low/2N and high/4N cell- or nuclear-area distributions differ in several displayed low-glucose conditions.",
+      "source": "figure_audits/S16.md (W_S16_04)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S16_04"
+        ],
+        "audit_path": "figure_audits/S16.md"
+      }
+    },
+    {
+      "id": "E_S17_SIZE_REVERSED",
+      "figure_id": "S17",
+      "panels": [
+        "a"
+      ],
+      "observation": "Low/2N median segmented-cell area exceeds high/4N in C00/I00 and in two higher-glucose mixture facets.",
+      "source": "figure_audits/S17.md (W_S17_01,W_S17_03)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S17_01",
+          "W_S17_03"
+        ],
+        "audit_path": "figure_audits/S17.md"
+      }
+    },
+    {
+      "id": "E_S17_SIZE_POSITIVE",
+      "figure_id": "S17",
+      "panels": [
+        "a"
+      ],
+      "observation": "High/4N median segmented-cell area exceeds low/2N in SUM-159-chem M00b across 0.1, 0.5, and 1 mM glucose.",
+      "source": "figure_audits/S17.md (W_S17_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S17_02"
+        ],
+        "audit_path": "figure_audits/S17.md"
+      }
+    },
+    {
+      "id": "E_S17_MORPHOLOGY_RESPONSE",
+      "figure_id": "S17",
+      "panels": [
+        "a",
+        "b"
+      ],
+      "observation": "Mixture cell-area ordering reverses with glucose and nuclear-area distribution summaries differ by ploidy.",
+      "source": "figure_audits/S17.md (W_S17_04,W_S17_05)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S17_04",
+          "W_S17_05"
+        ],
+        "audit_path": "figure_audits/S17.md"
+      }
+    },
+    {
+      "id": "E_S18_CYTOPLASMIC_RED",
+      "figure_id": "S18",
+      "panels": [
+        "b",
+        "c"
+      ],
+      "observation": "Matched and size-standardized cytoplasmic-red contrasts differ consistently by ploidy direction between M00b and C00/I00/mixture contexts at low glucose.",
+      "source": "figure_audits/S18.md (W_S18_01,W_S18_02)",
+      "provenance": {
+        "worker_row_ids": [
+          "W_S18_01",
+          "W_S18_02"
+        ],
+        "audit_path": "figure_audits/S18.md"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "R001",
+      "source_type": "evidence",
+      "source_id": "E_F1_RESPONSE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Direct morphology and live-cell readouts show ploidy-dependent responses under glucose limitation."
+    },
+    {
+      "id": "R002",
+      "source_type": "evidence",
+      "source_id": "E_F1_STARVATION_SUPPORT",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "The MCF10A zero-glucose trajectory is direct evidence of greater high-ploidy persistence, with weaker corroboration in two lines."
+    },
+    {
+      "id": "R003",
+      "source_type": "evidence",
+      "source_id": "E_F1_STARVATION_COUNTER",
+      "target_claim_id": "C3",
+      "relation": "undermine",
+      "strength": "moderate",
+      "reason": "Two direct glucose-limited trajectories oppose a general high-ploidy robustness advantage."
+    },
+    {
+      "id": "R004",
+      "source_type": "evidence",
+      "source_id": "E_F1_SIZE_POSITIVE",
+      "target_claim_id": "U4",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Four lines show the expected directional cell-area increase, although exact proportional scaling is not established."
+    },
+    {
+      "id": "R005",
+      "source_type": "evidence",
+      "source_id": "E_F1_SIZE_REVERSED",
+      "target_claim_id": "U5",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Repeated direct ratios establish a robust reversal of the expected cell-area direction in SUM-159-fuse."
+    },
+    {
+      "id": "R006",
+      "source_type": "evidence",
+      "source_id": "E_F2_BROAD_FEATURE_SHIFT",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Multiple empirical growth, persistence, glucose-use, and yield features respond to ploidy."
+    },
+    {
+      "id": "R007",
+      "source_type": "evidence",
+      "source_id": "E_F2_METABOLIC_TRADEOFF",
+      "target_claim_id": "U1",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "The model-free features show a consistent higher-use/lower-cell-yield tradeoff across four lines."
+    },
+    {
+      "id": "R008",
+      "source_type": "evidence",
+      "source_id": "E_F2_STARVATION_SUPPORT",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "The zero-glucose persistence metric is direct and directionally consistent across all included lines."
+    },
+    {
+      "id": "R009",
+      "source_type": "evidence",
+      "source_id": "E_F2_STARVATION_COUNTER",
+      "target_claim_id": "C3",
+      "relation": "undermine",
+      "strength": "moderate",
+      "reason": "A growth-based starvation readout points opposite to the persistence-based advantage."
+    },
+    {
+      "id": "R010",
+      "source_type": "evidence",
+      "source_id": "E_F2_HIGH_GLUCOSE_GROWTH",
+      "target_claim_id": "C11",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The predominant high-glucose growth advantage belongs to low ploidy, although one line reverses."
+    },
+    {
+      "id": "R011",
+      "source_type": "evidence",
+      "source_id": "E_F4_JOINT_PARAMETER_SHIFT",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Every modeled comparison contains a coordinated ploidy-associated response shift."
+    },
+    {
+      "id": "R012",
+      "source_type": "evidence",
+      "source_id": "E_F4_METABOLIC_TRADEOFF",
+      "target_claim_id": "U1",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "The fitted models reproduce higher uptake and lower yield in every line-by-model comparison."
+    },
+    {
+      "id": "R013",
+      "source_type": "evidence",
+      "source_id": "E_F5_STRATEGY_CONTEXT",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The simulation package predicts strongly context-dependent ploidy responses."
+    },
+    {
+      "id": "R014",
+      "source_type": "evidence",
+      "source_id": "E_F5_ZERO_GLUCOSE_ADVANTAGE",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Repeated model predictions under sustained zero glucose support a high-ploidy low-resource advantage."
+    },
+    {
+      "id": "R015",
+      "source_type": "evidence",
+      "source_id": "E_F5_HIGH_RESOURCE_SCHEDULES",
+      "target_claim_id": "U3",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "High-initial-glucose schedules produce opposite selection-relevant directions depending on refresh schedule."
+    },
+    {
+      "id": "R016",
+      "source_type": "evidence",
+      "source_id": "E_F5_RESOURCE_GROWTH_SURFACE",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The low-resource region predicts a high-ploidy relative growth advantage."
+    },
+    {
+      "id": "R017",
+      "source_type": "evidence",
+      "source_id": "E_F5_RESOURCE_GROWTH_SURFACE",
+      "target_claim_id": "U3",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "The same relative-growth surface directly reverses direction across the resource landscape."
+    },
+    {
+      "id": "R018",
+      "source_type": "evidence",
+      "source_id": "E_S3_RAW_FEATURE_VARIATION",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The unstandardized paired features independently display ploidy-associated response differences."
+    },
+    {
+      "id": "R019",
+      "source_type": "evidence",
+      "source_id": "E_S3_GLUCOSE_USE_EXCEPTION",
+      "target_claim_id": "C1",
+      "relation": "undermine",
+      "strength": "weak",
+      "reason": "The all-line raw display contains directional exceptions, but the four-line standardized effect remains uniformly positive."
+    },
+    {
+      "id": "R020",
+      "source_type": "evidence",
+      "source_id": "E_S4_RESPONSE_TRAJECTORIES",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Condition-level response trajectories visibly depend on ploidy."
+    },
+    {
+      "id": "R021",
+      "source_type": "evidence",
+      "source_id": "E_S6_CELL_COUNT_RESPONSE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The mixed observation/model display shows a directional ploidy-associated cell-count response."
+    },
+    {
+      "id": "R022",
+      "source_type": "evidence",
+      "source_id": "E_S8_RESOURCE_LANDSCAPE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The probability and direction of modeled ploidy effects are resource- and context-dependent."
+    },
+    {
+      "id": "R023",
+      "source_type": "evidence",
+      "source_id": "E_S8_LOW_RESOURCE_ADVANTAGE",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Multiple posterior surfaces predict a high-ploidy low-resource growth advantage, with model dependence."
+    },
+    {
+      "id": "R024",
+      "source_type": "evidence",
+      "source_id": "E_S10_PER_CELL_TRADEOFF",
+      "target_claim_id": "U1",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The posterior size-context summary reproduces lower per-cell yield and higher uptake, though exact units and intervals limit strength."
+    },
+    {
+      "id": "R025",
+      "source_type": "evidence",
+      "source_id": "E_S10_VOLUME_PROXY_YIELD",
+      "target_claim_id": "C12",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "Two lines show the predicted positive volume-proxy yield."
+    },
+    {
+      "id": "R026",
+      "source_type": "evidence",
+      "source_id": "E_S10_VOLUME_PROXY_YIELD",
+      "target_claim_id": "C12",
+      "relation": "undermine",
+      "strength": "moderate",
+      "reason": "Two of four lines fail to show increased volume-proxy yield."
+    },
+    {
+      "id": "R027",
+      "source_type": "evidence",
+      "source_id": "E_S12_RESOURCE_SELECTION",
+      "target_claim_id": "U3",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Equal-start simulations show the predicted resource-dependent directional reversal in several contexts."
+    },
+    {
+      "id": "R028",
+      "source_type": "evidence",
+      "source_id": "E_S12_SELECTION_COUNTEREXAMPLES",
+      "target_claim_id": "U3",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "The counterpatterns reinforce that modeled fitness direction is line- and model-dependent."
+    },
+    {
+      "id": "R029",
+      "source_type": "evidence",
+      "source_id": "E_S12_SELECTION_COUNTEREXAMPLES",
+      "target_claim_id": "C4",
+      "relation": "undermine",
+      "strength": "moderate",
+      "reason": "SNU668 and other configurations favor low ploidy under starvation."
+    },
+    {
+      "id": "R030",
+      "source_type": "evidence",
+      "source_id": "E_S12_SELECTION_COUNTEREXAMPLES",
+      "target_claim_id": "C11",
+      "relation": "undermine",
+      "strength": "moderate",
+      "reason": "SUM-159-fuse and many MDA-MB-231 configurations favor high ploidy despite abundant-glucose schedules."
+    },
+    {
+      "id": "R031",
+      "source_type": "evidence",
+      "source_id": "E_S12_STARVATION_ENRICHMENT",
+      "target_claim_id": "U2",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "Relative enrichment is consistent with robustness but does not isolate survival or its mechanism."
+    },
+    {
+      "id": "R032",
+      "source_type": "evidence",
+      "source_id": "E_S12_STARVATION_DISADVANTAGE",
+      "target_claim_id": "C3",
+      "relation": "undermine",
+      "strength": "weak",
+      "reason": "Some modeled low-glucose outcomes run opposite to a general high-ploidy robustness advantage."
+    },
+    {
+      "id": "R033",
+      "source_type": "evidence",
+      "source_id": "E_S13_SIZE_HETEROGENEITY",
+      "target_claim_id": "U5",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The cross-pair spread is inconsistent with uniform proportional cell-area scaling."
+    },
+    {
+      "id": "R034",
+      "source_type": "evidence",
+      "source_id": "E_S14_MODELED_EFFECTS",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The modeled parameter effects are directionally nonzero but lack displayed uncertainty."
+    },
+    {
+      "id": "R035",
+      "source_type": "evidence",
+      "source_id": "E_S15_MORPHOLOGY_RESPONSE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Low-glucose morphology trajectories show reproducible ploidy-associated responses."
+    },
+    {
+      "id": "R036",
+      "source_type": "evidence",
+      "source_id": "E_S15_SIZE_POSITIVE",
+      "target_claim_id": "U4",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Repeated chem-context and low-glucose mixture trajectories match the expected size direction."
+    },
+    {
+      "id": "R037",
+      "source_type": "evidence",
+      "source_id": "E_S15_SIZE_REVERSED",
+      "target_claim_id": "U5",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Multiple trajectories reverse or fail the expected size ordering."
+    },
+    {
+      "id": "R038",
+      "source_type": "evidence",
+      "source_id": "E_S16_SIZE_REVERSED",
+      "target_claim_id": "U5",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Direct point clouds repeatedly reverse the expected size direction."
+    },
+    {
+      "id": "R039",
+      "source_type": "evidence",
+      "source_id": "E_S16_SIZE_POSITIVE",
+      "target_claim_id": "U4",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Direct point clouds consistently match the expected size direction in the chem context."
+    },
+    {
+      "id": "R040",
+      "source_type": "evidence",
+      "source_id": "E_S16_MORPHOLOGY_RESPONSE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The distributional morphology response differs by ploidy, but the readout is indirect for starvation response."
+    },
+    {
+      "id": "R041",
+      "source_type": "evidence",
+      "source_id": "E_S17_SIZE_REVERSED",
+      "target_claim_id": "U5",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Multiple summarized facets reverse the expected size ordering."
+    },
+    {
+      "id": "R042",
+      "source_type": "evidence",
+      "source_id": "E_S17_SIZE_POSITIVE",
+      "target_claim_id": "U4",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The summarized chem-context medians consistently match the expected size direction."
+    },
+    {
+      "id": "R043",
+      "source_type": "evidence",
+      "source_id": "E_S17_MORPHOLOGY_RESPONSE",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The summarized morphology response is ploidy- and glucose-dependent."
+    },
+    {
+      "id": "R044",
+      "source_type": "evidence",
+      "source_id": "E_S18_CYTOPLASMIC_RED",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "weak",
+      "reason": "The empirical readout is ploidy-associated under low glucose, but its biological interpretation is unresolved."
+    },
+    {
+      "id": "R045",
+      "source_type": "claim",
+      "source_id": "U1",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Coordinated glucose-use and yield shifts are substantive components of a ploidy-dependent starvation response."
+    },
+    {
+      "id": "R046",
+      "source_type": "claim",
+      "source_id": "U1",
+      "target_claim_id": "C1",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Model-free glucose drawdown and posterior uptake effects consistently increase with high ploidy."
+    },
+    {
+      "id": "R047",
+      "source_type": "claim",
+      "source_id": "U1",
+      "target_claim_id": "C2",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Per-cell posterior yield is lower at high ploidy across four lines, with directionally consistent cell-number-yield evidence."
+    },
+    {
+      "id": "R048",
+      "source_type": "claim",
+      "source_id": "U1",
+      "target_claim_id": "C11",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Higher resource use and lower cell yield provide a plausible competitive cost of high ploidy under abundance."
+    },
+    {
+      "id": "R049",
+      "source_type": "claim",
+      "source_id": "U2",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Ploidy-dependent persistence and growth under low glucose directly instantiate the broad response claim."
+    },
+    {
+      "id": "R050",
+      "source_type": "claim",
+      "source_id": "U2",
+      "target_claim_id": "C3",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Direct zero-glucose AUC and live-cell trajectories anchor the grouped robustness evidence."
+    },
+    {
+      "id": "R051",
+      "source_type": "claim",
+      "source_id": "U2",
+      "target_claim_id": "C4",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "A relative persistence or growth advantage under starvation is selection-relevant, while not itself an empirical competition test."
+    },
+    {
+      "id": "R052",
+      "source_type": "claim",
+      "source_id": "U3",
+      "target_claim_id": "C0",
+      "relation": "support",
+      "strength": "strong",
+      "reason": "Resource-dependent reversals in modeled relative fitness are a direct ploidy-by-environment response."
+    },
+    {
+      "id": "R053",
+      "source_type": "claim",
+      "source_id": "U3",
+      "target_claim_id": "C4",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Several low-resource schedules and growth-surface regions favor high ploidy in equal-start or relative-growth models."
+    },
+    {
+      "id": "R054",
+      "source_type": "claim",
+      "source_id": "U3",
+      "target_claim_id": "C11",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Several high-resource schedules and growth-surface regions favor low ploidy, with explicit context dependence."
+    },
+    {
+      "id": "R055",
+      "source_type": "claim",
+      "source_id": "U4",
+      "target_claim_id": "C7",
+      "relation": "support",
+      "strength": "moderate",
+      "reason": "Multiple non-fusion and chem contexts show larger cell area at higher ploidy, but do not establish exact proportional scaling."
+    },
+    {
+      "id": "R056",
+      "source_type": "claim",
+      "source_id": "U5",
+      "target_claim_id": "C7",
+      "relation": "undermine",
+      "strength": "strong",
+      "reason": "Repeated SUM-159-fuse and other context-specific reversals directly oppose a general proportional cell-size relationship."
+    }
+  ]
+}

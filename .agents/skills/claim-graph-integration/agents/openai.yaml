@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claim Graph Integration"
+  short_description: "Build clean claim graphs from figure audits"
+  default_prompt: "Use $claim-graph-integration to audit current figures against authoritative claims, reconcile the observations, and build a clean validated claim graph."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Subpanel Interpretation"
+  short_description: "Historical pre-unified subpanel interpretation skill"
+  default_prompt: "Use $archived-subpanel-semantic-interpretation only to audit or compare the pre-2026-07-06 subpanel interpretation workflow."

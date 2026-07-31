@@ -1,0 +1,17 @@
+{
+  "release_id": "red_a30_counts_20260722",
+  "model_name": "gpath",
+  "model_version": "v1",
+  "output_root": "data/modelling",
+  "build_area_stan_data": false,
+  "counts": {
+    "mode": "existing_rds",
+    "input_path": "data/image_processing_runs/full_segmentation_classification_nuclear/run_20260721_163410/summaries/counts.Rds",
+    "materialize": false,
+    "expected_sha256": "9d17ded4eb7787d02e2917a111eecf770fd8d05ff176b7a09c58ead2ffd35b4c",
+    "count_definition": "mean_per_imaged_field_including_zero-count_fields"
+  },
+  "datasets_tsv": "config/parameter_estimation/red_a30_counts_20260722/datasets.tsv",
+  "fits_tsv": "config/parameter_estimation/red_a30_counts_20260722/fits_all12.tsv",
+  "derived_config": "config/parameter_estimation/red_a30_counts_20260722/derived.json"
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analysis"
+  short_description: "Coordinate reproducible analysis work"
+  default_prompt: "Use $analysis to scope coherent analysis packages, stop for major-compute approval when required, execute reproducibly, validate outputs, and record analysis-scoped conclusions."

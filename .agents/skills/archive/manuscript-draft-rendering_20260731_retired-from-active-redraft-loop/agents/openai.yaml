@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Manuscript Draft Rendering"
+  short_description: "Historical standalone manuscript renderer"
+  default_prompt: "Use $archived-manuscript-draft-rendering only to audit or compare the standalone rendering workflow retired on 2026-07-31."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Legend Writing"
+  short_description: "Historical pre-unified legend-writing skill"
+  default_prompt: "Use $archived-manuscript-legend-writing only to audit or compare the pre-2026-07-06 legend-writing workflow."

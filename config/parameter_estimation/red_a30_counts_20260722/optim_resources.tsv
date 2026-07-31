@@ -1,0 +1,6 @@
+transform	optim_starts	optim_threads	optim_mem_gb	optim_time	optim_qos
+identity	500	8	8	00:30:00	xxlarge
+exclude_line	500	8	8	00:30:00	xxlarge
+single_line	500	8	8	00:15:00	xxlarge
+ploidy_holdout	500	8	8	00:30:00	xxlarge
+ploidy_null	500	8	8	00:30:00	xxlarge

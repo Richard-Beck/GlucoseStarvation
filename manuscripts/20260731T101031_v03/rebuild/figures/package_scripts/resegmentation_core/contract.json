@@ -1,0 +1,53 @@
+{
+  "wp_id": "F1_F2_S1_S4_resegmentation_fix",
+  "project_root": "/share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation",
+  "polish_root": "manuscript_figures/20260722T141236_resegmentation_fix",
+  "panel_map": "manuscript_figures/20260722T141236_resegmentation_fix/panel_map.csv",
+  "source_files": [
+    "data/modelling/gpath_v1/red_a30_counts_20260722/datasets/all_lines/stan_data.Rds",
+    "data/image_processing_runs/full_segmentation_classification_nuclear/run_20260721_163410/summaries/cell_nuclear_area_summaries.Rds",
+    "data/empirical_features/20260722/model_free_features.Rds",
+    "data/image_processing_validation/segmentation_classifier_90frame/20260722/frame_summary.csv",
+    "data/image_processing_validation/segmentation_classifier_90frame/20260722/object_metrics.csv"
+  ],
+  "source_pngs": [
+    "manuscripts/20260713T163237_v02/assets/figures/F1.png",
+    "manuscripts/20260713T163237_v02/assets/figures/F2.png",
+    "manuscripts/20260713T163237_v02/assets/figures/S1.png",
+    "manuscripts/20260713T163237_v02/assets/figures/S2.png",
+    "manuscripts/20260713T163237_v02/assets/figures/S3.png",
+    "manuscripts/20260713T163237_v02/assets/figures/S4.png"
+  ],
+  "figure_script": "manuscript_figures/20260722T141236_resegmentation_fix/scripts/polish_figures.R",
+  "allow_in_figure_titles": true,
+  "subpanel_dimensions": "manuscript_figures/20260722T141236_resegmentation_fix/layout/subpanel_dimensions.csv",
+  "layout_optimizer_script": ".agents/skills/manuscript-figure-workflow/scripts/optimize_panel_layout.R",
+  "layout_optimizer_command": "scripts/agentRrunner.sh .agents/skills/manuscript-figure-workflow/scripts/optimize_panel_layout.R --input manuscript_figures/20260722T141236_resegmentation_fix/layout/subpanel_dimensions.csv --output-dir manuscript_figures/20260722T141236_resegmentation_fix/layout --target-width 7 --max-height 9.25",
+  "layout_plan": "manuscript_figures/20260722T141236_resegmentation_fix/layout/layout_plan.csv",
+  "layout_report": "manuscript_figures/20260722T141236_resegmentation_fix/layout/layout_report.md",
+  "layout_qc_files": [
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_1_layout_preview.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_2_layout_preview.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_S1_layout_preview.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_S2_layout_preview.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_S3_layout_preview.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/layout/Figure_S4_layout_preview.png"
+  ],
+  "expected_outputs": [
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_1.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_2.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_s1.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_s2.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_s3.png",
+    "manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_s4.png"
+  ],
+  "provenance_table": "manuscript_figures/20260722T141236_resegmentation_fix/provenance.csv",
+  "output_manifest": "manuscript_figures/20260722T141236_resegmentation_fix/manifest.csv",
+  "rebuild_manifest": "manuscript_figures/20260722T141236_resegmentation_fix/figure_rebuild_manifest.tsv",
+  "polishing_notes": "manuscript_figures/20260722T141236_resegmentation_fix/notes.md",
+  "visual_qc_file": "manuscript_figures/20260722T141236_resegmentation_fix/visual_qc.md",
+  "require_visual_qc": false,
+  "validation_report": "manuscript_figures/20260722T141236_resegmentation_fix/validation_report.json",
+  "report_dir": "manuscript_figures/20260722T141236_resegmentation_fix",
+  "require_project_map_decision": true
+}

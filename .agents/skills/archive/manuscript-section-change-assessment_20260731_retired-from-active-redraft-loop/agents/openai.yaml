@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Manuscript Section Change Assessment"
+  short_description: "Historical section-change assessment"
+  default_prompt: "Use $archived-manuscript-section-change-assessment only to audit or compare the section assessment retired on 2026-07-31."

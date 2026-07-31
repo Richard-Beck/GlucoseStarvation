@@ -1,0 +1,9 @@
+package_id	operation	elapsed_seconds	details
+FG6_selection_simulation_revision	load	0.729	Verified 70/70 full-strategy validation; loaded two compact posterior endpoint shards plus canonical optimization/Stan inputs retained for unchanged initial-condition panels.
+FG6_selection_simulation_revision	posterior_endpoint_ranking	1.18	Applied low/high fold>=1 viability scoring per posterior draw and line; selected best schedules, modal primary schedules, endpoint distributions, and the 448-schedule posterior landscape.
+FG6_selection_simulation_revision	selected_posterior_trajectory_load	10.063	Loaded only four primary-model no-SUM full .qs shards and reduced the two modal schedules to posterior median and 10-90% ribbons.
+FG6_selection_simulation_revision	unchanged_initial_condition_baseline	31.398	Recomputed the prior deterministic no-SUM baseline schedules solely to preserve F5d/S11b identity (8 cores).
+FG6_selection_simulation_revision	initial_condition_simulation	11.888	Reintegrated 40 selected schedules over 63 explicit sensitivity conditions plus each context's fitted-N0 baseline, without refresh reseeding (2560 simulations; 8 cores).
+FG6_selection_simulation_revision	leave_one_line_transforms	0.143000000000001	Recomputed posterior all-line and omit-one-line objective-score distributions in memory from the two endpoint arrays.
+FG6_selection_simulation_revision	render	3.269	Rendered Figure 5 (7x9.14 in), Figure S11 (7x8.29 in), and Figure S12 (7x5 in) at 360 dpi.
+FG6_selection_simulation_revision	total	58.701	Canonical in-memory rebuild using 8 forked cores; persisted only script, three PNGs, and this timing table.

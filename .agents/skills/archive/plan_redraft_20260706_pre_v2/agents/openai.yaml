@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Redraft"
+  short_description: "Plan bucketed manuscript redrafts"
+  default_prompt: "Use $plan_redraft to preserve raw manuscript feedback intent, assign each task to the required execution bucket, and create a human-friendly HTML review checkpoint."

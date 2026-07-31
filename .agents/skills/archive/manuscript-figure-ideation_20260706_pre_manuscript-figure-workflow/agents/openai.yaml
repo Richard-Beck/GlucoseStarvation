@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Figure Ideation"
+  short_description: "Historical pre-unified figure ideation skill"
+  default_prompt: "Use $archived-manuscript-figure-ideation only to audit or compare the pre-2026-07-06 figure ideation workflow."

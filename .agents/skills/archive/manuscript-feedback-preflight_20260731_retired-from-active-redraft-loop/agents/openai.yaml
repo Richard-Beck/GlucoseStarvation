@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Manuscript Feedback Preflight"
+  short_description: "Historical pre-drafting feedback audit"
+  default_prompt: "Use $archived-manuscript-feedback-preflight only to audit or compare the feedback preflight retired on 2026-07-31."

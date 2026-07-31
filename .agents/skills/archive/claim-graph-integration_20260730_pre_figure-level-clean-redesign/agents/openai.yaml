@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claim Graph Integration"
+  short_description: "Reconcile current evidence with claim graphs"
+  default_prompt: "Use $claim-graph-integration to update and validate the manuscript claim graph from current evidence items."

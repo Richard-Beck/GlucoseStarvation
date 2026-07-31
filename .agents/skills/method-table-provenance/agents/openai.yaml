@@ -1,0 +1,4 @@
+interface:
+  display_name: "Method Table Provenance"
+  short_description: "Trace figure objects into Methods provenance."
+  default_prompt: "Use $method-table-provenance to verify, selectively update, or cleanly reconstruct object-level Methods provenance for these manuscript figures."

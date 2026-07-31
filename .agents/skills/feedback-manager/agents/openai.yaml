@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feedback Manager"
+  short_description: "Track manuscript feedback state"
+  default_prompt: "Use $feedback-manager to archive raw manuscript feedback, index mechanical spans/items without target inference, serve unsigned feedback packets to consumers, and record consumer responses directly on feedback items."

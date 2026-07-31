@@ -365,8 +365,11 @@ nuts_write_outputs <- function(fit, cfg, model_api, prep) {
       config = cfg
     )
     if (!is.null(extra_outputs)) {
-      if (!is.list(extra_outputs) || is.null(names(extra_outputs)) || any(!nzchar(names(extra_outputs)))) {
-        stop("collect_nuts_outputs() must return a named list")
+      if (!is.list(extra_outputs)) {
+        stop("collect_nuts_outputs() must return a list or NULL")
+      }
+      if (length(extra_outputs) && (is.null(names(extra_outputs)) || any(!nzchar(names(extra_outputs))))) {
+        stop("non-empty collect_nuts_outputs() results must be a named list")
       }
 
       for (nm in names(extra_outputs)) {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manuscript Figure Workflow"
+  short_description: "Route and run manuscript figure tasks"
+  default_prompt: "Use $manuscript-figure-workflow to choose and run the next manuscript figure task, including figure-set integration when needed, from the prompt, plan, data, feedback, and existing artifacts."

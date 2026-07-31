@@ -3,7 +3,9 @@
 /.cache/
 /old_scripts/
 /logs/
-/data/
+/data/*
+!/data/glucose/
+!/data/glucose/**
 /all_raw/
 /figures/
 *.pdf

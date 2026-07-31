@@ -3,11 +3,13 @@
 
 # Repository orientation and cleanup/rebuild audit
 .codex
+.gitattributes
 .gitignore
 AGENTS.md
 README.md
 docs/current_manuscript_rebuild.md
 docs/current_manuscript_rebuild_keep_roots.txt
+docs/current_manuscript_rebuild_source_boundaries.tsv
 docs/project_map.txt
 scripts/audit_cleanup_keep_roots.py
 
@@ -35,10 +37,7 @@ all_raw
 # Current data/model releases and terminal measurement inputs in the graph
 data/counts/image_metadata.Rds
 data/empirical_features/20260722
-data/glucose/processed/MCF10A.MDA-MB-231
-data/glucose/processed/SUM-159-chem.SNU668
-data/glucose/processed/SUM-159-fuse
-data/glucose/processed/SUM-159-fuse-gluccell
+data/glucose
 data/image_processing_runs/full_segmentation_classification_nuclear/run_20260721_163410
 data/image_processing_runs/run_20260324_233122
 data/image_processing_runs/sum159_competition_resegmentation/run_20260720_143217

@@ -1,8 +1,0 @@
-status: PASS
-contract: clean figure-level claim graph v4
-figure audits: OK: 23 figure audits, 8 authoritative claims, 103 observation-claim relationships
-claim graph: OK: 13 claims, 40 evidence nodes, 56 relationships
-package: 23 figures, 8 authoritative claims, 13 total claims, 40 evidence nodes, 56 relationships
-reconciliation: 103 worker rows; 81 accepted; 22 rejected
-authentication: 23 audit receipts; result graph checksum verified
-qualification relationships: 0

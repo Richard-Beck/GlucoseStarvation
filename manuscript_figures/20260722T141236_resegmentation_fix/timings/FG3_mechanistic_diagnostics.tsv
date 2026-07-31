@@ -1,8 +1,0 @@
-package_id	operation	elapsed_seconds	details
-FG3_mechanistic_diagnostics	data_loading	0.741	optimization/assessment.Rds; posterior/qc.Rds; all-lines Stan input; five all-lines posterior prediction objects
-FG3_mechanistic_diagnostics	transformations_f3_s5	0.049	Pareto diagnostics, no-SUM-159-fuse per-well likelihood loss, optimization stability, AIC and complexity decomposition
-FG3_mechanistic_diagnostics	transformations_s6	5.616	Posterior median N/R1/R2/W1 trajectories and observed-cell overlays from the all-lines fit for five lines and five model families
-FG3_mechanistic_diagnostics	transformations_s7	1.179	Prior-design transfer schematic, labelled heatmap, and canonical null/transfer/full-data case overlays
-FG3_mechanistic_diagnostics	transformations_s8_s9	2.481	Posterior growth-difference surfaces, fraction-positive map, and R1/R2 phase trajectories from all-lines predictions
-FG3_mechanistic_diagnostics	rendering	7.692	Six final composites rendered directly from in-memory plot objects at 360 dpi; F3A read directly from canonical immutable raster
-FG3_mechanistic_diagnostics	total	23.81	Canonical modelling release red_a30_counts_20260722; F3A canonical raster basename=model_family_schematic_placeholder.png; raster_sha256=8f222b659b718ecd74e27df08ca6e4abd66f83564a7f74892d3facc38bc60c37

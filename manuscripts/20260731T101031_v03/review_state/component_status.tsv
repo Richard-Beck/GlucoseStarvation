@@ -1,7 +1,0 @@
-component	upstream_root	status	approval_basis
-Figures	agent-dev/manuscript_integration/20260729_v03_figure_set_integration	approved	Project owner accepted all 23 polished figure packages; S19 was removed
-Legends	agent-dev/manuscript_integration/20260729_v03_figure_set_integration	approved	Project owner explicitly waived further legend review and approved the current legends
-Results	agent-dev/manuscript_results/20260731_v03_results_revision	approved	Project owner explicitly approved the revised Results after integration of three first-section comments
-Methods	agent-dev/manuscript_methods/20260730_v03_methods_provenance_reconstruction	approved	Project owner explicitly approved the reviewer-cleared canonical Methods text
-Abstract/Introduction/Discussion/References	agent-dev/manuscript_aid/20260731_v03_aid_serving	approved_carried_forward	Project owner directed ordered A/I/D serving and then directed manuscript assembly
-Claim graph	agent-dev/manuscript_claim_graph/20260730_v03_clean_figure_level_graph	accepted	Project owner accepted the clean claim graph as-is and deferred further review

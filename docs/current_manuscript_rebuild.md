@@ -39,8 +39,8 @@ model, and its README records that assay/count matching, reformatting, and
 calibration extraction were performed manually. The processed CSVs remain
 locked terminal objects in the Methods graph, while the source-boundary review
 prevents that graph status from excluding their primary workbooks.
-This compact source package is versioned explicitly despite the repository's
-broad ignore policy for other large `data` collections.
+This source package is retained locally under the cleanup keep policy and is
+Git-ignored together with the repository's other `data` collections.
 
 ## Rebuild and verification
 

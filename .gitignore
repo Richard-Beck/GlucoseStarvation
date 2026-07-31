@@ -3,11 +3,11 @@
 /.cache/
 /old_scripts/
 /logs/
-/data/*
-!/data/glucose/
-!/data/glucose/**
+/data/
 /all_raw/
 /figures/
+/manuscript_figures/
+/manuscripts/
 *.pdf
 /results/
 /plots/
@@ -23,5 +23,4 @@ models/gpath/v1/gpath_hier
 *.html
 /agent-dev/
 /dev-figs/
-!manuscripts/20260731T101031_v03/draft/manuscript_draft.html
 .tmp

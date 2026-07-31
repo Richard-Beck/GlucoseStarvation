@@ -1,8 +1,0 @@
-The raw folder contains excel spreadsheets unchanged as received from the spreadsheets.
-The processed folder contains these data parsed (manually) ready for input into the optimization pipeline.
-In general this simply involves:
-1) Matching the glucose assay to the corresponding cell-counts data.
-2) Reformatting the glucose/fluorescence data into a single csv file.
-3) Extracting the calibration data and saving into a separate file.
-
-For details on how these objects are integrated into the workflow, see scripts/preliminaries_and_metadata.Rmd

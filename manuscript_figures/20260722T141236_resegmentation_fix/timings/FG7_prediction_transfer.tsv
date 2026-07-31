@@ -1,9 +1,0 @@
-package_id	operation	elapsed_seconds	details
-FG7_prediction_transfer	load_assessment_and_manifests	0.454	Loaded /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/modelling/gpath_v1/red_a30_counts_20260722/derived/optimization/assessment.Rds, /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/modelling/gpath_v1/red_a30_counts_20260722/manifests/datasets.tsv, and /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/data/modelling/gpath_v1/red_a30_counts_20260722/manifests/fit_plan.tsv
-FG7_prediction_transfer	validate_wave2_directional_inputs	0.104	Validated 50 complete selected-model wave-2 real/null assessment rows and 10 canonical directional Stan-data holdout masks
-FG7_prediction_transfer	select_and_load_rc0_fits	4.391	Selected maximum-LP finite rc=0 starts from assessment$start_summary and loaded the corresponding draw from each of 55 canonical optimizer archives
-FG7_prediction_transfer	recompute_learned_environments	60.221	Reconstructed 50 directional 9/10 fits, searched common-R1/model-native R1/R2 grids in memory, and evaluated 200 frozen environments with 10/10 fits
-FG7_prediction_transfer	summarize_exact_and_robust_rates	0.045	Computed headline, model-family, and target-line exact/robust requested-sign fractions
-FG7_prediction_transfer	construct_panels	0.214	Constructed the accepted S14 schematic, exact/robust summary plot, and model/line heatmap in memory
-FG7_prediction_transfer	render	1.755	Rendered /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation/manuscript_figures/20260722T141236_resegmentation_fix/final_images/figure_s14.png at 7 x 8.76 inches and 300 dpi
-FG7_prediction_transfer	total	67.252	Exact 9/10 learned-environment requested-sign recomputation from canonical rc-zero optimizer draws; no legacy transfer tables or persisted intermediates

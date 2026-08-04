@@ -8,6 +8,7 @@
 /figures/
 /manuscript_figures/
 /manuscripts/
+/latest_manuscript_bundle/
 *.pdf
 /results/
 /plots/

@@ -1,0 +1,70 @@
+name: Publish manuscript report
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: pages-site
+  RELEASE_ASSET: manuscript-pages.tar.gz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download current site bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RELEASE_ASSET" \
+            --dir .
+
+      - name: Extract and validate site bundle
+        run: |
+          set -euo pipefail
+          mkdir site
+          if tar -tzf "$RELEASE_ASSET" | grep -Eq '(^|/)\.\.(/|$)|^/'; then
+            echo "Bundle contains an unsafe path" >&2
+            exit 1
+          fi
+          tar -xzf "$RELEASE_ASSET" -C site
+          test -s site/index.html
+          if find site -type l -print -quit | grep -q .; then
+            echo "Bundle contains a symbolic link" >&2
+            exit 1
+          fi
+          if find site -type f -links +1 -print -quit | grep -q .; then
+            echo "Bundle contains a hard link" >&2
+            exit 1
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

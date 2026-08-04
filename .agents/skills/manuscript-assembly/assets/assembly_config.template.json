@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "assembly_root": "<project-relative-assembly-root>",
+  "dependency_manifests": {
+    "live": "traceability/live_dependencies.tsv",
+    "runtime": "traceability/runtime_dependencies.tsv"
+  },
+  "lineage_sources": [
+    {
+      "manifest": "traceability/upstream_input_register.tsv",
+      "path_column": "upstream_path",
+      "delimiter": "tsv"
+    }
+  ],
+  "materialization": {
+    "candidate_manifest": "validation/live_dependencies.candidate.tsv",
+    "table_sources": [
+      {
+        "path": "<assembly-relative-input-manifest>",
+        "columns": ["<dependency-column>"],
+        "delimiter": "tsv",
+        "value_separator": ";",
+        "base": "project"
+      }
+    ],
+    "code_roots": ["<assembly-relative-code-root>"],
+    "extra_candidates": []
+  },
+  "isolation": {
+    "entrypoints_manifest": "rebuild/scaffolding_independence_entrypoints.tsv",
+    "timeout_seconds": 1800
+  },
+  "reports": {
+    "json": "validation/scaffolding_independence.json",
+    "markdown": "validation/scaffolding_independence.md"
+  }
+}

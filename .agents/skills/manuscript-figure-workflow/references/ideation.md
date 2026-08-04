@@ -28,7 +28,7 @@ run major analyses, edit production code, or mark the proposal approved.
 Use the most local review root implied by the request:
 
 - Legacy work-package workflow:
-  `agent-dev/manuscript_work_packages/<WP_ID>/ideation/`
+  `<work_package_root>/<WP_ID>/ideation/`
 - Redraft figure-package workflow:
   `<redraft_root>/figure_generation/<package_id>/ideation/`
 

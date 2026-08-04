@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "mode": "in_place",
+  "assembly_root": "<absolute-or-config-relative-assembly-root>",
+  "workspace": "<top-level-revision-workspace-name>",
+  "preview_policy": "batch_complete",
+  "baseline": {
+    "checksum_manifest": "<assembly-relative-checksum-manifest>",
+    "status_file": "<assembly-relative-status-file-or-null>",
+    "require_complete_inventory": true,
+    "allowed_unsealed_paths": [
+      "<assembly-relative-path-or-glob-explicitly-excluded-from-the-seal>"
+    ]
+  },
+  "consequence_audit": {
+    "dependency_graph": "<config-relative-or-absolute-manuscript-dependency-graph-tsv>"
+  },
+  "contract_sensitive_patterns": [
+    "<exact-assembly-relative-control-plane-entrypoint-or-record>"
+  ],
+  "preview_renderer": {
+    "argv": [
+      "{python}",
+      "{candidate_root}/<assembly-relative-renderer-entrypoint>"
+    ],
+    "cwd": "{candidate_root}",
+    "output": "<assembly-relative-rendered-html>",
+    "environment": {},
+    "timeout_seconds": 300
+  }
+}

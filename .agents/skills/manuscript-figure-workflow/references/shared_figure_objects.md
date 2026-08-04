@@ -143,8 +143,11 @@ Field ownership by workflow:
 
 - This field makes the master index sufficient to navigate back from a final
   panel to the package or polishing root that supplied it.
-- It is consumed by source/provenance review, rebuild validation, and later
-  methods provenance work.
+- It is lineage and navigation metadata. Its presence does not declare a live
+  rebuild dependency or authorize downstream terminal validation to read it.
+- It may be consumed during source/provenance review and methods provenance
+  work. Rebuild validation should use promoted code, fixed inputs, and durable
+  receipts.
 - If a row was created entirely inside integration, use the integration root.
 
 ## RebuildRecord
@@ -198,7 +201,16 @@ Field ownership by workflow:
 - Validation may write `stage = validation_rebuild` rows when it reruns commands
   in a clean or separate validation location.
 
-R entrypoints should be invoked through `scripts/agentRrunner.sh`.
+Path-role rule:
+
+- `source_root`, polishing targets, and source-stage commands are lineage.
+- Promoted `script_path`, `working_directory`, `direct_input_paths`, and
+  `dependency_paths` describe the transferable rebuild closure for the matching
+  promoted stage.
+- When an input path is a symlink, preserve the logical path and identify the
+  resolved target required for isolated replay.
+
+R entrypoints should be invoked through the project-approved R runner.
 
 Immutable raster inputs are inputs that must be named and validated under the
 global raster policy in `SKILL.md`.
@@ -293,4 +305,3 @@ Minimum final-handoff validation checks:
   plotted inputs or a blocking validation error;
 - every manuscript-visible panel has a semantic interpretation path;
 - every final image has a visual QC record.
-

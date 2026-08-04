@@ -94,7 +94,7 @@ Common inputs include:
 Use the most local review root implied by the request:
 
 - Legacy work-package workflow:
-  `agent-dev/manuscript_work_packages/<WP_ID>/<task>/`
+  `<work_package_root>/<WP_ID>/<task>/`
 - Redraft figure-package workflow:
   `<redraft_root>/figure_generation/<package_id>/<task>/`
 - Figure polishing root:
@@ -104,8 +104,7 @@ Use the most local review root implied by the request:
   use the user-specified path or a local `subpanel_interpretations/` folder near
   the relevant figure package or integration root.
 - Figure-set integration outputs:
-  default to a timestamped or versioned integration root, usually
-  `agent-dev/manuscript_integration/<run_id>/`.
+  use a timestamped or versioned `<integration_root>`.
 
 Write self-contained HTML review reports for ideation and drafting. For
 polishing, write final PNGs, integration-ready metadata, rebuild records, notes,

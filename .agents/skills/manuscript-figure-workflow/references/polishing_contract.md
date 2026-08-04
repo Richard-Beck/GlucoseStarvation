@@ -9,35 +9,35 @@ resolved relative to the directory where the validator is run unless
 ```json
 {
   "wp_id": "WP4",
-  "polish_root": "figures/manuscript_draft_v3/WP4/polishing",
-  "draft_doc": "agent-dev/manuscript_work_packages/WP4/drafting/drafting_panels.md",
-  "panel_map": "figures/manuscript_draft_v3/WP4/polishing/panel_map.csv",
+  "polish_root": "<polish_root>",
+  "draft_doc": "<draft_root>/drafting_panels.md",
+  "panel_map": "<polish_root>/panel_map.csv",
   "source_pngs": [
-    "agent-dev/manuscript_work_packages/WP4/drafting/refined_subpanels/F4A_parameter_effect_intervals.png"
+    "<draft_root>/refined_subpanels/F4A_parameter_effect_intervals.png"
   ],
   "approved_raster_subpanels": [
     "<discovered-canonical-approved-raster-directory>/model_family_schematic.png"
   ],
-  "figure_script": "figures/manuscript_draft_v3/WP4/polishing/scripts/polish_figures.R",
-  "subpanel_dimensions": "figures/manuscript_draft_v3/WP4/polishing/layout/subpanel_dimensions.csv",
+  "figure_script": "<polish_root>/scripts/polish_figures.R",
+  "subpanel_dimensions": "<polish_root>/layout/subpanel_dimensions.csv",
   "layout_optimizer_script": "<skill_dir>/scripts/optimize_panel_layout.R",
-  "layout_optimizer_command": "scripts/agentRrunner.sh <skill_dir>/scripts/optimize_panel_layout.R --input figures/manuscript_draft_v3/WP4/polishing/layout/subpanel_dimensions.csv --output-dir figures/manuscript_draft_v3/WP4/polishing/layout --target-width 7 --max-height 9.25",
-  "layout_plan": "figures/manuscript_draft_v3/WP4/polishing/layout/layout_plan.csv",
-  "layout_report": "figures/manuscript_draft_v3/WP4/polishing/layout/layout_report.md",
+  "layout_optimizer_command": "<r_runner> <skill_dir>/scripts/optimize_panel_layout.R --input <polish_root>/layout/subpanel_dimensions.csv --output-dir <polish_root>/layout --target-width 7 --max-height 9.25",
+  "layout_plan": "<polish_root>/layout/layout_plan.csv",
+  "layout_report": "<polish_root>/layout/layout_report.md",
   "layout_qc_files": [
-    "figures/manuscript_draft_v3/WP4/polishing/layout/Figure_4_layout_preview.png"
+    "<polish_root>/layout/Figure_4_layout_preview.png"
   ],
   "expected_outputs": [
-    "figures/manuscript_draft_v3/WP4/polishing/final_images/figure_4.png"
+    "<polish_root>/final_images/figure_4.png"
   ],
-  "provenance_table": "figures/manuscript_draft_v3/WP4/polishing/provenance.csv",
-  "output_manifest": "figures/manuscript_draft_v3/WP4/polishing/manifest.csv",
-  "rebuild_manifest": "figures/manuscript_draft_v3/WP4/polishing/figure_rebuild_manifest.tsv",
-  "byte_identity_report": "figures/manuscript_draft_v3/WP4/polishing/figure_byte_identity_report.tsv",
-  "polishing_notes": "figures/manuscript_draft_v3/WP4/polishing/notes.md",
-  "visual_qc_file": "figures/manuscript_draft_v3/WP4/polishing/visual_qc.md",
-  "validation_report": "figures/manuscript_draft_v3/WP4/polishing/validation_report.json",
-  "report_dir": "figures/manuscript_draft_v3/WP4/polishing"
+  "provenance_table": "<polish_root>/provenance.csv",
+  "output_manifest": "<polish_root>/manifest.csv",
+  "rebuild_manifest": "<polish_root>/figure_rebuild_manifest.tsv",
+  "byte_identity_report": "<polish_root>/figure_byte_identity_report.tsv",
+  "polishing_notes": "<polish_root>/notes.md",
+  "visual_qc_file": "<polish_root>/visual_qc.md",
+  "validation_report": "<polish_root>/validation_report.json",
+  "report_dir": "<polish_root>"
 }
 ```
 
@@ -150,9 +150,9 @@ The default polishing script is one file, usually `scripts/polish_figures.R`,
 run in phases:
 
 ```text
-scripts/agentRrunner.sh <polish_root>/scripts/polish_figures.R --phase subpanels
-scripts/agentRrunner.sh <skill_dir>/scripts/optimize_panel_layout.R --input <polish_root>/layout/subpanel_dimensions.csv --output-dir <polish_root>/layout --target-width 7 --max-height 9.25
-scripts/agentRrunner.sh <polish_root>/scripts/polish_figures.R --phase final
+<r_runner> <polish_root>/scripts/polish_figures.R --phase subpanels
+<r_runner> <skill_dir>/scripts/optimize_panel_layout.R --input <polish_root>/layout/subpanel_dimensions.csv --output-dir <polish_root>/layout --target-width 7 --max-height 9.25
+<r_runner> <polish_root>/scripts/polish_figures.R --phase final
 ```
 
 The script should define reusable panel constructors. The subpanel phase saves

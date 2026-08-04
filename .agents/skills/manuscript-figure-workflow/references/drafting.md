@@ -34,7 +34,7 @@ Optional:
 Use the most local review root implied by the request:
 
 - Legacy work-package workflow:
-  `agent-dev/manuscript_work_packages/<WP_ID>/drafting/`
+  `<work_package_root>/<WP_ID>/drafting/`
 - Redraft figure-package workflow:
   `<redraft_root>/figure_generation/<package_id>/drafting/`
 
@@ -62,7 +62,7 @@ Write the applicable outputs:
   with identifiable prior reviewed code.
 - `not_drafted.md` if any approved option is skipped.
 
-## Feedback Context
+## Directive Intake
 
 Record in `feedback_intake.md`:
 
@@ -161,7 +161,7 @@ generating the report, write `report_manifest.csv` for every PNG under
 Use `<skill_dir>/scripts/review_report_template.R` as the starting template.
 Copy it into the local drafting package, usually as
 `scripts/make_<package>_review_report.R`, adapt the CONFIG block, and run it with
-`scripts/agentRrunner.sh`. Preserve the directive-status table,
+the project-approved R runner. Preserve the directive-status table,
 recommended-first order, visible blocker section, report coverage checks, and
 collapsed raw galleries.
 
@@ -190,7 +190,7 @@ collapsed raw galleries.
 
 ## Constraints
 
-- Run R scripts through `scripts/agentRrunner.sh`.
+- Run R scripts through the project-approved R runner.
 - Do not start expensive refits, segmentation reruns, classifier retraining, or
   long jobs unless explicitly approved.
 - Treat unrequested changes to data, filtering, statistical summary, visual

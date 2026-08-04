@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archived Plan Redraft"
+  short_description: "Audit the former redraft planner"
+  default_prompt: "Use $archived-plan-redraft only to audit or compare the retired stage-sequenced manuscript redraft workflow."

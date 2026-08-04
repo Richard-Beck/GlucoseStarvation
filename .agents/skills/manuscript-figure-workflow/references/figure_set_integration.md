@@ -71,8 +71,8 @@ For each active package, the main agent must:
 - copy/promote the package-local figure-generation script(s), helpers, fixed
   configs, and rebuild notes into the integration target without modifying the
   polishing root;
-- rerun the promoted script(s) from the integration target, using
-  `scripts/agentRrunner.sh` for R entrypoints;
+- rerun the promoted script(s) from the integration target using the
+  project-approved runner;
 - write regenerated package PNGs into an integration-local package rebuild
   folder, hash them, and compare those hashes against the polishing-root
   `final_images/` PNG hashes;
@@ -156,8 +156,10 @@ still performs cross-package normalization and final lineage decisions.
    - The wrapper must not perform expensive analysis reruns, model fitting,
      segmentation, classifier training, or data rebuilding unless explicitly
      requested.
-   - The wrapper is the single command downstream packages should use to rebuild
-     all integrated final figures from promoted scripts and fixed inputs.
+   - The wrapper is the single transferable command downstream packages should
+     promote or rebase to rebuild all integrated final figures from promoted
+     scripts and fixed inputs. The integration root itself is a staging handoff,
+     not an implied terminal dependency of a downstream manuscript package.
 
 8. **Link semantic interpretations**
    - Require one semantic interpretation per manuscript evidence panel.
@@ -213,7 +215,7 @@ still performs cross-package normalization and final lineage decisions.
 Write outputs under a timestamped or versioned root, usually:
 
 ```text
-agent-dev/manuscript_integration/<run_id>/
+<integration_root>/
   final_images/
     F1.png
     F2.png

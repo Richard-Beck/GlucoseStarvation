@@ -1,5 +1,3 @@
-Read docs/project_map.txt when you need to understand the project and the organisation of key files.
-project_map.txt is intended as a living document, so if you make any changes to the codebase, determine whether this necessitates an update to project_map.txt. project_map.txt is intended to be relatively terse, so do not bloat it with uneccessary information.
 If your current environment is /share/lab_crd/lab_crd/HighPloidy_CostBenefits/data/GlucoseStarvation you are in the HPC system! HPC system suggestions:
 1) Run all R scripts via scripts/agentRrunner.sh myScript arg1 arg2... 
 2) Run small jobs/scripts directly from the terminal.

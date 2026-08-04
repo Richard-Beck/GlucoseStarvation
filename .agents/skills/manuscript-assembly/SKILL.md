@@ -8,7 +8,7 @@ Use when Codex needs to create or update the final folder for a manuscript, asse
 
 ## Purpose
 
-Use this skill to produce a durable manuscript package according to define guidelines,
+Use this skill to produce a durable manuscript package according to defined guidelines,
 or clearly block manuscript assembly if the required inputs are incomplete.
 
 This skill owns package assembly, consistency checks, final-folder structure,
@@ -16,16 +16,31 @@ and assembly status. If assembly reveals missing, stale, or misorganized content
 
 ## Assembly Root
 
-When the user supplies a target folder, use it. Otherwise create a new root
-under:
+When the user supplies an assembly root, use it. Otherwise create a new
+versioned `<assembly_root>` following the local project convention. Infer its
+identifier from the source manuscript state and current date. Do not overwrite
+an existing assembly root.
 
-```text
-manuscripts/<run_id>/
-```
+## Terminal Dependency Closure
 
-Infer `run_id` from the source manuscript state and current date. Do not
-overwrite an existing assembly root. Reference large upstream artifacts by path
-and checksum unless the final package needs a local copy for portability.
+A completed assembly must rebuild and validate using only assembly-local
+contents, explicitly declared scientific dependencies, and explicitly declared
+runtime dependencies. Inputs used only to construct the assembly may be
+retained as lineage records, but terminal entrypoints must not require them.
+
+Keep these roles distinct:
+
+- **assembly-local content**: copied or promoted manuscript sources, assets,
+  rebuild code, receipts, and validation contracts;
+- **live dependencies**: external scientific data or maintained code required
+  by a terminal entrypoint;
+- **runtime dependencies**: interpreters, containers, libraries, and system
+  facilities required only to execute terminal entrypoints;
+- **lineage sources**: origins used for navigation or one-time import and never
+  exposed during terminal validation.
+
+Do not infer roles from path names. Classify each dependency from its use. A
+recorded source or lineage path is not implicitly a live dependency.
 
 ## Package Contract
 
@@ -52,7 +67,7 @@ Required contents:
 - `README.md`: human-facing index, package status, source state, and first files
   to inspect.
 - `status.json`: machine-readable status with `pass`, `warn`, or `block`,
-  assembly timestamp, source roots, and validation report paths.
+  assembly timestamp, lineage sources, and validation report paths.
 - `draft/`: rendered manuscript draft and any rendered supplement or review
   companion.
 - `source/`: editable manuscript text, captions, references, and sidecar source
@@ -61,14 +76,17 @@ Required contents:
   where each appears in the manuscript.
 - `evidence/`: concise claim/conclusion support record and any current
   evidence-state files needed to audit claim strength.
-- `traceability/`: upstream input register with paths, versions, checksums, and
-  rationale for copied versus referenced artifacts.
+- `traceability/`: separate lineage, live-dependency, runtime-dependency, and
+  copied-input identity records with paths, versions, checksums, and roles.
 - `review_state/`: what feedback or requested changes the package responds to,
   what remains open, and what was skipped, deferred, or accepted as an exception.
 - `validation/`: human-readable and machine-readable final assembly validation.
 - `rebuild/`: renderer scripts, figure-asset rebuild scripts, configs, and
   command notes sufficient to regenerate the rendered draft and assembled final
   manuscript assets from package inputs.
+
+One-time import or preparation code is lineage material, not a terminal rebuild
+entrypoint. Keep it outside the terminal rebuild surface when it is retained.
 
 ### Figure Asset Rebuild Contract
 
@@ -105,10 +123,32 @@ group of figures. Assembly scripts should avoid performing significant reanalysi
 `dependency_paths`, `approved_raster`, `expected_sha256`, and
 `accepted_exception`.
 
+Treat source-package and polishing-root fields as lineage. The promoted script,
+assembly-local assets, direct inputs, and dependency paths define the rebuild
+closure. Resolve symlinked inputs far enough to declare the paths that must
+actually be exposed during replay.
+
+## Assembly Tools
+
+Use the bundled project-independent scripts with an assembly-local JSON config:
+
+- `scripts/assemble.py` materializes a reviewable candidate live-dependency
+  manifest from configured manifests, code roots, and explicit additions.
+- `scripts/validate_scaffolding_independence.py` independently replays terminal
+  entrypoints with only the locked live and runtime manifests exposed.
+- `assets/assembly_config.template.json` is the project-independent config
+  template; copy and specialize it inside the assembly.
+
+The candidate manifest is discovery output, not an approved allowlist. Review,
+deduplicate, classify, and lock it before validation. The validator must never
+add dependencies or revise the locked manifests in response to a failure.
+Project-specific paths, runtime details, entrypoints, and lineage manifests
+belong in the local config, not in this skill or the bundled scripts.
+
 ## Workflow
 
 1. **Identify sources**
-   Determine the manuscript state to assemble & upstream content roots.
+   Determine the manuscript state to assemble and upstream content roots.
 
 2. **Classify components**
    Mark each required component as finalized, stale, missing, out of scope. BLOCK
@@ -116,15 +156,21 @@ group of figures. Assembly scripts should avoid performing significant reanalysi
 
 3. **Create or update the assembly root**
    Build the package layout. Copy small, durable manuscript-facing artifacts.
-   Reference large analysis artifacts, raw data, and workflow logs by path and
-   checksum unless portability requires copies.
+   Declare required large scientific inputs as live dependencies. Record
+   construction-only origins and workflow logs as lineage without making them
+   terminal dependencies.
 
-4. **Render or collect the draft**
+4. **Materialize and lock dependencies**
+   Configure the assembly tool, materialize candidate live dependencies,
+   reconcile them against the actual terminal entrypoints, and write separate
+   locked live and runtime manifests. Record construction origins separately.
+
+5. **Render or collect the draft**
    Use the project renderer when available. If rendering requires substantive
    text, figure, or legend changes, stop and route to the owner. If rendering is
    mechanical, run it and place the result under `draft/`.
 
-5. **Build package-level indexes**
+6. **Build package-level indexes**
    Write the asset inventory, evidence support summary, upstream input register,
    review-state summary, rebuild notes, figure rebuild manifest, `README.md`,
    and `status.json`.
@@ -133,7 +179,7 @@ group of figures. Assembly scripts should avoid performing significant reanalysi
    `figure_rebuild_manifest.tsv` row and record whether the figure is rebuilt
    from polishing scripts or carried as an approved immutable raster exception.
 
-6. **Validate**
+7. **Validate**
 
    Validate figure rebuildability by running
    `rebuild/figures/run_all_figures.sh` into a temporary validation output
@@ -142,7 +188,12 @@ group of figures. Assembly scripts should avoid performing significant reanalysi
    missing rebuild commands, missing scripts, undeclared inputs as `BLOCK` unless the user explicitly accepts an
    exception.
 
-7. **Close out**
+   Then run the standalone dependency-closure validator. It must copy the
+   assembly into an isolated project view, expose only locked live and runtime
+   dependencies, leave lineage sources unavailable, and run every terminal
+   rebuild and validation entrypoint. Any required undeclared input is `BLOCK`.
+
+8. **Close out**
    Report the assembly root, rendered draft path, status, blockers, warnings,
    accepted exceptions, and whether a project navigation document should be
    updated.
@@ -162,6 +213,9 @@ At minimum, validate:
 - Rendered HTML, if produced, embeds or links assets according to the requested
   delivery format and has unique anchors.
 - Rebuild instructions are sufficient for another agent to regenerate the draft.
+- Terminal rebuild and validation pass with lineage sources unavailable.
+- Terminal validators authenticate copied content from assembly-local receipts
+  rather than reopening source copies.
 - Journal-facing draft and captions do not expose internal paths, commands, or
   workflow labels except in an audit/provenance section.
 
@@ -183,6 +237,9 @@ Do not:
 - perform new figure design or sfigure revision;
 - use assembly to repair missing provenance or invent rebuild commands;
 - overwrite upstream outputs while validating rebuild commands;
+- treat a lineage record as permission to read that source during terminal
+  rebuild or validation;
+- allow the isolation validator to discover, add, or repair dependencies;
 - revise scientific prose beyond mechanical packaging fixes;
 - write or edit figure legends or captions;
 - edit claim/evidence mappings;
@@ -201,6 +258,7 @@ Do:
 - keep workflow logs out of the main manuscript package unless they are needed
   as linked audit material;
 - make the package inspectable and regenerable;
+- preserve a project-local assembly config and locked dependency manifests;
 - keep assembly, reconciliation, and validation under the main agent unless the
   user explicitly requests bounded delegation.
 

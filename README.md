@@ -14,8 +14,11 @@ Directional transfer workflows are included because they stress-test whether inf
 
 The current reproducibility target is
 [`manuscripts/20260731T101031_v03`](manuscripts/20260731T101031_v03). For its
-rebuild boundary and validation commands, see
-[`docs/current_manuscript_rebuild.md`](docs/current_manuscript_rebuild.md).
+package-local rebuild and validation commands, see
+[`rebuild/README.md`](manuscripts/20260731T101031_v03/rebuild/README.md).
+The proposed long-term workspace policy is recorded in
+[`docs/target_policy_DRAFT.md`](docs/target_policy_DRAFT.md); it is not yet an
+active policy.
 For compact project navigation, see
 [`docs/project_map.txt`](docs/project_map.txt).
 

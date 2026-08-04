@@ -20,7 +20,7 @@ integration unless the user asks for integration.
    stop.
 5. Read `.agents/references/manuscript_figure_style.md` and apply it to polished
    figure images and visual QC. 
-6. Run R scripts through `scripts/agentRrunner.sh`.
+6. Run R scripts through the project-approved R runner.
 7. Polishing owns final subpanel generation and layout. Use one R script as the
    polishing entrypoint; do not split the default workflow into one script that
    exports PNG panels and another that assembles those PNGs.
@@ -143,11 +143,11 @@ Create one `polish_root` and keep all polish-generated files under it:
      `panel_map.csv` from direct data/report-export inputs and follow the
      global raster policy in `SKILL.md` for user-approved raster inputs.
    - Run:
-     `scripts/agentRrunner.sh <polish_root>/scripts/polish_figures.R --phase subpanels`
+     `<r_runner> <polish_root>/scripts/polish_figures.R --phase subpanels`
 
 4. Optimize the figure layout before assembly.
    - Run:
-     `scripts/agentRrunner.sh <skill_dir>/scripts/optimize_panel_layout.R --input <polish_root>/layout/subpanel_dimensions.csv --output-dir <polish_root>/layout --target-width 7 --max-height 9.25`
+     `<r_runner> <skill_dir>/scripts/optimize_panel_layout.R --input <polish_root>/layout/subpanel_dimensions.csv --output-dir <polish_root>/layout --target-width 7 --max-height 9.25`
    - Read `layout/layout_plan.csv`, `layout/layout_report.md`, and optimizer
      preview PNGs. Preview labels must be in intended reading order.
    - If the optimizer recommends nontrivial scaling, revise dimensions in
@@ -155,7 +155,7 @@ Create one `polish_root` and keep all polish-generated files under it:
 
 5. Run the final phase from the same script.
    - Run:
-     `scripts/agentRrunner.sh <polish_root>/scripts/polish_figures.R --phase final`
+     `<r_runner> <polish_root>/scripts/polish_figures.R --phase final`
    - The final phase must rebuild panel plot/grob objects in memory and assemble
      them directly. Do not re-read polish-generated `subpanels/*.png` for final
      composites.

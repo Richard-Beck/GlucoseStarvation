@@ -39,7 +39,26 @@ jobs:
             exit 1
           fi
           tar -xzf "$RELEASE_ASSET" -C site
-          test -s site/index.html
+          required=(
+            index.html
+            llms.txt
+            site-manifest.json
+            release.json
+            report/index.html
+            manuscript-text/index.html
+            figure-semantics/index.html
+            figure-semantics/all.md
+            claim-graph/index.html
+            claim-graph.json
+            provenance/index.html
+            literature-map/index.html
+          )
+          for path in "${required[@]}"; do
+            test -s "site/$path" || {
+              echo "Missing required site artifact: $path" >&2
+              exit 1
+            }
+          done
           if find site -type l -print -quit | grep -q .; then
             echo "Bundle contains a symbolic link" >&2
             exit 1
